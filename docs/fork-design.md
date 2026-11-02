@@ -219,7 +219,9 @@ So the MCP server has to **be the Guacamole client**: create the session and att
 ### Components
 
 ```
-src/mcp/server.rs     MCP over Streamable HTTP at /mcp (official Rust SDK `rmcp`), auth = API key
+src/mcp/server.rs     MCP over Streamable HTTP at /mcp (official Rust SDK `rmcp`)
+src/mcp/auth.rs       API key + OAuth 2.1 bearer validation -> Identity (see "Authentication")
+src/oauth/            authorization server endpoints (built on the existing OIDC login)
 src/mcp/tools.rs      tool definitions; every input goes through the Phase 2 engine
 src/render/mod.rs     headless Guacamole client: instructions -> RGBA framebuffer
 src/render/layers.rs  layers and compositing
@@ -243,9 +245,35 @@ src/render/layers.rs  layers and compositing
 | `close_session(session_id)` | |
 | `run_ssh(entry_id, command)` | Plain-text exec through the jump-host chain. Policy-checked. |
 
+### Authentication: API key and OAuth (both supported)
+
+There are two kinds of AI identity, and every MCP request resolves to one of them:
+
+| | API key | OAuth 2.1 |
+|---|---|---|
+| Identity | Its own agent identity, e.g. `ai:nightly-patch` | A real user acting through an AI client, e.g. `steven via claude` |
+| Use for | Unattended agents, scripts, scheduled jobs, Claude Code | People using an AI assistant interactively; hosted clients (Claude desktop / claude.ai connectors) |
+| Permissions | What the key's `ai_agent` grants allow | The user's own permissions **intersected with** the AI policy (an AI can never do more than its user, and only in `ai_allowed` folders) |
+| Audit `actor` | `ai:<key-name>` | `user:<email> via ai:<client-name>` |
+| Revocation | Delete the key | Tokens expire on their own; revoke the grant or disable the user |
+
+**API key** (built first, extends the existing `auth.rs` keys):
+- `Authorization: Bearer <key>` on `/mcp`. Keys are SHA-256 hashed, with IP allowlists and expiry as today.
+- New key type `ai_agent`, which can only call `/mcp`. Admin and REST endpoints refuse it.
+
+**OAuth 2.1** (following the MCP authorization spec):
+- `/mcp` returns `401` with a `WWW-Authenticate` header pointing at the protected resource metadata (`/.well-known/oauth-protected-resource`, RFC 9728).
+- The bastion is its own authorization server (`/.well-known/oauth-authorization-server`, RFC 8414). The login step reuses the existing OIDC flow, so users sign in through the same identity provider (Authentik, Keycloak, Google, …).
+- Authorization code flow with **PKCE required**. No implicit flow, no password grant.
+- Client registration: dynamic client registration (RFC 7591) for MCP clients, with admin approval of each new client name, and/or a pre-registered client allowlist.
+- A **consent screen** shows the client name, the folders it will reach and the mode (observe / approve / auto). Users can see and revoke their grants under "My AI access".
+- Access tokens: short-lived (≤15 min), audience-bound to the `/mcp` resource (RFC 8707), scopes `mcp:read` (list + screenshot) and `mcp:act` (input, `run_ssh`). Refresh tokens are rotated on every use and revoked if one is reused.
+- Token and grant tables live in SQLite, and tokens are stored hashed.
+- Group membership is re-checked against the identity provider on refresh, so removing someone from a group cuts off their AI access within one token lifetime.
+
 ### AI-specific safety
 
-- Dedicated `ai_agent` role and API keys. Admin endpoints are always off-limits.
+- API-key agents get the dedicated `ai_agent` role. OAuth sessions are capped by both the user's role and the AI policy. Admin endpoints are always off-limits to MCP.
 - Folder modes: `observe` (screenshots only), `approve` (each input batch needs approval), `auto` (allowed, fully recorded).
 - Recording is forced on, tagged `actor=ai:<key-name>`. Sessions show an "AI" badge, and a human can shadow or take over.
 - Kill switch: an admin can end all AI sessions at once.
@@ -257,6 +285,9 @@ src/render/layers.rs  layers and compositing
 - [ ] `screenshot` matches the browser client view (pixel-diff test).
 - [ ] In `approve` mode input waits for approval, and a denial reaches the agent as a tool error.
 - [ ] Credentials never appear in any MCP response or log.
+- [ ] API key: an `ai_agent` key works on `/mcp` and is refused on every REST/admin endpoint.
+- [ ] OAuth: Claude desktop adds the bastion as a custom connector, the user signs in via OIDC, approves consent, and the audit log shows `user:<email> via ai:<client>`.
+- [ ] OAuth: a user without access to folder `prod` cannot reach it through the AI either; removing the user from a group blocks AI access once the token next refreshes.
 
 ---
 
@@ -314,7 +345,7 @@ It never touches guacd, it speaks completely different protocols, and Go has the
 2. Which upstream features to drop (VDI? web sessions? SPICE/Proxmox? NetBox sync?).
 3. Internal API: HTTP + mTLS or gRPC?
 4. Approval notification channels for v1.
-5. MCP auth: API key only, or also OAuth for hosted MCP clients?
+5. ~~MCP auth: API key only, or also OAuth?~~ **Decided:** both. API key first, then OAuth 2.1 (see Phase 3 "Authentication").
 
 ## Suggested first prompt for Claude Code
 
