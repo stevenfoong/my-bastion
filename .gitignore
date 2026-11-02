@@ -50,3 +50,6 @@ rpm/staging/
 
 # Claude Code project memory
 .claude/
+
+# Local EC2 test machine start/stop script (account-specific)
+ec2-test.bat
