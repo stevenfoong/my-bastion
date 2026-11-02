@@ -78,7 +78,9 @@ jobs:
 
   e2e:
     name: Browser tests
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to Ubuntu 26 in October 2026, which
+    # Playwright 1.58's `install --with-deps` does not support yet.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v7
