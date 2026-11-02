@@ -3783,16 +3783,26 @@ mod tests {
     #[tokio::test]
     async fn inherited_session_types_are_off_unless_enabled() {
         let mgr = new_manager_for_tests();
-        for (t, section) in [("web", "[web]"), ("spice", "[spice]"), ("proxmox", "[spice]")] {
+        for (t, section) in [
+            ("web", "[web]"),
+            ("spice", "[spice]"),
+            ("proxmox", "[spice]"),
+        ] {
             let req = fenced_request(serde_json::json!({
                 "session_type": t,
                 "url": "https://example.com",
             }));
             match mgr.create_session(req, "pu@example.com".into()).await {
                 Err(SessionError::ValidationError(msg)) => {
-                    assert!(msg.contains("not enabled") && msg.contains(section), "{t}: {msg}")
+                    assert!(
+                        msg.contains("not enabled") && msg.contains(section),
+                        "{t}: {msg}"
+                    )
                 }
-                other => panic!("{t}: expected refusal, got {:?}", other.map(|i| i.session_id)),
+                other => panic!(
+                    "{t}: expected refusal, got {:?}",
+                    other.map(|i| i.session_id)
+                ),
             }
         }
     }
@@ -3819,9 +3829,8 @@ mod tests {
 
     #[tokio::test]
     async fn fenced_proxmox_api_outside_allowlist_refused() {
-        let mgr = new_manager_with(|c| {
-            c.spice = Some(crate::config::FeatureSwitch { enabled: true })
-        });
+        let mgr =
+            new_manager_with(|c| c.spice = Some(crate::config::FeatureSwitch { enabled: true }));
         let req = fenced_request(serde_json::json!({
             "session_type": "proxmox",
             "proxmox_url": "https://192.0.2.20:8006",

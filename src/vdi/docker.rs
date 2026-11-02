@@ -834,7 +834,10 @@ impl DockerDriver {
                 super::ManagedContainer {
                     container_id: c.id.unwrap_or_default(),
                     container_name,
-                    username: labels.get("mybastion.username").cloned().unwrap_or_default(),
+                    username: labels
+                        .get("mybastion.username")
+                        .cloned()
+                        .unwrap_or_default(),
                     image: labels
                         .get("mybastion.image")
                         .cloned()

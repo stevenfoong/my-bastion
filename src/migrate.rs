@@ -234,7 +234,10 @@ async fn connect_named(config: &Config, name: &str) -> Arc<VaultClient> {
     let vault_config = match vault_config {
         Some(vc) => vc,
         None => {
-            eprintln!("Error: backend '{}' is not configured in mybastion.toml", name);
+            eprintln!(
+                "Error: backend '{}' is not configured in mybastion.toml",
+                name
+            );
             std::process::exit(1);
         }
     };
