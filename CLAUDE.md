@@ -81,8 +81,6 @@ Config is found via `--config`, else `/etc/mybastion/mybastion.toml`;
 - **Inherited features, off by default:** `[web] enabled`, `[spice] enabled`
   (SPICE + Proxmox), `[vdi] enabled`. NetBox sync has no code of its own: it
   is NetBox calling the REST API with a key an admin creates.
-- `[vault_shared]` / `[vault_local]` (multi-Vault DR split) still exist and are
-  slated for removal in Phase 1.
 - **OIDC:** `[oidc]` `issuer_url`, `client_id`, `client_secret` (or
   `OIDC_CLIENT_SECRET`), `redirect_uri`, `groups_claim`, `extra_scopes`.
 - **Roles:** `admin` (4) > `poweruser` (3, ad-hoc sessions) > `operator` (2,

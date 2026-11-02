@@ -146,6 +146,11 @@ impl ConnectionStore {
         }
     }
 
+    /// Whether the underlying store can serve requests now.
+    pub fn is_available(&self) -> bool {
+        self.store.is_available()
+    }
+
     /// Spawn the store's background upkeep (for Vault, token renewal at 50%
     /// of TTL).
     pub fn spawn_maintenance(self: &Arc<Self>) {

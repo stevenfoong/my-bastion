@@ -88,25 +88,6 @@ The Connections page surfaces missing credentials before a connection fails:
 - **Some missing:** the connect opens My Credentials focused on just the missing variables, and the connection resumes automatically once you save them.
 - **None set:** full credential prompt (same as entries without variables).
 
-## Shared and local credentials (multiple Vaults)
-
-When more than one Vault backend is configured (see
-[Multiple Vault backends](configuration.md)), each credential can be stored in
-the **shared** Vault (propagates to every site) or kept **local** to this
-instance. My Credentials shows a **"Shared across sites"** checkbox per
-credential; the default for a new credential comes from
-`user_credentials_default_scope`. Reads merge both backends (a local value wins
-over a shared one of the same name), and toggling a credential moves it between
-the two.
-
-With a single Vault there is only one store, so the checkbox is hidden and every
-credential is simply stored there.
-
-Trade-off to be aware of: a credential kept in the shared Vault will not resolve
-while that Vault is unreachable, so a connection that references it fails even if
-the target and the local Vault are up. Keep credentials a site must never lose
-(for example break-glass logins) **local**.
-
 ## Vault storage
 
 User credentials are stored in Vault KV v2 at:
@@ -182,9 +163,9 @@ A parent's defaults reach a subfolder only when exactly the parent's audience ca
 
 The folder where the walk stops still applies its own `.defaults` to its entries and to subfolders that share its audience. A folder with no `.config`, or one written before the flag existed, counts as not inheriting, exactly as the access check treats it.
 
-### Migration between Vaults
+### Migration between stores
 
-`mybastion vault-migrate` copies each folder's `.defaults` alongside its `.config`, so a DR split keeps the defaults; the dry run lists them as `[defaults] <folder>`. Deleting a folder removes its `.defaults` with it.
+`mybastion storage migrate` copies every document, so each folder's `.defaults` travels with its `.config`. Deleting a folder removes its `.defaults` with it.
 
 ### Web entries: the password is visible to the user
 

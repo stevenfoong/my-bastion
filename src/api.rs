@@ -721,7 +721,7 @@ pub async fn system_status(
     State(manager): State<AppState>,
     identity: Option<Extension<AuthIdentity>>,
     Extension(database): Extension<Db>,
-    Extension(vault_configured): Extension<VaultConfigured>,
+    Extension(vault_configured): Extension<StoreConfigured>,
 ) -> impl IntoResponse {
     if !identity
         .as_ref()
@@ -902,9 +902,9 @@ pub struct OidcEnabled(pub bool);
 pub struct OidcHandle(pub Option<crate::oidc::OidcState>);
 
 /// Marker for whether Vault is configured (has [vault] in config).
-/// Distinct from VaultState which tracks whether it's currently connected.
+/// Distinct from ConnectionsState which tracks whether it's currently connected.
 #[derive(Clone)]
-pub struct VaultConfigured(pub bool);
+pub struct StoreConfigured(pub bool);
 
 /// Whether `[drive]` is configured, and whether it is enabled site-wide.
 #[derive(Clone)]
@@ -912,12 +912,6 @@ pub struct DriveConfigured {
     pub configured: bool,
     pub enabled: bool,
 }
-
-/// Default scope ("local" | "shared") for a new per-user credential variable
-/// (from `[user_credentials_default_scope]`). Only meaningful when more than
-/// one Vault backend is configured.
-#[derive(Clone)]
-pub struct CredentialDefaultScope(pub String);
 
 /// GET /api/recordings — List all recording files. Requires poweruser+ role.
 pub async fn list_recordings(
@@ -1929,12 +1923,12 @@ pub async fn delete_user_sessions(
 /// GET /api/me — Return current user identity and role.
 pub async fn me(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
-    Extension(vault_configured): Extension<VaultConfigured>,
+    Extension(vault): Extension<ConnectionsState>,
+    Extension(vault_configured): Extension<StoreConfigured>,
 ) -> impl IntoResponse {
     match identity {
         Some(Extension(id)) => {
-            let vault_available = vault.any_connected().await;
+            let vault_available = vault.is_available().await;
             Json(json!({
                 "name": id.display_name(),
                 "role": id.role(),
@@ -2281,68 +2275,39 @@ pub async fn delete_group_mapping(
     }
 }
 
-// ── Address Book endpoints (Vault-backed) ──
+// ── Connections endpoints ──
 
-/// One Vault backend connection cell — `None` until connected / while down.
-pub type VaultCell = Arc<tokio::sync::RwLock<Option<Arc<ConnectionStore>>>>;
+/// The connection store: `None` until the secret store is open (and while a
+/// Vault that failed its first login is being retried).
+pub type StoreCell = Arc<tokio::sync::RwLock<Option<Arc<ConnectionStore>>>>;
 
-/// The set of Vault backends mybastion talks to.
-///
-/// In the single-Vault default, `shared` and `local` both alias `default`, so
-/// behaviour is identical to a single `ConnectionStore`. A multi-Vault split (see
-/// `[vault_shared]` / `[vault_local]`) routes the `shared` and `instance`
-/// address-book scopes to dedicated backends, each with its own connection and
-/// retry lifecycle, so one backend being down cannot take the others with it.
-pub struct VaultBackends {
-    /// `[vault]`: fallback for any scope without a dedicated backend, and home
-    /// of unscoped secrets (the LUKS key; user credential variables for now).
-    pub default: VaultCell,
-    /// Serves the `shared` scope. Aliases `default` unless `[vault_shared]` is
-    /// configured.
-    pub shared: VaultCell,
-    /// Serves the `instance` (local) scope. Aliases `default` unless
-    /// `[vault_local]` is configured.
-    pub local: VaultCell,
+/// The connection store as the handlers see it. Every call fails with
+/// `Unavailable` while the store is not open or not reachable.
+pub struct Connections {
+    pub cell: StoreCell,
 }
 
-impl VaultBackends {
-    /// The backend cell serving a given address-book scope (`"shared"` or
-    /// `"instance"`). Anything else falls back to the shared backend.
-    pub fn cell_for_scope(&self, scope: &str) -> &VaultCell {
-        match scope {
-            "instance" => &self.local,
-            _ => &self.shared,
-        }
-    }
-
-    /// Resolve the connected client for `scope`, or `Unavailable` if that
-    /// backend is down / not yet connected.
-    async fn scoped(&self, scope: &str) -> Result<Arc<ConnectionStore>, ConnectionError> {
-        self.cell_for_scope(scope)
+impl Connections {
+    async fn store(&self) -> Result<Arc<ConnectionStore>, ConnectionError> {
+        self.cell
             .read()
             .await
             .clone()
+            .filter(|s| s.is_available())
             .ok_or(ConnectionError::Unavailable)
     }
 
-    /// True if at least one configured backend is currently connected.
-    pub async fn any_connected(&self) -> bool {
-        self.default.read().await.is_some()
-            || self.shared.read().await.is_some()
-            || self.local.read().await.is_some()
+    /// Whether the store is open and reachable.
+    pub async fn is_available(&self) -> bool {
+        self.store().await.is_ok()
     }
-
-    // ── Scope-routed address-book operations (dispatch to the scope's backend) ──
 
     pub async fn list_subfolders(
         &self,
         scope: &str,
         parent: &str,
     ) -> Result<Vec<crate::connections::FolderInfo>, ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .list_subfolders(scope, parent)
-            .await
+        self.store().await?.list_subfolders(scope, parent).await
     }
 
     pub async fn list_entries(
@@ -2350,7 +2315,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<Vec<String>, ConnectionError> {
-        self.scoped(scope).await?.list_entries(scope, folder).await
+        self.store().await?.list_entries(scope, folder).await
     }
 
     pub async fn get_entry(
@@ -2359,10 +2324,7 @@ impl VaultBackends {
         folder: &str,
         entry: &str,
     ) -> Result<AddressBookEntry, ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .get_entry(scope, folder, entry)
-            .await
+        self.store().await?.get_entry(scope, folder, entry).await
     }
 
     pub async fn put_entry(
@@ -2372,7 +2334,7 @@ impl VaultBackends {
         entry: &str,
         data: &AddressBookEntry,
     ) -> Result<(), ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .put_entry(scope, folder, entry, data)
             .await
@@ -2385,7 +2347,7 @@ impl VaultBackends {
         entry: &str,
         data: &AddressBookEntry,
     ) -> Result<bool, ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .put_entry_if_absent(scope, folder, entry, data)
             .await
@@ -2397,10 +2359,7 @@ impl VaultBackends {
         folder: &str,
         entry: &str,
     ) -> Result<(), ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .delete_entry(scope, folder, entry)
-            .await
+        self.store().await?.delete_entry(scope, folder, entry).await
     }
 
     pub async fn get_folder_config(
@@ -2408,10 +2367,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<FolderConfig, ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .get_folder_config(scope, folder)
-            .await
+        self.store().await?.get_folder_config(scope, folder).await
     }
 
     pub async fn put_folder_config(
@@ -2420,7 +2376,7 @@ impl VaultBackends {
         folder: &str,
         config: &FolderConfig,
     ) -> Result<(), ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .put_folder_config(scope, folder, config)
             .await
@@ -2431,10 +2387,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<crate::connections::FolderDefaults, ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .get_folder_defaults(scope, folder)
-            .await
+        self.store().await?.get_folder_defaults(scope, folder).await
     }
 
     pub async fn put_folder_defaults(
@@ -2443,7 +2396,7 @@ impl VaultBackends {
         folder: &str,
         defaults: &crate::connections::FolderDefaults,
     ) -> Result<(), ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .put_folder_defaults(scope, folder, defaults)
             .await
@@ -2454,7 +2407,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<(), ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .delete_folder_defaults(scope, folder)
             .await
@@ -2465,7 +2418,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .effective_folder_defaults(scope, folder)
             .await
@@ -2476,7 +2429,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<(usize, usize), ConnectionError> {
-        self.scoped(scope).await?.delete_folder(scope, folder).await
+        self.store().await?.delete_folder(scope, folder).await
     }
 
     pub async fn resolve_folder_access(
@@ -2485,137 +2438,72 @@ impl VaultBackends {
         folder: &str,
         who: crate::connections::FolderSubject<'_>,
     ) -> Result<bool, ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .resolve_folder_access(scope, folder, who)
             .await
     }
 
-    // ── Per-user credential variables ──
-    //
-    // Credentials live in the "local" backend (cell_for_scope("instance")) or
-    // the "shared" backend (cell_for_scope("shared")) — location is the scope.
-    // In single-Vault those cells alias the default, so there is one physical
-    // store and the shared/local distinction collapses (see `creds_split`),
-    // preserving the quick-start behaviour exactly.
-
-    /// Whether the shared and local credential backends are physically
-    /// distinct. False in single-Vault (one store); the per-credential
-    /// shared/local choice is only meaningful when this is true.
-    pub fn creds_split(&self) -> bool {
-        !Arc::ptr_eq(&self.shared, &self.local)
-    }
-
-    async fn cred_client(&self, shared: bool) -> Result<Arc<ConnectionStore>, ConnectionError> {
-        let cell = if shared { &self.shared } else { &self.local };
-        cell.read()
-            .await
-            .clone()
-            .ok_or(ConnectionError::Unavailable)
-    }
-
-    pub async fn get_user_credentials_scoped(
+    /// A user's credential variables, for the My Credentials page and saves:
+    /// a read error is an error.
+    pub async fn read_user_credentials(
         &self,
         email: &str,
-        shared: bool,
     ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
-        self.cred_client(shared)
-            .await?
-            .get_user_credentials(email)
-            .await
+        self.store().await?.get_user_credentials(email).await
     }
 
-    pub async fn put_user_credentials_scoped(
+    pub async fn put_user_credentials(
         &self,
         email: &str,
-        shared: bool,
         creds: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectionError> {
-        self.cred_client(shared)
-            .await?
-            .put_user_credentials(email, creds)
-            .await
+        self.store().await?.put_user_credentials(email, creds).await
     }
 
-    /// Merged view (local wins on a name collision) for connect-time
-    /// resolution. Tolerant of a down backend — it contributes nothing, so a
-    /// credential on the reachable backend still resolves. Single read in
-    /// single-Vault.
+    /// A user's credential variables at connect time. A failed read gives an
+    /// empty map (logged): the entry then reports which variables are
+    /// missing, rather than the connect failing on a store error.
     pub async fn get_user_credentials(
         &self,
         email: &str,
     ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
-        let local = self
-            .get_user_credentials_scoped(email, false)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "reading local credentials failed");
-                std::collections::HashMap::new()
-            });
-        if !self.creds_split() {
-            return Ok(local);
-        }
-        let mut merged = self
-            .get_user_credentials_scoped(email, true)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "reading shared credentials failed");
-                std::collections::HashMap::new()
-            });
-        merged.extend(local); // local wins
-        Ok(merged)
+        Ok(self.read_user_credentials(email).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "reading user credentials failed");
+            std::collections::HashMap::new()
+        }))
     }
 
-    // ── Fan-out across scopes ──
-
-    /// List top-level folders across every scope, routing each to its backend.
-    /// Returns `(folders, unavailable_scopes)`: a scope whose dedicated backend
-    /// is down (or errors) is reported in `unavailable_scopes` rather than
-    /// failing the whole call, so the UI can grey it while other scopes stay
-    /// live. Only when NO backend is connected at all is `Unavailable` returned
-    /// (full outage → 503). In a single-Vault deployment every scope aliases
-    /// the one backend, so `unavailable_scopes` is empty whenever it is up.
+    /// Top-level folders of both scopes. Returns `(folders, failed_scopes)`: a
+    /// scope whose listing fails is reported rather than failing the call, so
+    /// the UI can grey it. `Unavailable` when the store itself is not open.
     pub async fn list_all_folders(
         &self,
     ) -> Result<(Vec<crate::connections::FolderInfo>, Vec<String>), ConnectionError> {
+        let store = self.store().await?;
         let mut folders = Vec::new();
-        let mut unavailable = Vec::new();
-        let mut any = false;
+        let mut failed = Vec::new();
         for scope in ["shared", "instance"] {
-            match self.cell_for_scope(scope).read().await.clone() {
-                Some(client) => {
-                    any = true;
-                    match client.list_folders_in_scope(scope).await {
-                        Ok(fs) => folders.extend(fs),
-                        Err(ConnectionError::NotFound) => {}
-                        Err(e) => {
-                            tracing::warn!(scope, error = %e, "listing folders for scope failed");
-                            unavailable.push(scope.to_string());
-                        }
-                    }
+            match store.list_folders_in_scope(scope).await {
+                Ok(fs) => folders.extend(fs),
+                Err(ConnectionError::NotFound) => {}
+                Err(e) => {
+                    tracing::warn!(scope, error = %e, "listing folders for scope failed");
+                    failed.push(scope.to_string());
                 }
-                None => unavailable.push(scope.to_string()),
             }
         }
-        if !any {
-            return Err(ConnectionError::Unavailable);
-        }
-        Ok((folders, unavailable))
+        Ok((folders, failed))
     }
 }
 
-/// The defaults walk over the multi-backend router: each read goes to the
-/// backend that serves the scope, like every other folder read here.
-impl DefaultsSource for VaultBackends {
+impl DefaultsSource for Connections {
     async fn folder_defaults(
         &self,
         scope: &str,
         folder: &str,
     ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
-        self.scoped(scope)
-            .await?
-            .folder_defaults(scope, folder)
-            .await
+        self.store().await?.folder_defaults(scope, folder).await
     }
 
     async fn takes_parent_defaults(
@@ -2623,14 +2511,14 @@ impl DefaultsSource for VaultBackends {
         scope: &str,
         folder: &str,
     ) -> Result<bool, ConnectionError> {
-        self.scoped(scope)
+        self.store()
             .await?
             .takes_parent_defaults(scope, folder)
             .await
     }
 }
 
-pub type VaultState = Arc<VaultBackends>;
+pub type ConnectionsState = Arc<Connections>;
 
 // ── Docs endpoint ──
 
@@ -2653,7 +2541,7 @@ pub async fn get_docs() -> impl IntoResponse {
 // into a handler result), so its size is inherent, not a mistake.
 #[allow(clippy::result_large_err)]
 async fn check_folder_access(
-    vault: &VaultBackends,
+    vault: &Connections,
     scope: &str,
     folder: &str,
     identity: &AuthIdentity,
@@ -2693,7 +2581,7 @@ async fn check_folder_access(
 /// practice; folders the user CAN access return immediately without
 /// descending.
 fn folder_or_descendant_accessible<'a>(
-    vault: &'a VaultBackends,
+    vault: &'a Connections,
     scope: &'a str,
     path: &'a str,
     who: crate::connections::FolderSubject<'a>,
@@ -2722,7 +2610,7 @@ fn folder_or_descendant_accessible<'a>(
 /// GET /api/addressbook/folders — List folders visible to the current user.
 pub async fn ab_list_folders(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     let id = match identity {
         Some(Extension(ref id)) if id.has_role("operator") => id,
@@ -2766,7 +2654,7 @@ pub async fn ab_list_folders(
 /// GET /api/addressbook/folders/:scope/:folder/subfolders — List subfolders at a path.
 pub async fn ab_list_subfolders(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let id = match identity {
@@ -2847,7 +2735,7 @@ fn folder_defaults_summary(d: &crate::connections::FolderDefaults) -> serde_json
 /// folder's own `.defaults` (not what it inherits), secrets stripped.
 pub async fn ab_get_folder_defaults(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if !matches!(identity, Some(Extension(ref id)) if id.has_role("admin")) {
@@ -2897,7 +2785,7 @@ pub async fn ab_put_folder_defaults(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
     Json(patch): Json<std::collections::BTreeMap<String, Option<DefaultCredentialsPatch>>>,
 ) -> impl IntoResponse {
@@ -3024,7 +2912,7 @@ pub async fn ab_delete_folder_defaults(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let admin_email = match identity.as_ref() {
@@ -3479,7 +3367,7 @@ where
 pub async fn ab_version(
     identity: Option<Extension<AuthIdentity>>,
     changes: Option<Extension<AddressBookChanges>>,
-    vault: Option<Extension<VaultState>>,
+    vault: Option<Extension<ConnectionsState>>,
     Query(q): Query<AbVersionQuery>,
 ) -> impl IntoResponse {
     let id = match identity {
@@ -3537,7 +3425,7 @@ pub async fn ab_version(
 /// Replaces the N+1 pattern of listing folders then entries per folder.
 pub async fn ab_list_all(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     let id = match identity {
         Some(Extension(ref id)) if id.has_role("operator") => id,
@@ -3645,7 +3533,7 @@ pub async fn ab_list_all(
 /// its entries are emitted.
 pub async fn ab_search_index(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     let id = match identity {
         Some(Extension(ref id)) if id.has_role("operator") => id,
@@ -3732,7 +3620,7 @@ pub async fn ab_search_index(
 /// GET /api/addressbook/folders/:scope/:folder/entries — List entries in a folder.
 pub async fn ab_list_entries(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let id = match identity {
@@ -4138,7 +4026,7 @@ pub async fn ab_connect_entry(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
     Json(req): Json<ConnectRequest>,
 ) -> impl IntoResponse {
@@ -4284,7 +4172,7 @@ pub trait UserCredentialSource {
     ) -> Result<std::collections::HashMap<String, String>, ConnectionError>;
 }
 
-impl UserCredentialSource for VaultBackends {
+impl UserCredentialSource for Connections {
     async fn user_credentials(
         &self,
         email: &str,
@@ -4412,8 +4300,8 @@ pub async fn ab_adhoc_connect(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
-    Extension(vault): Extension<VaultState>,
-    Extension(vault_configured): Extension<VaultConfigured>,
+    Extension(vault): Extension<ConnectionsState>,
+    Extension(vault_configured): Extension<StoreConfigured>,
     Json(mut req): Json<AdhocConnectRequest>,
 ) -> Response {
     let id = match identity {
@@ -4577,7 +4465,7 @@ pub async fn ab_create_folder(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Json(req): Json<CreateFolderRequest>,
 ) -> impl IntoResponse {
     let admin_email = match identity.as_ref() {
@@ -4668,7 +4556,7 @@ pub async fn ab_update_folder(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
     Json(req): Json<UpdateFolderRequest>,
 ) -> impl IntoResponse {
@@ -4754,7 +4642,7 @@ pub async fn ab_update_folder(
 /// folder modal to prefill the allowed-groups picker on edit.
 pub async fn ab_get_folder_config(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if !identity
@@ -4800,7 +4688,7 @@ pub async fn ab_delete_folder(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let admin_email = match identity.as_ref() {
@@ -4863,7 +4751,7 @@ pub async fn ab_create_entry(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder)): Path<(String, String)>,
     Json(req): Json<CreateEntryRequest>,
 ) -> impl IntoResponse {
@@ -4958,9 +4846,9 @@ trait EntryStore {
     ) -> Result<(), ConnectionError>;
 }
 
-impl EntryStore for VaultBackends {
+impl EntryStore for Connections {
     async fn folder_paths(&self, scope: &str) -> Result<Vec<String>, ConnectionError> {
-        let client = self.scoped(scope).await?;
+        let client = self.store().await?;
         let mut queue: Vec<String> = client
             .list_folders_in_scope(scope)
             .await?
@@ -4986,7 +4874,7 @@ impl EntryStore for VaultBackends {
 
     async fn entry_names(&self, scope: &str, folder: &str) -> Result<Vec<String>, ConnectionError> {
         // The KV listing also returns subfolders, as `name/`.
-        match VaultBackends::list_entries(self, scope, folder).await {
+        match Connections::list_entries(self, scope, folder).await {
             Ok(names) => Ok(names.into_iter().filter(|n| !n.ends_with('/')).collect()),
             Err(ConnectionError::NotFound) => Ok(Vec::new()),
             Err(e) => Err(e),
@@ -4999,7 +4887,7 @@ impl EntryStore for VaultBackends {
         folder: &str,
         entry: &str,
     ) -> Result<AddressBookEntry, ConnectionError> {
-        VaultBackends::get_entry(self, scope, folder, entry).await
+        Connections::get_entry(self, scope, folder, entry).await
     }
 
     async fn put_entry(
@@ -5009,7 +4897,7 @@ impl EntryStore for VaultBackends {
         entry: &str,
         data: &AddressBookEntry,
     ) -> Result<(), ConnectionError> {
-        VaultBackends::put_entry(self, scope, folder, entry, data).await
+        Connections::put_entry(self, scope, folder, entry, data).await
     }
 
     async fn put_entry_if_absent(
@@ -5019,7 +4907,7 @@ impl EntryStore for VaultBackends {
         entry: &str,
         data: &AddressBookEntry,
     ) -> Result<bool, ConnectionError> {
-        VaultBackends::put_entry_if_absent(self, scope, folder, entry, data).await
+        Connections::put_entry_if_absent(self, scope, folder, entry, data).await
     }
 
     async fn delete_entry(
@@ -5028,7 +4916,7 @@ impl EntryStore for VaultBackends {
         folder: &str,
         entry: &str,
     ) -> Result<(), ConnectionError> {
-        VaultBackends::delete_entry(self, scope, folder, entry).await
+        Connections::delete_entry(self, scope, folder, entry).await
     }
 }
 
@@ -5281,7 +5169,7 @@ pub async fn ab_update_entry(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
     Query(query): Query<EntryPutQuery>,
     Json(data): Json<AddressBookEntry>,
@@ -5526,7 +5414,7 @@ pub async fn ab_move_entry(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
     Json(req): Json<MoveEntryRequest>,
 ) -> impl IntoResponse {
@@ -5683,7 +5571,7 @@ fn rename_candidates(name: &str, rename: bool) -> Vec<String> {
 /// first free name allowed by `on_conflict`. Returns the name used, or
 /// `None` when the name was taken and the policy is to skip.
 async fn copy_entry_into(
-    vault: &VaultState,
+    vault: &ConnectionsState,
     item: &BulkItem,
     target: &BulkTarget,
     on_conflict: OnConflict,
@@ -5717,7 +5605,7 @@ async fn copy_entry_into(
 /// One entry of a bulk request, handled on its own so a failure never
 /// affects the others. Audits what it did.
 async fn bulk_one(
-    vault: &VaultState,
+    vault: &ConnectionsState,
     database: &Db,
     admin_email: &str,
     ip: &str,
@@ -5882,7 +5770,7 @@ pub async fn ab_bulk(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Json(req): Json<BulkRequest>,
 ) -> impl IntoResponse {
     use futures_util::StreamExt;
@@ -5971,7 +5859,7 @@ pub async fn ab_bulk(
 /// subfolders lazily, so it cannot supply this itself.
 pub async fn ab_folder_paths(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     if let Err((status, msg)) = require_ab_admin(&identity) {
         return ab_error(status, msg);
@@ -6011,7 +5899,7 @@ pub async fn ab_copy_entry(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
     Json(req): Json<MoveEntryRequest>,
 ) -> impl IntoResponse {
@@ -6070,7 +5958,7 @@ pub async fn ab_delete_entry(
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
     Extension(database): Extension<Db>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     let admin_email = match identity.as_ref() {
@@ -6433,7 +6321,7 @@ pub async fn revoke_my_token(
 // ── User credential variables ──
 
 /// Mask a credential value for the UI: never echo a stored secret back.
-fn mask_credential(name: &str, value: &str, scope: &str) -> serde_json::Value {
+fn mask_credential(name: &str, value: &str) -> serde_json::Value {
     let display = if value.is_empty() {
         String::new()
     } else if name.ends_with("_password") || name.ends_with("_key") {
@@ -6441,73 +6329,28 @@ fn mask_credential(name: &str, value: &str, scope: &str) -> serde_json::Value {
     } else {
         value.to_string()
     };
-    json!({ "set": !value.is_empty(), "display": display, "scope": scope })
+    json!({ "set": !value.is_empty(), "display": display })
 }
 
-/// Compute the (local, shared) credential maps to persist from a save batch,
-/// preserving untouched keys and honouring "leave blank = keep".
-///
-/// - `existing_local` / `existing_shared`: current stored maps. Single-Vault
-///   passes the one store as `existing_local` with an empty `existing_shared`.
-/// - `incoming`: name -> value for the keys being saved (blank value = keep the
-///   existing value, moving it to the target scope if that changed).
-/// - `scopes`: name -> "shared"|"local" target for touched keys.
-/// - `default_scope`: fallback when a touched key has no explicit scope.
-/// - `split`: false in single-Vault — everything lands in the returned local
-///   map (the caller writes it once) and the shared map stays empty.
-fn partition_credential_writes(
-    mut existing_local: std::collections::HashMap<String, String>,
-    mut existing_shared: std::collections::HashMap<String, String>,
+/// The credential map to store after a save: a typed value replaces the
+/// stored one, a blank value keeps it, and keys not in `incoming` stay.
+fn merge_credential_writes(
+    mut existing: std::collections::HashMap<String, String>,
     incoming: &std::collections::HashMap<String, String>,
-    scopes: &std::collections::HashMap<String, String>,
-    default_scope: &str,
-    split: bool,
-) -> (
-    std::collections::HashMap<String, String>,
-    std::collections::HashMap<String, String>,
-) {
+) -> std::collections::HashMap<String, String> {
     for (name, val) in incoming {
-        // Resolve the value: keep the existing one when left blank.
-        let value = if !val.is_empty() {
-            val.clone()
-        } else {
-            existing_local
-                .get(name)
-                .or_else(|| existing_shared.get(name))
-                .cloned()
-                .unwrap_or_default()
-        };
-        // Blank with no existing value: nothing to store.
-        if value.is_empty() {
-            existing_local.remove(name);
-            existing_shared.remove(name);
-            continue;
-        }
-        let to_shared = split
-            && scopes
-                .get(name)
-                .map(String::as_str)
-                .unwrap_or(default_scope)
-                == "shared";
-        if to_shared {
-            existing_shared.insert(name.clone(), value);
-            existing_local.remove(name);
-        } else {
-            existing_local.insert(name.clone(), value);
-            existing_shared.remove(name);
+        if !val.is_empty() {
+            existing.insert(name.clone(), val.clone());
         }
     }
-    (existing_local, existing_shared)
+    existing
 }
 
 /// GET /api/me/credentials — List own credential variables (names and masked
-/// values). Also reports whether the shared/local scope choice is available
-/// (`creds_split`) and the default scope for new variables, so the UI can show
-/// or hide the per-credential toggle.
+/// values).
 pub async fn get_my_credentials(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
-    Extension(default_scope): Extension<CredentialDefaultScope>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     let email = match identity {
         Some(Extension(AuthIdentity::User { ref email, .. })) => email.clone(),
@@ -6520,8 +6363,7 @@ pub async fn get_my_credentials(
         }
     };
 
-    let split = vault.creds_split();
-    let local = match vault.get_user_credentials_scoped(&email, false).await {
+    let creds = match vault.read_user_credentials(&email).await {
         Ok(m) => m,
         Err(e) => {
             return (
@@ -6531,46 +6373,20 @@ pub async fn get_my_credentials(
                 .into_response()
         }
     };
-    // Shared backend errors are tolerated (its creds just don't show); a
-    // central-Vault blip shouldn't block editing local credentials.
-    let shared = if split {
-        vault
-            .get_user_credentials_scoped(&email, true)
-            .await
-            .unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    // Build masked entries; local wins on a name collision, and `scope`
-    // reflects where each value currently lives.
-    let mut masked = serde_json::Map::new();
-    for (k, v) in &shared {
-        masked.insert(k.clone(), mask_credential(k, v, "shared"));
-    }
-    for (k, v) in &local {
-        masked.insert(k.clone(), mask_credential(k, v, "local"));
-    }
-
-    Json(json!({
-        "credentials": masked,
-        "creds_split": split,
-        "default_scope": default_scope.0,
-    }))
-    .into_response()
+    let masked: serde_json::Map<String, serde_json::Value> = creds
+        .iter()
+        .map(|(k, v)| (k.clone(), mask_credential(k, v)))
+        .collect();
+    Json(json!({ "credentials": masked })).into_response()
 }
 
 /// PUT /api/me/credentials — Save credential variables. Operator+ required.
 ///
-/// Body: `{ "credentials": { name: value }, "scopes": { name: "shared"|"local" } }`.
-/// A blank value keeps the existing value (moving it to the target scope if
-/// `scopes` changed it); untouched keys are preserved. When only one Vault
-/// backend is configured the scope is ignored and everything is written to the
-/// single store, so the quick-start path is unchanged.
+/// Body: `{ "credentials": { name: value } }`. A blank value keeps the stored
+/// value; keys not in the body are left as they are.
 pub async fn put_my_credentials(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
-    Extension(default_scope): Extension<CredentialDefaultScope>,
+    Extension(vault): Extension<ConnectionsState>,
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let email = match identity {
@@ -6623,23 +6439,9 @@ pub async fn put_my_credentials(
         incoming.insert(k.clone(), v.as_str().unwrap_or("").to_string());
     }
 
-    // Optional per-key target scope: { "scopes": { name: "shared"|"local" } }.
-    let mut scopes = std::collections::HashMap::new();
-    if let Some(obj) = body.get("scopes").and_then(|v| v.as_object()) {
-        for (k, v) in obj {
-            if let Some(s) = v.as_str() {
-                if s == "shared" || s == "local" {
-                    scopes.insert(k.clone(), s.to_string());
-                }
-            }
-        }
-    }
-
-    let split = vault.creds_split();
-
-    // Read existing maps. Abort on a hard read error rather than risk writing a
-    // partial set (which would drop untouched keys).
-    let existing_local = match vault.get_user_credentials_scoped(&email, false).await {
+    // Read the stored map first. Abort on a read error rather than risk
+    // writing a partial set (which would drop untouched keys).
+    let existing = match vault.read_user_credentials(&email).await {
         Ok(m) => m,
         Err(e) => {
             return (
@@ -6649,55 +6451,16 @@ pub async fn put_my_credentials(
                 .into_response()
         }
     };
-    let existing_shared = if split {
-        match vault.get_user_credentials_scoped(&email, true).await {
-            Ok(m) => m,
-            Err(e) => return (
-                StatusCode::BAD_GATEWAY,
-                Json(
-                    json!({"error": format!("Failed to read existing shared credentials: {}", e)}),
-                ),
-            )
-                .into_response(),
-        }
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    let (new_local, new_shared) = partition_credential_writes(
-        existing_local,
-        existing_shared,
-        &incoming,
-        &scopes,
-        &default_scope.0,
-        split,
-    );
-
-    // Write the local store first (in single-Vault this is the only store).
-    if let Err(e) = vault
-        .put_user_credentials_scoped(&email, false, &new_local)
-        .await
-    {
+    let merged = merge_credential_writes(existing, &incoming);
+    if let Err(e) = vault.put_user_credentials(&email, &merged).await {
         return (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": format!("Failed to save credentials: {}", e)})),
         )
             .into_response();
     }
-    if split {
-        if let Err(e) = vault
-            .put_user_credentials_scoped(&email, true, &new_shared)
-            .await
-        {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": format!("Failed to save shared credentials: {}", e)})),
-            )
-                .into_response();
-        }
-    }
 
-    let count = new_local.len() + new_shared.len();
+    let count = merged.len();
     tracing::info!(user = %email, count, "User credentials updated");
     Json(json!({"ok": true, "count": count})).into_response()
 }
@@ -6749,7 +6512,7 @@ async fn gather_credential_variables<S: FolderSource>(
 
 /// Real [`FolderSource`] backed by Vault and the caller's identity.
 struct VaultFolderSource<'a> {
-    vault: &'a VaultBackends,
+    vault: &'a Connections,
     id: &'a AuthIdentity,
 }
 
@@ -6790,7 +6553,7 @@ impl FolderSource for VaultFolderSource<'_> {
 /// Returns grouped by domain prefix, with entry counts.
 pub async fn list_credential_variables(
     identity: Option<Extension<AuthIdentity>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
 ) -> impl IntoResponse {
     let id = match identity {
         Some(Extension(ref id)) if id.has_role("operator") => id.clone(),
@@ -7192,7 +6955,7 @@ pub async fn quick_connect(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
-    Extension(vault): Extension<VaultState>,
+    Extension(vault): Extension<ConnectionsState>,
     Extension(oidc_enabled): Extension<OidcEnabled>,
     request: axum::extract::Request,
 ) -> Response {
@@ -7243,7 +7006,7 @@ pub async fn quick_connect(
             );
         }
 
-        if !vault.any_connected().await {
+        if !vault.is_available().await {
             return quick_connect_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Address book is temporarily unavailable (Vault offline).",
@@ -9685,92 +9448,26 @@ mod tests {
     }
 
     #[test]
-    fn test_partition_single_vault_writes_one_store() {
-        // Quick-start invariant: with split=false everything lands in the local
-        // map and shared stays empty, so the caller writes the one store once.
+    fn credential_save_updates_typed_values_and_keeps_the_rest() {
         let existing = hm(&[("corp_user", "alice"), ("corp_password", "old")]);
-        let incoming = hm(&[("corp_password", "new")]);
-        let scopes = hm(&[("corp_password", "shared")]); // ignored when !split
-        let (local, shared) = partition_credential_writes(
-            existing,
-            std::collections::HashMap::new(),
-            &incoming,
-            &scopes,
-            "local",
-            false,
-        );
-        assert_eq!(local.get("corp_user").unwrap(), "alice"); // untouched kept
-        assert_eq!(local.get("corp_password").unwrap(), "new"); // updated
-        assert!(shared.is_empty(), "single store must not populate shared");
+        let incoming = hm(&[("corp_password", "new"), ("vpn_key", "k")]);
+        let merged = merge_credential_writes(existing, &incoming);
+        assert_eq!(merged.get("corp_user").unwrap(), "alice"); // untouched kept
+        assert_eq!(merged.get("corp_password").unwrap(), "new"); // updated
+        assert_eq!(merged.get("vpn_key").unwrap(), "k"); // added
     }
 
     #[test]
-    fn test_partition_blank_keeps_existing() {
+    fn credential_save_blank_keeps_existing() {
         // Blank value = keep existing (the "leave blank to keep" secret path).
         let existing = hm(&[("corp_password", "secret")]);
-        let incoming = hm(&[("corp_password", "")]);
-        let (local, _shared) = partition_credential_writes(
-            existing,
-            std::collections::HashMap::new(),
-            &incoming,
-            &std::collections::HashMap::new(),
-            "local",
-            false,
+        let merged =
+            merge_credential_writes(existing, &hm(&[("corp_password", ""), ("new_pw", "")]));
+        assert_eq!(merged.get("corp_password").unwrap(), "secret");
+        assert!(
+            !merged.contains_key("new_pw"),
+            "a blank new key stores nothing"
         );
-        assert_eq!(local.get("corp_password").unwrap(), "secret");
-    }
-
-    #[test]
-    fn test_partition_split_routes_by_scope() {
-        let incoming = hm(&[("shared_pw", "s"), ("local_pw", "l")]);
-        let scopes = hm(&[("shared_pw", "shared"), ("local_pw", "local")]);
-        let (local, shared) = partition_credential_writes(
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-            &incoming,
-            &scopes,
-            "local",
-            true,
-        );
-        assert_eq!(shared.get("shared_pw").unwrap(), "s");
-        assert!(!shared.contains_key("local_pw"));
-        assert_eq!(local.get("local_pw").unwrap(), "l");
-        assert!(!local.contains_key("shared_pw"));
-    }
-
-    #[test]
-    fn test_partition_split_moves_between_scopes_keeping_value() {
-        // A key currently local, re-saved with scope=shared and a blank value,
-        // moves to shared carrying its existing value and leaves local.
-        let existing_local = hm(&[("corp_pw", "keepme")]);
-        let incoming = hm(&[("corp_pw", "")]); // blank = keep value
-        let scopes = hm(&[("corp_pw", "shared")]);
-        let (local, shared) = partition_credential_writes(
-            existing_local,
-            std::collections::HashMap::new(),
-            &incoming,
-            &scopes,
-            "local",
-            true,
-        );
-        assert!(!local.contains_key("corp_pw"), "must leave the local store");
-        assert_eq!(shared.get("corp_pw").unwrap(), "keepme");
-    }
-
-    #[test]
-    fn test_partition_split_default_scope_applies() {
-        // No explicit scope for the key → falls back to default_scope.
-        let incoming = hm(&[("corp_pw", "v")]);
-        let (local, shared) = partition_credential_writes(
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-            &incoming,
-            &std::collections::HashMap::new(),
-            "shared",
-            true,
-        );
-        assert_eq!(shared.get("corp_pw").unwrap(), "v");
-        assert!(local.is_empty());
     }
 
     #[test]

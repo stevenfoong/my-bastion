@@ -5,7 +5,7 @@
 use super::*;
 use std::collections::HashMap;
 
-/// Sanitize an email address for use as a Vault path component.
+/// Sanitize an email address for use as a store path component.
 /// Replaces `@` with `_at_` and strips any characters not in `[a-zA-Z0-9._-]`.
 fn sanitize_email_key(email: &str) -> String {
     email
@@ -94,7 +94,7 @@ pub fn resolve_credential_variables(
 impl ConnectionStore {
     // ── User credential variables ──
 
-    /// Read a user's stored credential variables from Vault.
+    /// Read a user's stored credential variables.
     /// Path: `<base_path>/users/<sanitized_email>`
     pub async fn get_user_credentials(
         &self,
@@ -104,7 +104,7 @@ impl ConnectionStore {
             .await
     }
 
-    /// Write a user's credential variables to Vault (full replace).
+    /// Write a user's credential variables (full replace).
     /// Path: `<base_path>/users/<sanitized_email>`
     pub async fn put_user_credentials(
         &self,
@@ -115,8 +115,7 @@ impl ConnectionStore {
             .await
     }
 
-    /// Read credential variables by the already-sanitised users key. Used by
-    /// `vault-migrate` (which enumerates raw keys and must not re-sanitise).
+    /// Read credential variables by the already-sanitised users key.
     pub async fn get_user_credentials_by_key(
         &self,
         key: &str,
@@ -155,18 +154,7 @@ impl ConnectionStore {
             .map_err(write_failed("put user credentials"))
     }
 
-    /// List the raw key names under `<base_path>/users/` (each a sanitised
-    /// email). Empty when no credentials have been stored yet.
-    pub async fn list_user_keys(&self) -> Result<Vec<String>, ConnectionError> {
-        let path = format!("{}/users", self.base_path);
-        match self.kv_list(&path).await {
-            Ok(keys) => Ok(keys.into_iter().filter(|k| !k.ends_with('/')).collect()),
-            Err(ConnectionError::NotFound) => Ok(Vec::new()),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Delete a user's credential variables from Vault.
+    /// Delete a user's credential variables.
     #[allow(dead_code)] // Will be used by admin endpoint
     pub async fn delete_user_credentials(&self, email: &str) -> Result<(), ConnectionError> {
         let key = sanitize_email_key(email);

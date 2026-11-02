@@ -639,13 +639,11 @@ mod tests {
         let db = TempDb::new();
         let c = client(&db);
         assert!(c.get_user_credentials("a@b.c").await.unwrap().is_empty());
-        assert!(c.list_user_keys().await.unwrap().is_empty());
         let creds = [("corp_pw".to_string(), "x".to_string())]
             .into_iter()
             .collect();
         c.put_user_credentials("a@b.c", &creds).await.unwrap();
         assert_eq!(c.get_user_credentials("a@b.c").await.unwrap(), creds);
-        assert_eq!(c.list_user_keys().await.unwrap(), vec!["a_at_b.c"]);
         c.delete_user_credentials("a@b.c").await.unwrap();
         c.delete_user_credentials("a@b.c").await.unwrap();
 

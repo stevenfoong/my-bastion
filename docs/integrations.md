@@ -484,8 +484,7 @@ path = "/var/run/secrets/vault/token"
 ```
 
 JWT mode rereads the file on login and reauthentication, including after a 403.
-A missing, empty or rejected JWT does not trigger AppRole fallback. Use the same
-nested block under `vault_shared` or `vault_local` for additional backends.
+A missing, empty or rejected JWT does not trigger AppRole fallback.
 
 #### Other identity sources
 

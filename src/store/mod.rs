@@ -111,6 +111,12 @@ pub trait SecretStore: Send + Sync {
     /// Nothing there is not an error.
     async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError>;
 
+    /// Whether the store can serve requests now. A Vault store exists only
+    /// once logged in and renews its own token, so both stores answer yes.
+    fn is_available(&self) -> bool {
+        true
+    }
+
     /// Start whatever the backend needs kept up in the background (Vault:
     /// token renewal). Nothing by default.
     fn spawn_maintenance(self: Arc<Self>) {}

@@ -169,7 +169,7 @@ fn default_kek_source() -> String {
     "file:/etc/mybastion/kek".into()
 }
 
-/// `[vault.jwt_auth]` (or under `[vault_shared]` / `[vault_local]`): log in
+/// `[vault.jwt_auth]`: log in
 /// with a workload identity JWT instead of AppRole. The JWT is fetched again
 /// at every login, so a rotated token is always the one used. Exactly one of
 /// `path` and `token_command` gives it.
@@ -521,10 +521,6 @@ fn default_vault_mount() -> String {
     "secret".into()
 }
 
-fn default_user_credentials_scope() -> String {
-    "local".into()
-}
-
 fn default_vault_base_path() -> String {
     "mybastion".into()
 }
@@ -631,30 +627,11 @@ pub struct Config {
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
 
-    /// Default scope for a NEW per-user credential variable when more than one
-    /// Vault backend is configured: "local" (default — stays on this instance's
-    /// Vault, survives a central outage) or "shared" (propagates fleet-wide via
-    /// `[vault_shared]`). Ignored in a single-Vault deployment: with one store
-    /// the shared/local distinction is meaningless and the UI hides the toggle.
-    #[serde(default = "default_user_credentials_scope")]
-    pub user_credentials_default_scope: String,
-
     pub tls: Option<TlsConfig>,
     pub oidc: Option<OidcConfig>,
-    /// Primary/default Vault backend. Serves any address-book scope that does
-    /// not have a dedicated backend below, and is the home of unscoped secrets
-    /// (the LUKS key). A bare `[vault]` with no overrides behaves exactly as a
-    /// single-Vault deployment always has.
+    /// `[vault]`: connections, credential variables and the LUKS key in
+    /// Vault/OpenBao, unless `[storage] backend = "sqlite"`.
     pub vault: Option<VaultConfig>,
-    /// Optional dedicated backend for the `shared` scope (e.g. a central,
-    /// fleet-wide Vault). When set, shared-scope folders/entries route here
-    /// instead of `[vault]`. Secret ID via `VAULT_SHARED_SECRET_ID`.
-    pub vault_shared: Option<VaultConfig>,
-    /// Optional dedicated backend for the `instance` (local) scope (e.g. a
-    /// per-host Vault that stays reachable during a central outage). When set,
-    /// instance-scope folders/entries route here. Secret ID via
-    /// `VAULT_LOCAL_SECRET_ID`.
-    pub vault_local: Option<VaultConfig>,
     /// `[storage]`: SQLite instead of Vault (see `StorageConfig`).
     pub storage: Option<StorageConfig>,
     pub drive: Option<DriveConfig>,
@@ -1385,12 +1362,9 @@ impl Default for Config {
             session_cleanup_delay_secs: default_session_cleanup_delay_secs(),
             rate_limit: false,
             trusted_proxies: Vec::new(),
-            user_credentials_default_scope: default_user_credentials_scope(),
             tls: None,
             oidc: None,
             vault: None,
-            vault_shared: None,
-            vault_local: None,
             storage: None,
             drive: None,
             theme: None,
@@ -1695,14 +1669,6 @@ mod tests {
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(config.vault.is_some());
-        assert!(
-            config.vault_shared.is_none(),
-            "[vault_shared] must be optional"
-        );
-        assert!(
-            config.vault_local.is_none(),
-            "[vault_local] must be optional"
-        );
     }
 
     #[test]

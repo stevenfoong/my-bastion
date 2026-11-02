@@ -8,7 +8,6 @@ mod db;
 mod drive;
 mod guacd;
 mod import;
-mod migrate;
 mod oidc;
 mod protocol;
 mod pve;
@@ -21,8 +20,8 @@ mod vdi;
 mod websocket;
 
 use crate::api::{
-    AppState, CredentialDefaultScope, DriveConfigured, OidcEnabled, OidcHandle, SiteTitle,
-    ThemeData, VaultBackends, VaultCell, VaultConfigured, VaultState,
+    AppState, Connections, ConnectionsState, DriveConfigured, OidcEnabled, OidcHandle, SiteTitle,
+    StoreCell, StoreConfigured, ThemeData,
 };
 use crate::config::Config;
 use crate::db::Db;
@@ -206,33 +205,6 @@ enum Command {
         map: Vec<String>,
     },
 
-    /// Copy an address-book scope subtree between configured Vault backends
-    /// (for the multi-Vault DR split). Copies entries and every folder's
-    /// `.config`; run with --dry-run first.
-    VaultMigrate {
-        /// Scope to migrate: "shared" or "instance"
-        #[arg(long)]
-        scope: String,
-        /// Source backend: "vault", "vault_shared", or "vault_local"
-        #[arg(long)]
-        from: String,
-        /// Destination backend: "vault", "vault_shared", or "vault_local"
-        #[arg(long)]
-        to: String,
-        /// Also copy ALL per-user credential secrets (users/*). This makes
-        /// those credentials shared; normally you toggle per-credential in the
-        /// My Credentials UI instead.
-        #[arg(long)]
-        users: bool,
-        /// Overwrite entries that already exist in the destination
-        /// (default: skip existing).
-        #[arg(long)]
-        overwrite: bool,
-        /// Preview without writing to the destination
-        #[arg(long)]
-        dry_run: bool,
-    },
-
     /// Secret store tools: copy between Vault and SQLite, rotate the
     /// SQLite KEK, write a secret (e.g. the LUKS key).
     Storage {
@@ -331,17 +303,6 @@ async fn main() {
                 &map,
             )
             .await;
-        }
-        Some(Command::VaultMigrate {
-            scope,
-            from,
-            to,
-            users,
-            overwrite,
-            dry_run,
-        }) => {
-            migrate::cmd_vault_migrate(&config, &scope, &from, &to, users, overwrite, dry_run)
-                .await;
         }
         Some(Command::Storage { command }) => store::cli::run(&config, command).await,
     }
@@ -826,7 +787,7 @@ async fn security_headers(
 /// drive-init block once the awaited connect below has populated the cell).
 async fn connect_vault_backend(
     label: &'static str,
-    cell: VaultCell,
+    cell: StoreCell,
     config: crate::config::VaultConfig,
     secret_id: String,
     luks_drive: Option<crate::config::DriveConfig>,
@@ -924,21 +885,12 @@ async fn run_server(config: Config, database: Db) {
         None
     };
 
-    // Initialize Vault backend(s) if configured.
-    //
-    // `[vault]` is the default/primary backend and the home of unscoped secrets
-    // (the LUKS key). Optional `[vault_shared]` / `[vault_local]` route the
-    // shared / instance address-book scopes to dedicated Vaults so one being
-    // down cannot take the others with it. Each backend gets its own connection
-    // cell, background retry, and token renewal. A bare `[vault]` behaves
-    // exactly as a single-Vault deployment: shared and local alias the default
-    // cell, so every scope resolves to the one connection.
-    let default_cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-    let mut shared_cell = default_cell.clone();
-    let mut local_cell = default_cell.clone();
+    // Open the secret store that holds connections, credential variables and
+    // the LUKS key: SQLite, or Vault (connected in the background, with
+    // retries, when it is down at startup).
+    let default_cell: StoreCell = Arc::new(tokio::sync::RwLock::new(None));
 
-    // `[storage] backend = "sqlite"`: one local store serves every scope and
-    // the unscoped secrets, and the `[vault*]` sections are not used.
+    // `[storage] backend = "sqlite"`: `[vault]` is not used at runtime.
     let sqlite_storage = config.sqlite_storage();
     if let Some(sc) = sqlite_storage {
         match store::sqlite_client(sc) {
@@ -973,28 +925,6 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
-    if let Some(vc) = config.vault_shared.as_ref().filter(|_| use_vault) {
-        match vc.login_secret("VAULT_SHARED_SECRET_ID") {
-            Ok(sid) => {
-                let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-                connect_vault_backend("shared", cell.clone(), vc.clone(), sid, None).await;
-                shared_cell = cell;
-            }
-            Err(e) => tracing::error!("[vault_shared]: {e}; shared-scope connections unavailable"),
-        }
-    }
-
-    if let Some(vc) = config.vault_local.as_ref().filter(|_| use_vault) {
-        match vc.login_secret("VAULT_LOCAL_SECRET_ID") {
-            Ok(sid) => {
-                let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-                connect_vault_backend("local", cell.clone(), vc.clone(), sid, None).await;
-                local_cell = cell;
-            }
-            Err(e) => tracing::error!("[vault_local]: {e}; instance-scope connections unavailable"),
-        }
-    }
-
     // Initialize drive / LUKS if configured (and Vault is already available)
     if let Some(ref drive_config) = config.drive {
         if drive_config.enabled {
@@ -1019,19 +949,11 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
-    // Assemble the shared VaultBackends state. `shared`/`local` alias the
-    // default cell unless a dedicated backend was configured above.
-    let vault_client: VaultState = Arc::new(VaultBackends {
-        default: default_cell,
-        shared: shared_cell,
-        local: local_cell,
-    });
+    let vault_client: ConnectionsState = Arc::new(Connections { cell: default_cell });
 
     let oidc_enabled = OidcEnabled(oidc_state.is_some());
-    let vault_configured = VaultConfigured(config.secrets_configured());
+    let vault_configured = StoreConfigured(config.secrets_configured());
     let ab_changes = api::AddressBookChanges::default();
-    let credential_default_scope =
-        CredentialDefaultScope(config.user_credentials_default_scope.clone());
     let drive_configured = DriveConfigured {
         configured: config.drive.is_some(),
         enabled: config.drive.as_ref().is_some_and(|d| d.enabled),
@@ -1528,7 +1450,6 @@ async fn run_server(config: Config, database: Db) {
         .layer(Extension(ws_ticket_store.clone()))
         .layer(Extension(vault_client.clone()))
         .layer(Extension(vault_configured.clone()))
-        .layer(Extension(credential_default_scope.clone()))
         .layer(Extension(database.clone()))
         .layer(Extension(ab_changes.clone()))
         .layer(Extension(mp4_converter.clone()));
