@@ -101,6 +101,11 @@ fi
 
 %post
 chown -R mybastion:mybastion %{statedir}
+# Key-encryption key for the SQLite secret store (created once, never overwritten)
+if [ ! -f %{confdir}/kek ]; then
+    (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > %{confdir}/kek)
+    chown mybastion:mybastion %{confdir}/kek
+fi
 # Generate self-signed TLS certificate if none exists
 if [ ! -f %{confdir}/tls/cert.pem ] || [ ! -f %{confdir}/tls/key.pem ]; then
     CERT_HOSTNAME=$(hostname -f 2>/dev/null || hostname)

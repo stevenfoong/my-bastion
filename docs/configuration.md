@@ -119,9 +119,73 @@ Enables OpenID Connect authentication. When configured, the web UI shows a login
 
 **Note:** `issuer_url` must match the discovered issuer URI **exactly**, including default ports and trailing slashes. For example, `https://idp.example.com/` and `https://idp.example.com` may be treated as different issuers. Check your provider's `.well-known/openid-configuration` for the canonical value.
 
+## `[storage]` section
+
+Where connections, folder configs, credential variables and the LUKS key are
+kept. By default that is an encrypted SQLite file, and this section only
+changes its location or key. Vault/OpenBao is used instead with
+`backend = "vault"`, or when this section is absent and `[vault]` is
+configured. With SQLite, `[vault]` is not used at runtime (`storage migrate`
+still reads it). One store serves both the shared and instance scopes.
+
+```toml
+[storage]
+backend = "sqlite"
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
+# instance_name = "prod-1"   # enables the instance scope
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `sqlite` | `sqlite` or `vault` |
+| `path` | `/var/lib/mybastion/secrets.db` | The secrets file, kept apart from `db_path`. Created with mode 0600. |
+| `kek_source` | `file:/etc/mybastion/kek` | Where the key-encryption key is: `file:<path>`, `env:<VAR>`, or `systemd-creds:<name>` (read from `$CREDENTIALS_DIRECTORY`, for `LoadCredentialEncrypted=`). 32 bytes as 64 hex digits or base64. |
+| `base_path` | `mybastion` | Prefix of the address-book paths, as `[vault] base_path` |
+| `instance_name` | — | Enables the instance scope, as `[vault] instance_name` |
+
+The installers (`install.sh`, the `.deb` and `.rpm`, the release tarball)
+create `/etc/mybastion/kek` on first install if it does not exist, readable by
+the `mybastion` user only. The Docker image creates it on first start: keep
+`/etc/mybastion` on a volume (it is declared as one), or the key is lost with
+the container and `secrets.db` can no longer be opened. To make one by hand:
+
+```bash
+sudo sh -c 'umask 277; openssl rand -hex 32 > /etc/mybastion/kek'
+sudo chown mybastion /etc/mybastion/kek
+```
+
+**Encryption.** A random data key encrypts every row with AES-256-GCM. The
+KEK wraps the data key, and only the wrapped key is stored in the file. Each
+row is bound to its path and version, so a row copied to another path or
+renumbered fails to decrypt instead of returning someone else's secret.
+
+**What this protects.** A copied `secrets.db` or a backup of it is unreadable
+without the KEK. It does **not** protect against someone who controls the
+host running mybastion: that host has to read the KEK to start. This is the
+same limit as Vault with an auto-unseal key on the same host. Keep the KEK
+out of the backups of `secrets.db`. Replacing the whole file with an older
+copy (rolling back every secret together) is not detected.
+
+**Tools:**
+
+- `mybastion storage migrate --from vault --to sqlite --dry-run`: copy
+  everything under `base_path` between backends (either direction; existing
+  secrets are kept unless `--overwrite`). Add `--path <kv path>` for secrets
+  outside it, such as the drive's `luks_key_path`. To import an existing
+  rustguac Vault, set `[vault] base_path = "rustguac"` (and `[storage]
+  base_path = "rustguac"` to keep the same paths). `[vault]` must be in the
+  config; with it there and no `[storage]` the server still runs on Vault, so
+  add `[storage]` (backend `sqlite`) and restart once the copy is done.
+- `mybastion rotate-kek --new-kek-source file:/etc/mybastion/kek.new`:
+  re-wrap the data key under a new KEK (rows are not re-encrypted, and a
+  running server keeps working), then point `kek_source` at the new one.
+- `mybastion secret put mybastion/luks key=@/root/luks.key`: write one secret,
+  e.g. the LUKS key that `[drive] luks_key_path` names.
+
 ## `[vault]` section
 
-Enables the Vault-backed connections. Uses AppRole by default, requiring the
+Keeps connections in Vault/OpenBao instead of SQLite (see `[storage]` above). Uses AppRole by default, requiring the
 `VAULT_SECRET_ID` environment variable. Configure `[vault.jwt_auth]` to use a
 workload JWT instead; JWT mode does not require an AppRole role ID or SecretID.
 
@@ -170,62 +234,6 @@ audience and exact workload identity. This is separate from users' OIDC login.
 
 See [Integrations](integrations.md#workload-jwt-authentication) for Kubernetes,
 Nomad, SPIRE and cloud VM setups.
-
-## `[storage]` section
-
-Keeps connections, folder configs and credential variables in an encrypted
-SQLite file instead of Vault. Without this section, or with
-`backend = "vault"`, they live in `[vault]` as before. With
-`backend = "sqlite"`, the `[vault*]` sections are not used at runtime, and
-one store serves both the shared and instance scopes.
-
-```toml
-[storage]
-backend = "sqlite"
-path = "/var/lib/mybastion/secrets.db"
-kek_source = "file:/etc/mybastion/kek"
-# instance_name = "prod-1"   # enables the instance scope
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `backend` | `vault` | `vault` or `sqlite` |
-| `path` | `/var/lib/mybastion/secrets.db` | The secrets file, kept apart from `db_path`. Created with mode 0600. |
-| `kek_source` | `file:/etc/mybastion/kek` | Where the key-encryption key is: `file:<path>`, `env:<VAR>`, or `systemd-creds:<name>` (read from `$CREDENTIALS_DIRECTORY`, for `LoadCredentialEncrypted=`). 32 bytes as 64 hex digits or base64. |
-| `base_path` | `mybastion` | Prefix of the address-book paths, as `[vault] base_path` |
-| `instance_name` | — | Enables the instance scope, as `[vault] instance_name` |
-
-Create a KEK before the first start:
-
-```bash
-sudo sh -c 'umask 277; openssl rand -hex 32 > /etc/mybastion/kek'
-sudo chown mybastion /etc/mybastion/kek
-```
-
-**Encryption.** A random data key encrypts every row with AES-256-GCM. The
-KEK wraps the data key, and only the wrapped key is stored in the file. Each
-row is bound to its path and version, so a row copied to another path or
-renumbered fails to decrypt instead of returning someone else's secret.
-
-**What this protects.** A copied `secrets.db` or a backup of it is unreadable
-without the KEK. It does **not** protect against someone who controls the
-host running mybastion: that host has to read the KEK to start. This is the
-same limit as Vault with an auto-unseal key on the same host. Keep the KEK
-out of the backups of `secrets.db`. Replacing the whole file with an older
-copy (rolling back every secret together) is not detected.
-
-**Tools:**
-
-- `mybastion storage migrate --from vault --to sqlite --dry-run`: copy
-  everything under `base_path` between backends (either direction; existing
-  secrets are kept unless `--overwrite`). Add `--path <kv path>` for secrets
-  outside it, such as the drive's `luks_key_path`. Both `[vault]` and
-  `[storage]` must be in the config; switch `backend` and restart afterwards.
-- `mybastion storage rotate-kek --new-kek-source file:/etc/mybastion/kek.new`:
-  re-wrap the data key under a new KEK (rows are not re-encrypted, and a
-  running server keeps working), then point `kek_source` at the new one.
-- `mybastion storage put mybastion/luks key=@/root/luks.key`: write one secret,
-  e.g. the LUKS key that `[drive] luks_key_path` names.
 
 ## `[drive]` section
 

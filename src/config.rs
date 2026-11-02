@@ -134,13 +134,12 @@ impl std::fmt::Debug for VaultConfig {
 }
 
 /// `[storage]`: where connections, folder configs and credential variables
-/// are kept. Without it (or with `backend = "vault"`) they live in `[vault]`
-/// as before; `backend = "sqlite"` keeps them in an encrypted SQLite file and
-/// ignores the `[vault*]` sections at runtime (`storage migrate` still reads
-/// them).
+/// are kept. SQLite (an encrypted file) unless `backend = "vault"`, or unless
+/// the section is absent and `[vault]` is configured. With SQLite, `[vault]`
+/// is not used at runtime (`storage migrate` still reads it).
 #[derive(Debug, Deserialize, Clone)]
 pub struct StorageConfig {
-    /// "vault" (default) or "sqlite".
+    /// "sqlite" (default) or "vault".
     #[serde(default = "default_storage_backend")]
     pub backend: String,
     /// The SQLite secrets file, kept apart from `db_path`.
@@ -158,7 +157,19 @@ pub struct StorageConfig {
 }
 
 fn default_storage_backend() -> String {
-    "vault".into()
+    "sqlite".into()
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_storage_backend(),
+            path: default_secrets_path(),
+            kek_source: default_kek_source(),
+            base_path: default_vault_base_path(),
+            instance_name: None,
+        }
+    }
 }
 
 fn default_secrets_path() -> PathBuf {
@@ -1456,9 +1467,19 @@ impl Config {
         self.spice.as_ref().is_some_and(|s| s.enabled)
     }
 
-    /// `[storage]` when it selects the SQLite backend.
-    pub fn sqlite_storage(&self) -> Option<&StorageConfig> {
-        self.storage.as_ref().filter(|s| s.backend == "sqlite")
+    /// The SQLite store's settings when it holds the connections:
+    /// `[storage] backend = "sqlite"` (the default), or no `[storage]` and no
+    /// `[vault]` either.
+    pub fn sqlite_storage(&self) -> Option<StorageConfig> {
+        match &self.storage {
+            Some(s) => (s.backend == "sqlite").then(|| s.clone()),
+            None => self.vault.is_none().then(StorageConfig::default),
+        }
+    }
+
+    /// `[storage]`, or its defaults when the section is absent.
+    pub fn storage_settings(&self) -> StorageConfig {
+        self.storage.clone().unwrap_or_default()
     }
 
     /// Whether any secret store is configured: Vault or SQLite.

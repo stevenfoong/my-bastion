@@ -127,24 +127,57 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn storage_section_selects_sqlite_only_when_asked() {
+    fn sqlite_is_the_default_store() {
+        // Nothing configured: SQLite at the default paths.
         let none: Config = toml::from_str("").unwrap();
-        assert!(none.sqlite_storage().is_none() && !none.secrets_configured());
-
-        let vault: Config = toml::from_str("[storage]\nbackend = \"vault\"\n").unwrap();
-        assert!(vault.sqlite_storage().is_none());
-
-        let sqlite: Config = toml::from_str(
-            "[storage]\nbackend = \"sqlite\"\npath = \"/tmp/s.db\"\ninstance_name = \"n1\"\n",
-        )
-        .unwrap();
-        let sc = sqlite.sqlite_storage().unwrap();
+        let sc = none.sqlite_storage().unwrap();
+        assert_eq!(
+            sc.path,
+            std::path::PathBuf::from("/var/lib/mybastion/secrets.db")
+        );
         assert_eq!(sc.kek_source, "file:/etc/mybastion/kek");
         assert_eq!(sc.base_path, "mybastion");
-        assert_eq!(sc.instance_name.as_deref(), Some("n1"));
-        assert!(sqlite.secrets_configured());
+        assert!(none.secrets_configured());
 
-        let typo: Config = toml::from_str("[storage]\nbackend = \"sqlit\"\n").unwrap();
+        // Only [vault]: an existing Vault setup keeps using Vault.
+        let vault_only: Config = toml::from_str(
+            "[vault]
+addr = \"https://v:8200\"
+role_id = \"r\"
+",
+        )
+        .unwrap();
+        assert!(vault_only.sqlite_storage().is_none());
+        assert!(vault_only.secrets_configured());
+
+        // An explicit [storage] decides, and its backend defaults to sqlite.
+        let both: Config = toml::from_str(
+            "[storage]
+instance_name = \"n1\"
+[vault]
+addr = \"https://v:8200\"
+role_id = \"r\"
+",
+        )
+        .unwrap();
+        assert_eq!(
+            both.sqlite_storage().unwrap().instance_name.as_deref(),
+            Some("n1")
+        );
+        let explicit_vault: Config = toml::from_str(
+            "[storage]
+backend = \"vault\"
+",
+        )
+        .unwrap();
+        assert!(explicit_vault.sqlite_storage().is_none());
+
+        let typo: Config = toml::from_str(
+            "[storage]
+backend = \"sqlit\"
+",
+        )
+        .unwrap();
         assert!(typo.validate_storage().is_err());
     }
 }

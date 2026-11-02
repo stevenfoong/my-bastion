@@ -9,6 +9,11 @@ chromium_path = "chromium"
 display_range_start = 100
 display_range_end = 199
 
+[storage]
+# backend = "vault" keeps connections in [vault] instead
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
+
 # Trusted proxy CIDRs — set to your reverse proxy IPs to honour X-Forwarded-For
 # trusted_proxies = ["127.0.0.0/8"]
 

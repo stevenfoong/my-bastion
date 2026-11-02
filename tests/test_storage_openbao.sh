@@ -3,7 +3,7 @@
 # Vault <-> SQLite migration against a real OpenBao, run in dev mode (in
 # memory, gone on exit):
 #   1. mybastion on OpenBao writes folders, entries and defaults over the
-#      REST API; `storage put --backend vault` adds a user credential and a
+#      REST API; `secret put --backend vault` adds a user credential and a
 #      LUKS key. Every document under secret/mybastion is dumped.
 #   2. `storage migrate --from vault --to sqlite` (dry run first), then
 #      mybastion serves the entries from SQLite.
@@ -140,12 +140,12 @@ check "$(send /api/addressbook/folders/instance/Lab/entries \
     '{"name":"vnc1","type":"vnc","hostname":"10.9.0.1","port":5900,"password":"vncpw"}')" 201 "create instance VNC entry"
 check "$(send /api/addressbook/folders/shared/Prod/defaults '{"ssh":{"username":"deploy","password":"defpw"}}' PUT)" 200 "set folder defaults"
 stop
-"$BIN" --config "$W/config.toml" storage put --backend vault mybastion/users/a_at_b.c corp_pw=userpw >/dev/null 2>&1
+"$BIN" --config "$W/config.toml" secret put --backend vault mybastion/users/a_at_b.c corp_pw=userpw >/dev/null 2>&1
 printf 'luks-key-material' > "$W/luks.key"
-"$BIN" --config "$W/config.toml" storage put --backend vault mybastion/luks "key=@$W/luks.key" >/dev/null 2>&1
+"$BIN" --config "$W/config.toml" secret put --backend vault mybastion/luks "key=@$W/luks.key" >/dev/null 2>&1
 check "$(bao kv get -field=hostname secret/mybastion/shared/Prod/win01)" 10.0.0.5 "entry is in OpenBao"
 check "$(bao kv get -field=hostname secret/mybastion/instance/node1/Lab/vnc1)" 10.9.0.1 "instance entry is under instance/node1"
-check "$(bao kv get -field=key secret/mybastion/luks)" luks-key-material "storage put wrote the LUKS key"
+check "$(bao kv get -field=key secret/mybastion/luks)" luks-key-material "secret put wrote the LUKS key"
 dump > "$W/A.json"
 N=$(count < "$W/A.json")
 check "$N" 9 "documents in OpenBao"

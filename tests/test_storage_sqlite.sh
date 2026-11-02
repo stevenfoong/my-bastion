@@ -2,8 +2,8 @@
 #
 # Live check of the SQLite secret store with no Vault: starts mybastion with
 # [storage] backend = "sqlite", creates a folder and an RDP entry over the
-# REST API, restarts and reads them back, then exercises `storage put` and
-# `storage rotate-kek`. Needs only cargo and curl.
+# REST API, restarts and reads them back, then exercises `secret put` and
+# `rotate-kek`. Needs only cargo and curl.
 #
 # Usage: ./tests/test_storage_sqlite.sh
 #   PORT=18089 by default.
@@ -73,10 +73,10 @@ check "$(cat "$W"/secrets.db* | grep -c 'S3cret-e2e-pw')" 0 "password not in cle
 check "$(stat -c %a "$W/secrets.db")" 600 "secrets.db is mode 0600"
 
 printf 'luks-key-material' > "$W/luks.key"
-check "$("$BIN" --config "$W/config.toml" storage put mybastion/luks "key=@$W/luks.key" 2>/dev/null)" \
-    "Wrote mybastion/luks on sqlite (version 1)" "storage put"
+check "$("$BIN" --config "$W/config.toml" secret put mybastion/luks "key=@$W/luks.key" 2>/dev/null)" \
+    "Wrote mybastion/luks on sqlite (version 1)" "secret put"
 head -c 32 /dev/urandom | base64 > "$W/kek2" && chmod 400 "$W/kek2"
-"$BIN" --config "$W/config.toml" storage rotate-kek --new-kek-source "file:$W/kek2" >/dev/null 2>&1
+"$BIN" --config "$W/config.toml" rotate-kek --new-kek-source "file:$W/kek2" >/dev/null 2>&1
 start
 check "$(grep -c 'does not open' "$W/server.log")" 1 "old KEK refused after rotate-kek"
 stop

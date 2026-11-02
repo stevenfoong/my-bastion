@@ -111,6 +111,15 @@ chown root:mybastion "$CONF_DIR" "$CONF_DIR/mybastion.toml"
 chmod 750 "$CONF_DIR"
 chmod 640 "$CONF_DIR/mybastion.toml"
 
+# Key-encryption key for the SQLite secret store. Created once and never
+# overwritten: secrets.db can only be opened with it. Keep it out of the
+# backups of $STATE_DIR.
+if [[ ! -f "$CONF_DIR/kek" ]]; then
+    (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/kek")
+    chown mybastion:mybastion "$CONF_DIR/kek"
+    info "Created $CONF_DIR/kek"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 3: ldconfig
 # ---------------------------------------------------------------------------

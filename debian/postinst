@@ -9,6 +9,13 @@ chown root:mybastion /etc/mybastion /etc/mybastion/mybastion.toml
 chmod 750 /etc/mybastion
 chmod 640 /etc/mybastion/mybastion.toml
 
+# Key-encryption key for the SQLite secret store. Created once and never
+# overwritten: secrets.db can only be opened with it.
+if [ ! -f /etc/mybastion/kek ]; then
+    (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/mybastion/kek)
+    chown mybastion:mybastion /etc/mybastion/kek
+fi
+
 # Chromium policy: web session hardening.
 # DeveloperToolsAvailability=0: CDP needed for login scripts. Users can't reach DevTools
 # through the UI anyway — chrome://* is in URLBlocklist.

@@ -205,11 +205,25 @@ enum Command {
         map: Vec<String>,
     },
 
-    /// Secret store tools: copy between Vault and SQLite, rotate the
-    /// SQLite KEK, write a secret (e.g. the LUKS key).
+    /// Secret store tools: `storage migrate` copies between Vault and SQLite.
     Storage {
         #[command(subcommand)]
         command: store::cli::StorageCommand,
+    },
+
+    /// Re-wrap the SQLite data key under a new KEK. Rows are not
+    /// re-encrypted, and a running server keeps working. Afterwards set
+    /// `[storage] kek_source` to the new source.
+    RotateKek {
+        /// Where the new KEK is: file:<path>, env:<VAR> or systemd-creds:<name>
+        #[arg(long)]
+        new_kek_source: String,
+    },
+
+    /// Write secrets directly: `secret put` (e.g. the LUKS drive key).
+    Secret {
+        #[command(subcommand)]
+        command: store::cli::SecretCommand,
     },
 }
 
@@ -304,7 +318,11 @@ async fn main() {
             )
             .await;
         }
-        Some(Command::Storage { command }) => store::cli::run(&config, command).await,
+        Some(Command::Storage { command }) => store::cli::run_storage(&config, command).await,
+        Some(Command::RotateKek { new_kek_source }) => {
+            store::cli::run_rotate_kek(&config, &new_kek_source)
+        }
+        Some(Command::Secret { command }) => store::cli::run_secret(&config, command).await,
     }
 }
 
@@ -892,7 +910,7 @@ async fn run_server(config: Config, database: Db) {
 
     // `[storage] backend = "sqlite"`: `[vault]` is not used at runtime.
     let sqlite_storage = config.sqlite_storage();
-    if let Some(sc) = sqlite_storage {
+    if let Some(sc) = &sqlite_storage {
         match store::sqlite_client(sc) {
             Ok(client) => {
                 tracing::info!("Secret store: SQLite {}", sc.path.display());

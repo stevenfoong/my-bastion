@@ -176,7 +176,18 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 
 # ─── Vault / Address Book ──────────────────────────────────────────────────
 #
-# Enables the Vault-backed address book. Connection entries (SSH, RDP, Web)
+# Secret store: where connections, folder configs, credential variables and
+# the LUKS key are kept. SQLite (encrypted at rest) is the default; the
+# installers create the KEK. See docs/configuration.md.
+
+# [storage]
+# backend = "sqlite"                         # or "vault" to use [vault] below
+# path = "/var/lib/mybastion/secrets.db"
+# kek_source = "file:/etc/mybastion/kek"     # or env:VAR, systemd-creds:name
+# instance_name = "prod-1"                   # enables instance-scoped entries
+
+# Vault/OpenBao instead of SQLite: used when [storage] backend = "vault", or
+# when there is no [storage] section. Connection entries (SSH, RDP, Web)
 # are stored in HashiVault or OpenBao KV v2. Credentials never reach the
 # browser — the server reads them from Vault and creates sessions directly.
 #

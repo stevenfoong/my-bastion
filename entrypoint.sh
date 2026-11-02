@@ -13,6 +13,14 @@ if [ ! -f "$CONFIG_PATH" ]; then
     cp /opt/mybastion/mybastion.toml.default "$CONFIG_PATH"
 fi
 
+# Key-encryption key for the SQLite secret store, made on first start. It
+# must outlive the container: /etc/mybastion is a volume for that reason.
+if [ ! -f /etc/mybastion/kek ]; then
+    (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/mybastion/kek)
+    echo "Created /etc/mybastion/kek. Keep /etc/mybastion on a volume: without this"
+    echo "key, /var/lib/mybastion/secrets.db cannot be opened."
+fi
+
 # Create an admin API key on first run. mybastion decides what "first run"
 # means: it opens the database named by db_path in the config and creates
 # the admin only if there is none yet. Checking for a database file at a fixed

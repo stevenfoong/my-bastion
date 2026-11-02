@@ -1,5 +1,6 @@
-//! `mybastion storage …`: copy secrets between Vault and SQLite, rotate the
-//! SQLite KEK, and write a single secret (e.g. the LUKS drive key).
+//! Secret store commands: `mybastion storage migrate` (copy between Vault
+//! and SQLite), `mybastion rotate-kek` (re-wrap the SQLite data key) and
+//! `mybastion secret put` (write one secret, e.g. the LUKS drive key).
 
 use std::sync::Arc;
 
@@ -26,16 +27,12 @@ pub enum StorageCommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Re-wrap the SQLite data key under a new KEK. Rows are not
-    /// re-encrypted, and a running server keeps working. Afterwards set
-    /// `[storage] kek_source` to the new source.
-    RotateKek {
-        /// Where the new KEK is: file:<path>, env:<VAR> or systemd-creds:<name>
-        #[arg(long)]
-        new_kek_source: String,
-    },
+}
+
+#[derive(clap::Subcommand)]
+pub enum SecretCommand {
     /// Write a secret, replacing what is there: e.g.
-    /// `storage put mybastion/luks key=@/root/luks.key`. FIELD=@FILE reads the
+    /// `secret put mybastion/luks key=@/root/luks.key`. FIELD=@FILE reads the
     /// value from a file, which keeps it out of shell history.
     Put {
         /// Path under the KV mount
@@ -49,36 +46,44 @@ pub enum StorageCommand {
     },
 }
 
-pub async fn run(config: &Config, command: StorageCommand) {
-    let result = match command {
-        StorageCommand::Migrate {
-            from,
-            to,
-            paths,
-            overwrite,
-            dry_run,
-        } => migrate(config, &from, &to, &paths, overwrite, dry_run).await,
-        StorageCommand::RotateKek { new_kek_source } => rotate_kek(config, &new_kek_source),
-        StorageCommand::Put {
-            path,
-            fields,
-            backend,
-        } => {
-            let backend = backend.unwrap_or_else(|| {
-                let name = if config.sqlite_storage().is_some() {
-                    "sqlite"
-                } else {
-                    "vault"
-                };
-                name.to_string()
-            });
-            put(config, &backend, &path, &fields).await
-        }
-    };
+fn exit_on_error(result: Result<(), String>) {
     if let Err(e) = result {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
+}
+
+pub async fn run_storage(config: &Config, command: StorageCommand) {
+    let StorageCommand::Migrate {
+        from,
+        to,
+        paths,
+        overwrite,
+        dry_run,
+    } = command;
+    exit_on_error(migrate(config, &from, &to, &paths, overwrite, dry_run).await);
+}
+
+pub async fn run_secret(config: &Config, command: SecretCommand) {
+    let SecretCommand::Put {
+        path,
+        fields,
+        backend,
+    } = command;
+    let backend = backend.unwrap_or_else(|| {
+        let name = if config.sqlite_storage().is_some() {
+            "sqlite"
+        } else {
+            "vault"
+        };
+        name.to_string()
+    });
+    exit_on_error(put(config, &backend, &path, &fields).await);
+}
+
+/// `mybastion rotate-kek`: re-wrap the SQLite data key under a new KEK.
+pub fn run_rotate_kek(config: &Config, new_kek_source: &str) {
+    exit_on_error(rotate_kek(config, new_kek_source));
 }
 
 /// A backend opened for the CLI, with the base path of its address book.
@@ -104,12 +109,9 @@ async fn open_backend(config: &Config, name: &str) -> Result<Backend, String> {
             })
         }
         "sqlite" => {
-            let sc = config
-                .storage
-                .as_ref()
-                .ok_or("backend 'sqlite' needs a [storage] section (path, kek_source)")?;
+            let sc = config.storage_settings();
             Ok(Backend {
-                store: super::open_sqlite(sc)?,
+                store: super::open_sqlite(&sc)?,
                 base_path: sc.base_path.clone(),
             })
         }
@@ -164,12 +166,9 @@ async fn migrate(
 }
 
 fn rotate_kek(config: &Config, new_source: &str) -> Result<(), String> {
-    let sc = config
-        .storage
-        .as_ref()
-        .ok_or("rotate-kek needs a [storage] section")?;
+    let sc = config.storage_settings();
     let new = crypto::Key::load(new_source)?;
-    let store = super::open_sqlite(sc)?;
+    let store = super::open_sqlite(&sc)?;
     store.rewrap(&new).map_err(|e| e.to_string())?;
     println!(
         "Re-wrapped the data key of {} under the new KEK (id {}).\n\

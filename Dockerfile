@@ -173,6 +173,11 @@ chromium_path = "chromium"
 display_range_start = 100
 display_range_end = 199
 
+[storage]
+# backend = "vault" keeps connections in [vault] instead
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
+
 [tls]
 cert_path = "/etc/mybastion/tls/cert.pem"
 key_path = "/etc/mybastion/tls/key.pem"
@@ -206,7 +211,9 @@ RUN chmod +x /opt/mybastion/entrypoint.sh
 
 WORKDIR /opt/mybastion
 EXPOSE 8089
-VOLUME ["/var/lib/mybastion", "/var/lib/mybastion/recordings", "/opt/mybastion/drives", "/opt/mybastion/vdi-homes"]
+# /etc/mybastion holds the config and the KEK: keep it on its own volume, apart
+# from the data in /var/lib/mybastion (secrets.db cannot be opened without the KEK).
+VOLUME ["/etc/mybastion", "/var/lib/mybastion", "/var/lib/mybastion/recordings", "/opt/mybastion/drives", "/opt/mybastion/vdi-homes"]
 
 ENV RUST_LOG=info
 ENV GUACD_LOG_LEVEL=info

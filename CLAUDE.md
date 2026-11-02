@@ -44,7 +44,7 @@ a phase. Status:
 - `src/storage/` — `SecretStore` trait (`mod.rs`), `vault.rs` (Vault/OpenBao
   KV v2 over HTTP: AppRole/JWT login, renewal, TLS), `sqlite.rs`, `crypto.rs`
   (AES-256-GCM envelope: KEK wraps a data key; row AAD = path + version),
-  `cli.rs` (`mybastion storage migrate|rotate-kek|put`)
+  `cli.rs` (`mybastion storage migrate`, `rotate-kek`, `secret put`)
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
 - `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
   wire format, WebSocket <-> guacd bridge with recording tee
@@ -122,7 +122,7 @@ image in `contrib/vdi-test-image/`).
 
 - `cargo test` — unit and CLI tests (`tests/cli_*.rs`)
 - `tests/test_storage_sqlite.sh` — live: SQLite store with no Vault (API
-  create/read across restarts, `storage put`, `rotate-kek`)
+  create/read across restarts, `secret put`, `rotate-kek`)
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

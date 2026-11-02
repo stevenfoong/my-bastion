@@ -348,6 +348,11 @@ xvnc_path = "Xvnc"
 chromium_path = "chromium"
 display_range_start = 100
 display_range_end = 199
+
+[storage]
+# backend = "vault" keeps connections in [vault] instead
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
 TOMLEOF
 
         if [[ $NO_TLS -eq 0 ]]; then
@@ -376,6 +381,15 @@ TOMLEOF
     chown root:mybastion "$CONF_DIR" "$CONF_DIR/mybastion.toml"
     chmod 750 "$CONF_DIR"
     chmod 640 "$CONF_DIR/mybastion.toml"
+
+    # Key-encryption key for the SQLite secret store. Created once and never
+    # overwritten: secrets.db can only be opened with it. Keep it out of the
+    # backups of $STATE_DIR.
+    if [[ ! -f "$CONF_DIR/kek" ]]; then
+        (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/kek")
+        chown mybastion:mybastion "$CONF_DIR/kek"
+        info "Created $CONF_DIR/kek"
+    fi
 
     # Chromium policy: web session hardening (block file dialogs, printing, extensions, etc.)
     # DeveloperToolsAvailability=0: DevTools/CDP allowed (needed for login scripts).
