@@ -2,7 +2,7 @@
 
 **One gateway for every privileged access: people and AI agents, desktops, servers and databases. Every action is recorded, controlled and, when it matters, approved.**
 
-This is a fork of [sol1/rustguac](https://github.com/sol1/rustguac), the lightweight Rust replacement for the Apache Guacamole web app. It keeps everything upstream does (browser-based SSH, RDP, VNC, SPICE and web sessions through guacd, OIDC SSO, roles, session recording, jump hosts) and extends it into a full bastion.
+This is a hard fork of [sol1/rustguac](https://github.com/sol1/rustguac), the lightweight Rust replacement for the Apache Guacamole web app. It keeps everything upstream does (browser-based SSH, RDP, VNC, SPICE and web sessions through guacd, OIDC SSO, roles, session recording, jump hosts) and extends it into a full bastion.
 
 > **Status:** early development. Features below are the roadmap; see [docs/fork-design.md](docs/fork-design.md) for the design and progress.
 
@@ -34,7 +34,7 @@ Most teams protect servers, desktops and databases with different tools, or not 
 
 ## Upstream & license
 
-Built on [sol1/rustguac](https://github.com/sol1/rustguac) and [Apache Guacamole](https://guacamole.apache.org/) (`guacd`). Licensed under the Apache License 2.0, as upstream. Generic improvements will be offered back to upstream where they fit.
+Built on [sol1/rustguac](https://github.com/sol1/rustguac) and [Apache Guacamole](https://guacamole.apache.org/) (`guacd`). Licensed under the Apache License 2.0, as upstream. This is a hard fork: it is developed independently and does not track upstream.
 
 ---
 
