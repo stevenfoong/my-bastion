@@ -1,4 +1,47 @@
-# rustguac
+# rustguac — Ultimate Bastion fork
+
+**One gateway for every privileged access: people and AI agents, desktops, servers and databases. Every action is recorded, controlled and, when it matters, approved.**
+
+This is a fork of [sol1/rustguac](https://github.com/sol1/rustguac), the lightweight Rust replacement for the Apache Guacamole web app. It keeps everything upstream does (browser-based SSH, RDP, VNC, SPICE and web sessions through guacd, OIDC SSO, roles, session recording, jump hosts) and extends it into a full bastion.
+
+> **Status:** early development. Features below are the roadmap; see [docs/fork-design.md](docs/fork-design.md) for the design and progress.
+
+## What this fork adds
+
+### 🗄️ SQLite secret store: Vault optional
+Run without HashiCorp Vault or OpenBao. Connections, folders and credentials are stored in SQLite, encrypted at rest with AES-256-GCM using envelope encryption (key from a file, systemd-creds, an environment variable or AWS KMS). Vault remains available as a backend, and a migration tool moves data in either direction.
+
+### 🤖 MCP endpoint for AI agents
+AI agents (Claude and other MCP clients) can open RDP and VNC sessions and work them like a person: see the screen, click, type. They can also run commands over SSH. Agents never see credentials, can only reach machines in folders marked for AI, and every AI session is recorded and can be watched or taken over live.
+
+### ✅ Action approval for people *and* AI
+Risky actions wait for a second person's approval, whoever is doing them:
+- **Policies per folder or connection:** allow, deny, or require approval
+- **SSH command control:** block or hold dangerous commands (`rm -rf`, `shutdown`, `systemctl stop`, …) for a user or an agent
+- **Modes:** observe only, approve each action, or run freely with full recording
+- **Approval in the web UI**, with notifications to chat tools planned
+
+### 🛢️ Database access proxy
+Database sessions go through the bastion like any other connection:
+- **Proxies the native protocol** for MySQL/MariaDB and PostgreSQL, so users keep their usual clients (DBeaver, psql, mysql)
+- **Logs every query** against the user who ran it
+- **Applies command policies:** read-only access, block `DROP`/`TRUNCATE`/`DELETE` without `WHERE`, or require approval for writes
+- **Keeps database passwords** stored in the bastion, never handed to users
+
+## Why
+
+Most teams protect servers, desktops and databases with different tools, or not at all, and AI agents are now joining the list of things that need access. This fork aims to put all of it behind one small, self-hosted gateway: one place to grant access, one audit trail, and one approval flow.
+
+## Upstream & license
+
+Built on [sol1/rustguac](https://github.com/sol1/rustguac) and [Apache Guacamole](https://guacamole.apache.org/) (`guacd`). Licensed under the Apache License 2.0, as upstream. Generic improvements will be offered back to upstream where they fit.
+
+---
+
+# Upstream rustguac documentation
+
+The sections below are from upstream [sol1/rustguac](https://github.com/sol1/rustguac) and describe the features this fork inherits.
+
 
 [![CI](https://github.com/sol1/rustguac/actions/workflows/ci.yml/badge.svg)](https://github.com/sol1/rustguac/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/sol1/rustguac)](https://github.com/sol1/rustguac/releases/latest)
