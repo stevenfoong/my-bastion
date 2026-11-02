@@ -2,9 +2,9 @@
 //! REST API routes.
 
 use crate::auth::{self, client_ip, role_level, AuthIdentity, TrustedProxies};
+use crate::connections::{AddressBookEntry, DefaultsSource, FolderConfig, VaultClient, VaultError};
 use crate::db::{self, Db};
 use crate::session::{CreateSessionRequest, SessionManager, SessionType};
-use crate::vault::{AddressBookEntry, DefaultsSource, FolderConfig, VaultClient, VaultError};
 use axum::{
     body::Body,
     extract::{ConnectInfo, Path, Query, State},
@@ -2336,7 +2336,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         parent: &str,
-    ) -> Result<Vec<crate::vault::FolderInfo>, VaultError> {
+    ) -> Result<Vec<crate::connections::FolderInfo>, VaultError> {
         self.scoped(scope)
             .await?
             .list_subfolders(scope, parent)
@@ -2424,7 +2424,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<crate::vault::FolderDefaults, VaultError> {
+    ) -> Result<crate::connections::FolderDefaults, VaultError> {
         self.scoped(scope)
             .await?
             .get_folder_defaults(scope, folder)
@@ -2435,7 +2435,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-        defaults: &crate::vault::FolderDefaults,
+        defaults: &crate::connections::FolderDefaults,
     ) -> Result<(), VaultError> {
         self.scoped(scope)
             .await?
@@ -2458,7 +2458,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<crate::vault::FolderDefaults>, VaultError> {
+    ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
         self.scoped(scope)
             .await?
             .effective_folder_defaults(scope, folder)
@@ -2477,7 +2477,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-        who: crate::vault::FolderSubject<'_>,
+        who: crate::connections::FolderSubject<'_>,
     ) -> Result<bool, VaultError> {
         self.scoped(scope)
             .await?
@@ -2568,7 +2568,7 @@ impl VaultBackends {
     /// the one backend, so `unavailable_scopes` is empty whenever it is up.
     pub async fn list_all_folders(
         &self,
-    ) -> Result<(Vec<crate::vault::FolderInfo>, Vec<String>), VaultError> {
+    ) -> Result<(Vec<crate::connections::FolderInfo>, Vec<String>), VaultError> {
         let mut folders = Vec::new();
         let mut unavailable = Vec::new();
         let mut any = false;
@@ -2602,7 +2602,7 @@ impl DefaultsSource for VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<crate::vault::FolderDefaults>, VaultError> {
+    ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
         self.scoped(scope)
             .await?
             .folder_defaults(scope, folder)
@@ -2683,7 +2683,7 @@ fn folder_or_descendant_accessible<'a>(
     vault: &'a VaultBackends,
     scope: &'a str,
     path: &'a str,
-    who: crate::vault::FolderSubject<'a>,
+    who: crate::connections::FolderSubject<'a>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
     Box::pin(async move {
         if vault
@@ -2802,7 +2802,7 @@ pub async fn ab_list_subfolders(
             }
             Json(json!(visible)).into_response()
         }
-        Err(crate::vault::VaultError::NotFound) => Json(json!([])).into_response(),
+        Err(crate::connections::VaultError::NotFound) => Json(json!([])).into_response(),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": e.to_string()})),
@@ -2814,7 +2814,7 @@ pub async fn ab_list_subfolders(
 // ── Folder default credentials ──
 
 /// Which default credentials a folder lends, without the secrets.
-fn folder_defaults_summary(d: &crate::vault::FolderDefaults) -> serde_json::Value {
+fn folder_defaults_summary(d: &crate::connections::FolderDefaults) -> serde_json::Value {
     let mut out = serde_json::Map::new();
     for (session_type, c) in d {
         out.insert(
@@ -2936,7 +2936,7 @@ pub async fn ab_put_folder_defaults(
 
     let mut current = match vault.get_folder_defaults(&scope, &folder).await {
         Ok(d) => d,
-        Err(VaultError::NotFound) => crate::vault::FolderDefaults::new(),
+        Err(VaultError::NotFound) => crate::connections::FolderDefaults::new(),
         Err(e) => {
             return (
                 StatusCode::BAD_GATEWAY,
@@ -3051,7 +3051,7 @@ pub async fn ab_delete_folder_defaults(
 /// Lend an entry without credentials of its own the folder defaults for its
 /// session type: the nearest folder on the path wins per type, and the walk
 /// stops at a folder with `inherit_from_parent: false` (see
-/// `crate::vault::resolve_effective_defaults`). This is the one place the
+/// `crate::connections::resolve_effective_defaults`). This is the one place the
 /// Connections connect endpoint and `/api/connect` quick links resolve
 /// defaults, so an entry behaves the same from either. An entry with its own
 /// secret, or set to prompt, is returned untouched; a Vault error leaves it
@@ -3063,12 +3063,12 @@ async fn lend_folder_defaults<S: DefaultsSource>(
     entry: &str,
     mut ab_entry: AddressBookEntry,
 ) -> AddressBookEntry {
-    if !crate::vault::entry_takes_folder_defaults(&ab_entry) {
+    if !crate::connections::entry_takes_folder_defaults(&ab_entry) {
         return ab_entry;
     }
-    match crate::vault::resolve_effective_defaults(src, scope, folder).await {
+    match crate::connections::resolve_effective_defaults(src, scope, folder).await {
         Ok(Some(d)) => {
-            if crate::vault::apply_folder_defaults(&mut ab_entry, &d) {
+            if crate::connections::apply_folder_defaults(&mut ab_entry, &d) {
                 tracing::debug!(
                     scope,
                     folder,
@@ -3595,7 +3595,7 @@ pub async fn ab_list_all(
         let mut entries = Vec::new();
         for name in &entry_names {
             if let Ok(entry) = vault.get_entry(&folder.scope, &folder.name, name).await {
-                let mut info = crate::vault::EntryInfo::from((name.as_str(), &entry));
+                let mut info = crate::connections::EntryInfo::from((name.as_str(), &entry));
                 info.apply_inherited(&entry, defaults.as_ref());
                 entries.push(info);
             }
@@ -3701,7 +3701,7 @@ pub async fn ab_search_index(
             .filter(|s| !s.is_empty());
         for name in &names {
             if let Ok(entry) = vault.get_entry(&scope, &path, name).await {
-                let mut info = crate::vault::EntryInfo::from((name.as_str(), &entry));
+                let mut info = crate::connections::EntryInfo::from((name.as_str(), &entry));
                 info.apply_inherited(&entry, defaults.as_ref());
                 emitted.push(json!({
                     "scope": scope,
@@ -3758,7 +3758,7 @@ pub async fn ab_list_entries(
     let mut entries = Vec::new();
     for name in &entry_names {
         if let Ok(entry) = vault.get_entry(&scope, &folder, name).await {
-            let mut info = crate::vault::EntryInfo::from((name.as_str(), &entry));
+            let mut info = crate::connections::EntryInfo::from((name.as_str(), &entry));
             info.apply_inherited(&entry, defaults.as_ref());
             entries.push(info);
         }
@@ -4166,7 +4166,7 @@ pub async fn ab_connect_entry(
     let ab_entry = lend_folder_defaults(vault.as_ref(), &scope, &folder, &entry, ab_entry).await;
 
     // Resolve credential variable references ($domain_user, $domain_password, etc.)
-    let ab_entry = if !crate::vault::entry_credential_variables(&ab_entry).is_empty() {
+    let ab_entry = if !crate::connections::entry_credential_variables(&ab_entry).is_empty() {
         let user_email = match &id {
             AuthIdentity::User { email, .. } => Some(email.clone()),
             _ => None,
@@ -4174,7 +4174,7 @@ pub async fn ab_connect_entry(
         if let Some(email) = user_email {
             match vault.get_user_credentials(&email).await {
                 Ok(user_creds) => {
-                    match crate::vault::resolve_credential_variables(&ab_entry, &user_creds) {
+                    match crate::connections::resolve_credential_variables(&ab_entry, &user_creds) {
                         Ok(resolved) => resolved,
                         Err(missing) => {
                             return (
@@ -4292,7 +4292,7 @@ async fn resolve_adhoc_entry<S: UserCredentialSource>(
     creds: Option<&S>,
 ) -> Result<AddressBookEntry, AdhocEntryError> {
     entry.normalize_jump_hosts();
-    if crate::vault::entry_credential_variables(&entry).is_empty() {
+    if crate::connections::entry_credential_variables(&entry).is_empty() {
         return Ok(entry);
     }
     let AuthIdentity::User { email, .. } = id else {
@@ -4305,7 +4305,7 @@ async fn resolve_adhoc_entry<S: UserCredentialSource>(
         tracing::warn!("Failed to read user credentials from Vault: {}", e);
         std::collections::HashMap::new()
     });
-    crate::vault::resolve_credential_variables(&entry, &user_creds)
+    crate::connections::resolve_credential_variables(&entry, &user_creds)
         .map_err(AdhocEntryError::MissingVariables)
 }
 
@@ -4765,7 +4765,7 @@ pub async fn ab_get_folder_config(
             "inherit_from_parent": cfg.inherit_from_parent,
         }))
         .into_response(),
-        Err(crate::vault::VaultError::NotFound) => Json(json!({
+        Err(crate::connections::VaultError::NotFound) => Json(json!({
             "allowed_groups": Vec::<String>::new(),
             "allowed_users": Vec::<String>::new(),
             "description": "",
@@ -6753,7 +6753,7 @@ impl FolderSource for VaultFolderSource<'_> {
             .unwrap_or_default();
         for entry_name in &entries {
             if let Ok(entry) = self.vault.get_entry(scope, path, entry_name).await {
-                out.extend(crate::vault::entry_credential_variables(&entry));
+                out.extend(crate::connections::entry_credential_variables(&entry));
             }
         }
         out
@@ -7252,7 +7252,7 @@ pub async fn quick_connect(
         let ab_entry = lend_folder_defaults(vault.as_ref(), scope, folder, entry, ab_entry).await;
 
         // Resolve credential variable references
-        let ab_entry = if !crate::vault::entry_credential_variables(&ab_entry).is_empty() {
+        let ab_entry = if !crate::connections::entry_credential_variables(&ab_entry).is_empty() {
             let user_email = match &id {
                 AuthIdentity::User { email, .. } => Some(email.clone()),
                 _ => None,
@@ -7260,7 +7260,10 @@ pub async fn quick_connect(
             if let Some(email) = user_email {
                 match vault.get_user_credentials(&email).await {
                     Ok(user_creds) => {
-                        match crate::vault::resolve_credential_variables(&ab_entry, &user_creds) {
+                        match crate::connections::resolve_credential_variables(
+                            &ab_entry,
+                            &user_creds,
+                        ) {
                             Ok(resolved) => resolved,
                             Err(missing) => {
                                 return quick_connect_error(
@@ -8110,7 +8113,7 @@ mod tests {
             &self,
             _scope: &str,
             _folder: &str,
-        ) -> Result<Option<crate::vault::FolderDefaults>, VaultError> {
+        ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
             self.defaults_reads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Some(
@@ -9479,7 +9482,7 @@ mod tests {
     // ── Folder default credentials: the one resolver both connect paths use
     // (the Connections endpoint and /api/connect quick links). ──
     struct FakeDefaultsSource {
-        defaults: std::collections::HashMap<String, crate::vault::FolderDefaults>,
+        defaults: std::collections::HashMap<String, crate::connections::FolderDefaults>,
         inherit: std::collections::HashSet<String>,
     }
     impl DefaultsSource for FakeDefaultsSource {
@@ -9487,7 +9490,7 @@ mod tests {
             &self,
             _scope: &str,
             folder: &str,
-        ) -> Result<Option<crate::vault::FolderDefaults>, VaultError> {
+        ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
             Ok(self.defaults.get(folder).cloned())
         }
         async fn takes_parent_defaults(
@@ -9499,11 +9502,11 @@ mod tests {
         }
     }
 
-    fn defaults_with_ssh_key(key: &str) -> crate::vault::FolderDefaults {
-        let mut d = crate::vault::FolderDefaults::new();
+    fn defaults_with_ssh_key(key: &str) -> crate::connections::FolderDefaults {
+        let mut d = crate::connections::FolderDefaults::new();
         d.insert(
             "ssh".into(),
-            crate::vault::DefaultCredentials {
+            crate::connections::DefaultCredentials {
                 username: Some("root".into()),
                 private_key: Some(key.into()),
                 ..Default::default()
@@ -9563,7 +9566,7 @@ mod tests {
                 &self,
                 _s: &str,
                 _f: &str,
-            ) -> Result<Option<crate::vault::FolderDefaults>, VaultError> {
+            ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
                 Err(VaultError::Forbidden)
             }
             async fn takes_parent_defaults(&self, _s: &str, _f: &str) -> Result<bool, VaultError> {

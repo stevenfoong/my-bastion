@@ -100,13 +100,13 @@ impl AuthIdentity {
 
     /// Return OIDC group memberships. Empty for API key identities.
     /// The identity as folder access sees it: login email and groups.
-    pub fn folder_subject(&self) -> crate::vault::FolderSubject<'_> {
+    pub fn folder_subject(&self) -> crate::connections::FolderSubject<'_> {
         match self {
-            AuthIdentity::ApiKey(_) => crate::vault::FolderSubject {
+            AuthIdentity::ApiKey(_) => crate::connections::FolderSubject {
                 email: None,
                 groups: &[],
             },
-            AuthIdentity::User { email, groups, .. } => crate::vault::FolderSubject {
+            AuthIdentity::User { email, groups, .. } => crate::connections::FolderSubject {
                 email: Some(email),
                 groups,
             },

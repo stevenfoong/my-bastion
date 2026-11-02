@@ -3,6 +3,7 @@ mod api;
 mod auth;
 mod browser;
 mod config;
+mod connections;
 mod db;
 mod drive;
 mod guacd;
@@ -16,7 +17,6 @@ mod recording_mp4;
 mod session;
 mod store;
 mod tunnel;
-mod vault;
 mod vdi;
 mod websocket;
 
@@ -831,7 +831,7 @@ async fn connect_vault_backend(
     secret_id: String,
     luks_drive: Option<crate::config::DriveConfig>,
 ) {
-    match vault::VaultClient::new(&config, &secret_id).await {
+    match connections::VaultClient::new(&config, &secret_id).await {
         Ok(client) => {
             let client = Arc::new(client);
             client.spawn_renewal_task();
@@ -856,7 +856,7 @@ async fn connect_vault_backend(
                         label,
                         config.addr
                     );
-                    match vault::VaultClient::new(&config, &secret_id).await {
+                    match connections::VaultClient::new(&config, &secret_id).await {
                         Ok(client) => {
                             let client = Arc::new(client);
                             client.spawn_renewal_task();

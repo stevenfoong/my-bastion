@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::config::Config;
-use crate::vault::{AddressBookEntry, FolderConfig, VaultClient};
+use crate::connections::{AddressBookEntry, FolderConfig, VaultClient};
 
 /// Parse `--map FROM=TO` pairs into (from, to) tuples. Splits on the first
 /// `=`, so the replacement may itself contain `=`. Rejects entries with no

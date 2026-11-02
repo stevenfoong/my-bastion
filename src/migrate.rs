@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::vault::{VaultClient, VaultError};
+use crate::connections::{VaultClient, VaultError};
 
 /// Run the `vault-migrate` subcommand.
 #[allow(clippy::too_many_arguments)]

@@ -255,7 +255,7 @@ impl SecretStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vault::{AddressBookEntry, FolderConfig, VaultClient, VaultError};
+    use crate::connections::{AddressBookEntry, FolderConfig, VaultClient, VaultError};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -564,7 +564,7 @@ mod tests {
 
         // Access walks up through the inheriting subfolder.
         let ops = vec!["ops".to_string()];
-        let who = crate::vault::FolderSubject {
+        let who = crate::connections::FolderSubject {
             email: Some("a@b.c"),
             groups: &ops,
         };
@@ -605,7 +605,7 @@ mod tests {
     async fn folder_defaults_and_their_removal() {
         let db = TempDb::new();
         let c = client(&db);
-        let d: crate::vault::FolderDefaults =
+        let d: crate::connections::FolderDefaults =
             serde_json::from_value(json!({"ssh": {"username": "u", "password": "p"}})).unwrap();
         c.put_folder_config("shared", "F", &folder(&["ops"], false))
             .await

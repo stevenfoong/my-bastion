@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::config::StorageConfig;
-use crate::vault::VaultClient;
+use crate::connections::VaultClient;
 
 /// Open the SQLite store `[storage]` describes, as the address-book client.
 pub fn open_sqlite(sc: &StorageConfig) -> Result<Arc<sqlite::SqliteStore>, String> {

@@ -1212,4 +1212,43 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_config_deserialize_tls_fields() {
+        let toml_str = r#"
+            addr = "https://vault.example.com:8200"
+            role_id = "test-role"
+            ca_cert = "/opt/mybastion/certs/ca.pem"
+            client_cert = "/opt/mybastion/certs/client.pem"
+            client_key = "/opt/mybastion/certs/client-key.pem"
+            tls_skip_verify = true
+        "#;
+        let config: VaultConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.ca_cert.as_deref(),
+            Some("/opt/mybastion/certs/ca.pem")
+        );
+        assert_eq!(
+            config.client_cert.as_deref(),
+            Some("/opt/mybastion/certs/client.pem")
+        );
+        assert_eq!(
+            config.client_key.as_deref(),
+            Some("/opt/mybastion/certs/client-key.pem")
+        );
+        assert!(config.tls_skip_verify);
+    }
+
+    #[test]
+    fn test_config_deserialize_no_tls_fields() {
+        let toml_str = r#"
+            addr = "https://vault.example.com:8200"
+            role_id = "test-role"
+        "#;
+        let config: VaultConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.ca_cert.is_none());
+        assert!(config.client_cert.is_none());
+        assert!(config.client_key.is_none());
+        assert!(!config.tls_skip_verify);
+    }
 }
