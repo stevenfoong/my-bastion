@@ -1,49 +1,50 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Security
 
-rustguac is designed with a security-first approach. This document covers all security features and their implementation.
+My Bastion is designed with a security-first approach. This document covers all security features and their implementation.
 
 ## TLS encryption
 
 ### Client-facing HTTPS
 
-When `cert_path` and `key_path` are set in the `[tls]` section, rustguac serves HTTPS using rustls (a modern, memory-safe TLS implementation). The install script generates a self-signed certificate by default.
+When `cert_path` and `key_path` are set in the `[tls]` section, My Bastion serves HTTPS using rustls (a modern, memory-safe TLS implementation). The install script generates a self-signed certificate by default.
 
 ```toml
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
 ```
 
-If you're behind a TLS-terminating reverse proxy (e.g. Traefik, HAProxy, nginx), you can omit `cert_path`/`key_path` and rustguac will serve plain HTTP.
+If you're behind a TLS-terminating reverse proxy (e.g. Traefik, HAProxy, nginx), you can omit `cert_path`/`key_path` and My Bastion will serve plain HTTP.
 
 Generate a certificate:
 
 ```bash
-rustguac generate-cert --hostname your-hostname.example.com --out-dir /opt/rustguac/tls
+mybastion generate-cert --hostname your-hostname.example.com --out-dir /etc/mybastion/tls
 ```
 
 ### guacd TLS
 
-The connection between rustguac and guacd can also be encrypted with TLS. When `guacd_cert_path` is set, rustguac connects to guacd over TLS, trusting the specified certificate. This is independent of server HTTPS — you can use guacd TLS without serving HTTPS yourself.
+The connection between My Bastion and guacd can also be encrypted with TLS. When `guacd_cert_path` is set, My Bastion connects to guacd over TLS, trusting the specified certificate. This is independent of server HTTPS — you can use guacd TLS without serving HTTPS yourself.
 
 **Full HTTPS + guacd TLS:**
 ```toml
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 ```
 
 **HTTP server + guacd TLS** (behind a reverse proxy):
 ```toml
 [tls]
-guacd_cert_path = "/opt/rustguac/tls/guacd-cert.pem"
+guacd_cert_path = "/etc/mybastion/tls/guacd-cert.pem"
 ```
 
 guacd must be started with matching TLS flags:
 
 ```bash
-guacd -b 127.0.0.1 -l 4822 -L info -f -C /opt/rustguac/tls/cert.pem -K /opt/rustguac/tls/key.pem
+guacd -b 127.0.0.1 -l 4822 -L info -f -C /etc/mybastion/tls/cert.pem -K /etc/mybastion/tls/key.pem
 ```
 
 The install script configures both sides automatically.
@@ -65,7 +66,7 @@ What each list covers:
 
 | List | Checked |
 |------|---------|
-| `ssh_allowed_networks` | SSH targets. For ad-hoc sessions from non-admins, also the first jump host (rustguac dials it directly) and the SSH host-key probe |
+| `ssh_allowed_networks` | SSH targets. For ad-hoc sessions from non-admins, also the first jump host (My Bastion dials it directly) and the SSH host-key probe |
 | `rdp_allowed_networks` | RDP targets |
 | `vnc_allowed_networks` | VNC and SPICE targets. For ad-hoc sessions from non-admins, also the Proxmox VE API URL and the SPICE proxy that Proxmox returns |
 | `web_allowed_networks` | The host in a web session's starting URL |
@@ -78,7 +79,7 @@ SSH and VNC connections are made to the address that was checked rather than to 
 
 A session a poweruser creates from their own request (**Connect to a host** (beside the search box on every page), `POST /api/addressbook/adhoc/connect`, `POST /api/sessions`, or `GET /api/connect` without an entry) is not a connection entry, so it gets none of an entry's trust. Besides the allowlist checks above, which cover every target the entry editor can name, SPICE, Proxmox VE and jump hosts included:
 
-- Settings an admin makes on an entry are ignored when a poweruser sends them: recording attribution and rotation (`address_book_entry`, `max_recordings`), typescript recording, sharing, Wake-on-LAN, a Kerberos credential cache path on the rustguac host, and a fixed VDI account (`container_username` / `container_password`). A VDI session always runs in the caller's own container, with the caller's own home directory.
+- Settings an admin makes on an entry are ignored when a poweruser sends them: recording attribution and rotation (`address_book_entry`, `max_recordings`), typescript recording, sharing, Wake-on-LAN, a Kerberos credential cache path on the My Bastion host, and a fixed VDI account (`container_username` / `container_password`). A VDI session always runs in the caller's own container, with the caller's own home directory.
 - Site-wide recording cannot be switched off for the session, and a drive disabled in `[drive]` cannot be switched on.
 - VDI CPU, memory and idle timeout are capped at the `[vdi]` defaults.
 
@@ -88,7 +89,7 @@ An ad-hoc connection may use [credential variables](credential-variables.md), bu
 
 ## Authentication
 
-rustguac supports two parallel authentication paths. See [Roles and Access Control](roles-and-access-control.md) for the full role system.
+My Bastion supports two parallel authentication paths. See [Roles and Access Control](roles-and-access-control.md) for the full role system.
 
 ### API key authentication
 
@@ -102,7 +103,7 @@ rustguac supports two parallel authentication paths. See [Roles and Access Contr
 ### OIDC session authentication
 
 - Session tokens are 256-bit random values, stored in SQLite with a TTL
-- Cookie: `rustguac_session` with `HttpOnly`, `Secure` (when TLS enabled), `SameSite=Lax`
+- Cookie: `mybastion_session` with `HttpOnly`, `Secure` (when TLS enabled), `SameSite=Lax`
 - Configurable TTL (default: 24 hours)
 - PKCE and nonce validation on every login flow
 - Works with any OIDC provider (Authentik, Keycloak, Okta, Azure AD, Google, etc.)
@@ -113,9 +114,9 @@ User API tokens provide OIDC users with long-lived API credentials for automatio
 
 **Token format and storage:**
 
-- Tokens are 60 hex characters with a `rgu_` prefix (e.g., `rgu_a1b2c3...`)
+- Tokens are 60 hex characters with a `mbt_` prefix (e.g., `mbt_a1b2c3...`)
 - Stored as SHA-256 hashes in SQLite — the plaintext token is shown once at creation and cannot be retrieved
-- The `rgu_` prefix allows secret scanners and log monitoring tools to identify leaked tokens
+- The `mbt_` prefix allows secret scanners and log monitoring tools to identify leaked tokens
 - Token validation uses constant-time hash comparison (SHA-256 matching via SQLite query) to prevent timing attacks
 
 **Effective role computation:**
@@ -140,7 +141,7 @@ When a user API token authenticates, the effective role is computed as `min(user
 
 | Threat | Mitigation |
 |--------|-----------|
-| Token theft / leakage | `rgu_` prefix enables automated secret scanning; short token lifetime recommended; tokens can be revoked immediately |
+| Token theft / leakage | `mbt_` prefix enables automated secret scanning; short token lifetime recommended; tokens can be revoked immediately |
 | Privilege escalation via token | effective role is always `min(user_role, max_role)` — demoting the user restricts all their tokens |
 | Brute-force token guessing | 240 bits of entropy (60 hex chars), which makes guessing infeasible regardless of rate limiting |
 | Token abuse after user offboarding | user deletion cascade-deletes all tokens; disabling a user blocks all their tokens |
@@ -187,14 +188,14 @@ The one exception to the framing headers is described below.
 
 ### Framing and clickjacking
 
-Clickjacking is when another site loads a page in an invisible frame and lines it up under something harmless, so a visitor's clicks and keystrokes land on the framed page while they are logged in. For most applications that means a stray click on a button. For rustguac it would be worse: a framed **live session** would pass the visitor's keystrokes and clicks to a remote server. So by default no rustguac page can be framed by anyone, including rustguac itself (`frame-ancestors 'none'`, `X-Frame-Options: DENY`).
+Clickjacking is when another site loads a page in an invisible frame and lines it up under something harmless, so a visitor's clicks and keystrokes land on the framed page while they are logged in. For most applications that means a stray click on a button. For My Bastion it would be worse: a framed **live session** would pass the visitor's keystrokes and clicks to a remote server. So by default no My Bastion page can be framed by anyone, including My Bastion itself (`frame-ancestors 'none'`, `X-Frame-Options: DENY`).
 
 **The exception: fullscreen on connect.** A browser only lets the tab that received the click go fullscreen. To open a session fullscreen on the Connect click, rather than in a new tab that needs a second click, the Connections page puts its own tab into fullscreen and loads the session in a frame inside it. For that one case, and only for it, the session client page is served with `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`:
 
-- Only the client page of a session opened from a saved entry with **Open in fullscreen on connect** turned on. That is an admin setting on the entry, so framing is opt-in per entry: with no such entries, nothing in rustguac can be framed.
-- Only by pages on the rustguac origin. Every other site is still refused, exactly as for every other page.
+- Only the client page of a session opened from a saved entry with **Open in fullscreen on connect** turned on. That is an admin setting on the entry, so framing is opt-in per entry: with no such entries, nothing in My Bastion can be framed.
+- Only by pages on the My Bastion origin. Every other site is still refused, exactly as for every other page.
 - Never an ad-hoc session (whatever its request says), a normal entry's session, an unknown or ended session, or any other page (Connections, Admin, Tokens, Recordings and the rest).
-- Someone joining such a session through a share link loads the same client page, so it is frameable by the rustguac origin too.
+- Someone joining such a session through a share link loads the same client page, so it is frameable by the My Bastion origin too.
 
 The **⧉** (new window) button never uses a frame.
 
@@ -207,11 +208,11 @@ We weighed four approaches before settling on this one:
 | Allow it for the client page only | Management pages stay unframeable | Every session's client is frameable, though only fullscreen entries need it |
 | Allow it per session, for fullscreen-on-connect entries only (chosen) | Smallest exposure; off unless an admin turns it on for an entry | One more rule in the server |
 
-**What is left.** Same-origin framing is only a risk if something other than rustguac can put a page on the rustguac origin. Nothing does today: files downloaded from a session are saved to disk, never opened as pages; recordings are played by rustguac's own script; web sessions are streamed as pixels, not rendered. An XSS flaw would already allow anything framing could. The case to avoid is a **shared origin**: if rustguac is served at `/` on the same host and port as another application (for example another app at `/grafana/` behind the same reverse proxy), that application's pages count as the same origin. Give rustguac its own hostname. To rule framing out entirely, leave **Open in fullscreen on connect** off on every entry.
+**What is left.** Same-origin framing is only a risk if something other than My Bastion can put a page on the My Bastion origin. Nothing does today: files downloaded from a session are saved to disk, never opened as pages; recordings are played by My Bastion's own script; web sessions are streamed as pixels, not rendered. An XSS flaw would already allow anything framing could. The case to avoid is a **shared origin**: if My Bastion is served at `/` on the same host and port as another application (for example another app at `/grafana/` behind the same reverse proxy), that application's pages count as the same origin. Give My Bastion its own hostname. To rule framing out entirely, leave **Open in fullscreen on connect** off on every entry.
 
 ## Audit logging
 
-rustguac logs security-relevant events via the `tracing` framework:
+My Bastion logs security-relevant events via the `tracing` framework:
 
 - Authentication failures (API key, user token, and OIDC)
 - Session creation, connection, and termination
@@ -243,7 +244,7 @@ Web browser sessions (headless Chromium on Xvnc) include several security layers
 
 ### Chromium managed policy
 
-A managed policy is installed at `/etc/chromium/policies/managed/rustguac.json` that restricts Chromium's capabilities. **This policy is global** — it affects all Chromium instances on the machine, not just rustguac sessions. Do not install rustguac on a machine where you want to use Chromium for normal browsing.
+A managed policy is installed at `/etc/chromium/policies/managed/mybastion.json` that restricts Chromium's capabilities. **This policy is global** — it affects all Chromium instances on the machine, not just My Bastion sessions. Do not install My Bastion on a machine where you want to use Chromium for normal browsing.
 
 Policies applied:
 
@@ -267,9 +268,9 @@ Connections entries can specify an `allowed_domains` list. When set, Chromium ca
 
 Subdomains are automatically included — adding `example.com` allows `*.example.com` as well.
 
-**Important:** The `allowed_domains` field restricts which domains the browser can reach. This is separate from the server-side `web_allowed_networks` CIDR allowlist, which controls which target hosts rustguac will connect to when creating sessions. Both can be active simultaneously:
+**Important:** The `allowed_domains` field restricts which domains the browser can reach. This is separate from the server-side `web_allowed_networks` CIDR allowlist, which controls which target hosts My Bastion will connect to when creating sessions. Both can be active simultaneously:
 
-- `web_allowed_networks` — server-side CIDR filter applied at session creation time (controls what the rustguac server is allowed to connect to)
+- `web_allowed_networks` — server-side CIDR filter applied at session creation time (controls what the My Bastion server is allowed to connect to)
 - `allowed_domains` — client-side DNS restriction applied inside Chromium at runtime (controls what sites the user can navigate to within the browser session)
 
 ### Profile isolation
@@ -286,11 +287,11 @@ Under Docker, the default seccomp profile blocks these namespaces. Run the conta
 
 | Path | Mode | Owner |
 |------|------|-------|
-| Drive directories | 0750 (rwxr-x---) | rustguac:rustguac |
-| LUKS device file | 0600 (rw-------) | rustguac:rustguac |
-| Recording files | 0640 (rw-r-----) | rustguac:rustguac |
-| Recording directory | 0750 (rwxr-x---) | rustguac:rustguac |
-| TLS private key | 0600 (rw-------) | rustguac:rustguac |
+| Drive directories | 0750 (rwxr-x---) | mybastion:mybastion |
+| LUKS device file | 0600 (rw-------) | mybastion:mybastion |
+| Recording files | 0640 (rw-r-----) | mybastion:mybastion |
+| Recording directory | 0750 (rwxr-x---) | mybastion:mybastion |
+| TLS private key | 0600 (rw-------) | mybastion:mybastion |
 
 ## SQL injection protection
 
@@ -310,7 +311,7 @@ HTTP request bodies are limited to 64KB to prevent memory exhaustion attacks.
 
 ## Trusted proxy support
 
-When `trusted_proxies` is configured, rustguac extracts the real client IP from the `X-Forwarded-For` header for connections originating from trusted proxy CIDRs. This ensures correct IP allowlists, rate limiting and audit logging behind reverse proxies.
+When `trusted_proxies` is configured, My Bastion extracts the real client IP from the `X-Forwarded-For` header for connections originating from trusted proxy CIDRs. This ensures correct IP allowlists, rate limiting and audit logging behind reverse proxies.
 
 The header is read from the right, skipping addresses that are themselves trusted proxies. The leftmost entry is never trusted on its own, because a proxy that appends to an incoming header passes along whatever the client put there.
 
@@ -323,7 +324,7 @@ trusted_proxies = ["127.0.0.1/32"]
 - **Vault credentials** — connections entries are read server-side from Vault. Connection passwords and private keys are never sent to the browser.
 - **SSH tunnel credentials** — jump host passwords and private keys are stored in Vault alongside the connections entry. They are read server-side when establishing the tunnel chain and are never sent to the browser. For ad-hoc connections, jump host credentials are provided in the request and exist only in memory during tunnel setup.
 - **API keys** — only the SHA-256 hash is stored. The plaintext key is shown once at creation and cannot be retrieved.
-- **User API tokens** — same SHA-256 hash storage as admin API keys. The `rgu_` prefix enables secret scanning. Plaintext shown once at creation only.
+- **User API tokens** — same SHA-256 hash storage as admin API keys. The `mbt_` prefix enables secret scanning. Plaintext shown once at creation only.
 - **OIDC client secret** — can be provided via `OIDC_CLIENT_SECRET` environment variable instead of the config file.
 - **LUKS encryption key** — stored in Vault, passed to cryptsetup via stdin (never on the command line or on disk).
 - **Ephemeral SSH keys** — the private key exists only in memory during the guacd handshake. It is never stored on disk or returned by the API.

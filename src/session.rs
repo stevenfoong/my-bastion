@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 use crate::browser::{BrowserManager, BrowserSession};
 use crate::config::{Config, DriveConfig};
 use crate::drive;
@@ -174,7 +175,7 @@ pub struct CreateSessionRequest {
     /// SPICE: proxy URL, e.g. a Proxmox SPICE proxy "http://host:3128".
     pub spice_proxy: Option<String>,
     /// Proxmox VE console (SessionType::Proxmox): PVE API base URL, a full URL
-    /// including scheme and port (e.g. "https://pve.example.com:8006"). rustguac
+    /// including scheme and port (e.g. "https://pve.example.com:8006"). mybastion
     /// fetches a just-in-time SPICE ticket + config from the PVE spiceproxy API
     /// at connect.
     pub proxmox_url: Option<String>,
@@ -235,10 +236,10 @@ impl CreateSessionRequest {
     ///   fixed account. The username also names the container and its home
     ///   directory under `home_base`, so only an entry may choose it; an
     ///   ad-hoc session always gets the caller's own container.
-    /// - `kerberos_cache` is a path on the rustguac host.
+    /// - `kerberos_cache` is a path on the mybastion host.
     /// - `allow_sharing` is the per-entry sharing switch. Without it an
     ///   ad-hoc session keeps the ad-hoc default.
-    /// - `wol_*`: Wake-on-LAN makes rustguac send packets to an address of
+    /// - `wol_*`: Wake-on-LAN makes mybastion send packets to an address of
     ///   the caller's choosing, so it is configured on entries.
     pub fn clear_entry_only_fields(&mut self) {
         self.address_book_entry = None;
@@ -548,7 +549,7 @@ fn generate_share_token() -> String {
 /// TCP) and its failure mode is a silent hang that looks like a stuck
 /// RDP connection. Admins who actually run Kerberos-integrated hosts
 /// can set `default_auth_pkg = "kerberos"` or `"negotiate"` in
-/// `config.toml`.
+/// `mybastion.toml`.
 fn resolve_rdp_auth_pkg(entry_value: Option<&str>, config: &Config) -> Option<String> {
     if let Some(v) = entry_value {
         let trimmed = v.trim();
@@ -637,10 +638,10 @@ fn parse_host_port(input: &str, default_port: u16) -> Result<(String, u16), Sess
     Ok((host, port))
 }
 
-/// Validate the network for the connection rustguac itself will make.
+/// Validate the network for the connection mybastion itself will make.
 ///
 /// Without jump hosts that is the target host, so the target is checked against
-/// the protocol's allowlist. With a jump-host chain, rustguac only ever dials
+/// the protocol's allowlist. With a jump-host chain, mybastion only ever dials
 /// hop 0 -- the target's name is resolved by the last hop and need not resolve
 /// here at all, so resolving it locally would reject perfectly valid
 /// bastion-only names, and an address it did resolve to would say nothing
@@ -685,7 +686,7 @@ const DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// The system resolver blocks, and with a DNS server that does not answer it
 /// blocks for its whole retry budget (tens of seconds). Called directly from
 /// a request handler, a few of those occupied every tokio worker thread, and
-/// rustguac stopped answering anything, health checks included, until they
+/// mybastion stopped answering anything, health checks included, until they
 /// gave up. `lookup_host` runs the resolver on the blocking thread pool, and
 /// the timeout fails this one connect promptly instead of holding it open.
 async fn resolve_host(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, SessionError> {
@@ -760,7 +761,7 @@ pub(crate) async fn allowed_address(
         })
 }
 
-/// Longest Wake-on-LAN wait rustguac will ask guacd for, in seconds.
+/// Longest Wake-on-LAN wait mybastion will ask guacd for, in seconds.
 const MAX_WOL_WAIT_SECS: u32 = 600;
 /// Bounds for the SSH terminal font size, in points.
 const MIN_SSH_FONT: u32 = 6;
@@ -788,7 +789,7 @@ fn wol_params(req: &CreateSessionRequest, fence_all_targets: bool) -> guacd::Wol
 }
 
 /// The account a VDI session logs in as, which also names its container
-/// (`rustguac-vdi-<name>`) and its home directory under `home_base`: the
+/// (`mybastion-vdi-<name>`) and its home directory under `home_base`: the
 /// request's `container_username` when set (only a saved entry or an admin
 /// can set it, see `apply_adhoc_policy`), otherwise derived from the
 /// creator's identity.
@@ -978,6 +979,22 @@ impl SessionManager {
         // Taken before any field of the request is moved out below.
         let reuse_fingerprint = req.reuse_fingerprint();
 
+        // Inherited session types stay off unless their config section turns
+        // them on. VDI checks its own `[vdi] enabled` further down.
+        let switched_off = match req.session_type {
+            SessionType::Web if !self.config.web_enabled() => Some("web"),
+            SessionType::Spice | SessionType::Proxmox if !self.config.spice_enabled() => {
+                Some("spice")
+            }
+            _ => None,
+        };
+        if let Some(section) = switched_off {
+            return Err(SessionError::ValidationError(format!(
+                "{} sessions are not enabled on this server ([{}] enabled = true)",
+                section, section
+            )));
+        }
+
         // Enforce session limits (only count active/pending sessions)
         {
             let sessions = self.sessions.read().await;
@@ -1054,7 +1071,7 @@ impl SessionManager {
         } else {
             Vec::new()
         };
-        // rustguac dials the first jump host itself, so for an untrusted
+        // mybastion dials the first jump host itself, so for an untrusted
         // caller it is fenced by the SSH allowlist like any SSH target, and
         // pinned to the checked address. Later hops are dialled from inside
         // the chain and resolve from the bastion's point of view.
@@ -1126,7 +1143,7 @@ impl SessionManager {
                     })?;
 
                     let public_key = format!(
-                        "{} rustguac-ephemeral",
+                        "{} mybastion-ephemeral",
                         keypair.public_key().to_openssh().map_err(|e| {
                             SessionError::ValidationError(format!(
                                 "public key export failed: {}",
@@ -1160,7 +1177,7 @@ impl SessionManager {
 
                 // SSH typescript recording (#159): per-connection opt-in
                 // (default off), and only when a global typescript_path is
-                // configured. rustguac expands the name template (guacd
+                // configured. mybastion expands the name template (guacd
                 // uses it verbatim) so audit files are identifiable per
                 // user + connection.
                 let typescript = self
@@ -1442,7 +1459,7 @@ impl SessionManager {
                 }
                 let verify_tls = req.proxmox_verify_tls.unwrap_or(false);
 
-                // rustguac calls the PVE API itself and guacd then dials the
+                // mybastion calls the PVE API itself and guacd then dials the
                 // SPICE proxy that API names, so for an untrusted caller both
                 // are fenced by the same allowlist as direct SPICE. Through
                 // jump hosts they resolve at the bastion and the first hop is
@@ -1622,8 +1639,8 @@ impl SessionManager {
                 let enc_user = urlencoding::encode(req.username.as_deref().unwrap_or(""));
                 let enc_pass = urlencoding::encode(req.password.as_deref().unwrap_or(""));
                 let url = raw_url
-                    .replace("$RUSTGUAC_USERNAME", &enc_user)
-                    .replace("$RUSTGUAC_PASSWORD", &enc_pass);
+                    .replace("$MYBASTION_USERNAME", &enc_user)
+                    .replace("$MYBASTION_PASSWORD", &enc_pass);
 
                 // Step 3: Re-validate substituted URL
                 let parsed = Url::parse(&url).map_err(|e| {
@@ -2680,10 +2697,10 @@ impl SessionManager {
 /// is unset. Produces audit-friendly per-session names (#159).
 const DEFAULT_TYPESCRIPT_NAME: &str = "{connection}-{user}-{date}-{time}";
 
-/// Expand rustguac's brace tokens in a typescript filename template (#159).
+/// Expand mybastion's brace tokens in a typescript filename template (#159).
 ///
 /// guacd uses the typescript name verbatim (it appends a numeric suffix
-/// only to avoid clobbering an existing file), so rustguac does this
+/// only to avoid clobbering an existing file), so mybastion does this
 /// substitution itself to produce audit-friendly, per-session filenames
 /// like `coreswitch01-alice-20260610-143022`. Every substituted value is
 /// sanitised to `[A-Za-z0-9_-]`, so the result is always a safe basename:
@@ -3499,15 +3516,21 @@ mod tests {
     }
 
     fn new_manager_for_tests() -> SessionManager {
+        new_manager_with(|_| {})
+    }
+
+    /// `new_manager_for_tests` with `tweak` applied to the config first.
+    fn new_manager_with(tweak: impl FnOnce(&mut crate::config::Config)) -> SessionManager {
         // Build a config pointing at a unique temp recording dir so the
         // real dir isn't touched and parallel tests don't collide.
         let mut config = crate::config::Config::default();
-        let tmp = std::env::temp_dir().join(format!("rustguac-sessmgr-test-{}", Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("mybastion-sessmgr-test-{}", Uuid::new_v4()));
         config.recording_path = tmp.clone();
         // xvnc/chromium paths are only stored, not exec'd — placeholders are fine.
         config.xvnc_path = "/bin/true".into();
         config.chromium_path = "/bin/true".into();
         config.login_scripts_dir = "/tmp".into();
+        tweak(&mut config);
         SessionManager::new(config, None)
     }
 
@@ -3755,8 +3778,27 @@ mod tests {
         req
     }
 
+    /// Web, SPICE and Proxmox sessions are refused until `[web]` / `[spice]`
+    /// turn them on, before anything is dialled.
+    #[tokio::test]
+    async fn inherited_session_types_are_off_unless_enabled() {
+        let mgr = new_manager_for_tests();
+        for (t, section) in [("web", "[web]"), ("spice", "[spice]"), ("proxmox", "[spice]")] {
+            let req = fenced_request(serde_json::json!({
+                "session_type": t,
+                "url": "https://example.com",
+            }));
+            match mgr.create_session(req, "pu@example.com".into()).await {
+                Err(SessionError::ValidationError(msg)) => {
+                    assert!(msg.contains("not enabled") && msg.contains(section), "{t}: {msg}")
+                }
+                other => panic!("{t}: expected refusal, got {:?}", other.map(|i| i.session_id)),
+            }
+        }
+    }
+
     /// H5: a non-admin ad-hoc session cannot use a jump host outside the SSH
-    /// allowlist to make rustguac dial an arbitrary address.
+    /// allowlist to make mybastion dial an arbitrary address.
     #[tokio::test]
     async fn fenced_jump_host_outside_allowlist_refused() {
         let mgr = new_manager_for_tests();
@@ -3777,7 +3819,9 @@ mod tests {
 
     #[tokio::test]
     async fn fenced_proxmox_api_outside_allowlist_refused() {
-        let mgr = new_manager_for_tests();
+        let mgr = new_manager_with(|c| {
+            c.spice = Some(crate::config::FeatureSwitch { enabled: true })
+        });
         let req = fenced_request(serde_json::json!({
             "session_type": "proxmox",
             "proxmox_url": "https://192.0.2.20:8006",
@@ -3817,7 +3861,7 @@ mod tests {
 
     /// Reproduces the DNS stall: with a resolver that never answers, the
     /// allowlist lookup held tokio worker threads for the whole resolver
-    /// timeout, so the rest of rustguac (including /api/health) stopped.
+    /// timeout, so the rest of mybastion (including /api/health) stopped.
     /// Needs a dead resolver, so it is ignored by default. Run it with:
     ///
     ///   printf 'nameserver 10.255.255.1\noptions timeout:3 attempts:2\n' > /tmp/dead.conf

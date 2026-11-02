@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Screenshots
 
-Screenshots of rustguac v1.12.1 with the default title, logo and **aurora**
+Screenshots of My Bastion v1.12.1 with the default title, logo and **aurora**
 theme, OIDC sign-in, Vault-backed connections and session recording. The
 [`light/`](light/) folder has the same pages in the built-in **light** theme.
 

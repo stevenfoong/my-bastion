@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! `vault-migrate` subcommand: copy an address-book scope subtree between
 //! configured Vault backends, for the multi-Vault DR split.
 //!
@@ -233,7 +234,7 @@ async fn connect_named(config: &Config, name: &str) -> Arc<VaultClient> {
     let vault_config = match vault_config {
         Some(vc) => vc,
         None => {
-            eprintln!("Error: backend '{}' is not configured in config.toml", name);
+            eprintln!("Error: backend '{}' is not configured in mybastion.toml", name);
             std::process::exit(1);
         }
     };

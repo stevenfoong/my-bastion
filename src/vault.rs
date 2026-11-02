@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! HashiVault / OpenBao KV v2 client with AppRole or workload JWT authentication.
 //!
 //! Stores address book entries (connection credentials) in Vault.
@@ -8,7 +9,7 @@
 //! Each folder has a `.config` sentinel key containing `FolderConfig`
 //! (allowed_groups, description) that controls OIDC group-based access.
 //!
-//! The rustguac logic lives here; reads and writes go through a
+//! The mybastion logic lives here; reads and writes go through a
 //! `storage::SecretStore` (`storage::vault` holds the HTTP, login and TLS code).
 
 use serde::{Deserialize, Serialize};
@@ -32,7 +33,7 @@ pub enum VaultError {
     BadName(String),
     /// The backend serving this scope is configured but not currently
     /// connected (initial connect pending or the Vault is down). Distinct from
-    /// a Vault that returns an error: the request never left rustguac.
+    /// a Vault that returns an error: the request never left mybastion.
     Unavailable,
     /// A local secret store (SQLite) failed.
     Storage(String),
@@ -452,14 +453,14 @@ pub struct AddressBookEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_idle_timeout_mins: Option<u64>,
     /// Optional fixed username for the VDI container's RDP login. When set,
-    /// rustguac uses this username for the RDP connect into the container
+    /// mybastion uses this username for the RDP connect into the container
     /// instead of deriving one from the operator's identity. Useful when the
     /// container image has a baked-in user that doesn't honour the
     /// VDI_USERNAME env var.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_username: Option<String>,
     /// Optional fixed password matching `container_username`. When set,
-    /// rustguac uses this password for the RDP connect instead of
+    /// mybastion uses this password for the RDP connect instead of
     /// generating an ephemeral one. Stored in Vault alongside the entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_password: Option<String>,
@@ -1673,23 +1674,23 @@ mod tests {
         let toml_str = r#"
             addr = "https://vault.example.com:8200"
             role_id = "test-role"
-            ca_cert = "/opt/rustguac/certs/ca.pem"
-            client_cert = "/opt/rustguac/certs/client.pem"
-            client_key = "/opt/rustguac/certs/client-key.pem"
+            ca_cert = "/opt/mybastion/certs/ca.pem"
+            client_cert = "/opt/mybastion/certs/client.pem"
+            client_key = "/opt/mybastion/certs/client-key.pem"
             tls_skip_verify = true
         "#;
         let config: VaultConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
             config.ca_cert.as_deref(),
-            Some("/opt/rustguac/certs/ca.pem")
+            Some("/opt/mybastion/certs/ca.pem")
         );
         assert_eq!(
             config.client_cert.as_deref(),
-            Some("/opt/rustguac/certs/client.pem")
+            Some("/opt/mybastion/certs/client.pem")
         );
         assert_eq!(
             config.client_key.as_deref(),
-            Some("/opt/rustguac/certs/client-key.pem")
+            Some("/opt/mybastion/certs/client-key.pem")
         );
         assert!(config.tls_skip_verify);
     }

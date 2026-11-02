@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 """
 Minimal Guacamole WebSocket client for benchmarking.
 Simulates realistic user sessions with mouse/keyboard activity.
 
 Usage:
     # Single session
-    python3 guac-client.py --url https://10.10.50.51:8089 --api-key rgu_xxx \
+    python3 guac-client.py --url https://10.10.50.51:8089 --api-key mbt_xxx \
         --rdp-host 10.10.50.52 --duration 120
 
     # Multiple concurrent sessions
-    python3 guac-client.py --url https://10.10.50.51:8089 --api-key rgu_xxx \
+    python3 guac-client.py --url https://10.10.50.51:8089 --api-key mbt_xxx \
         --rdp-host 10.10.50.52 --sessions 50 --duration 300
 
 Requirements: pip install websockets httpx
@@ -170,7 +171,7 @@ async def run_session(
 
 async def main():
     parser = argparse.ArgumentParser(description="Guacamole WebSocket benchmark client")
-    parser.add_argument("--url", required=True, help="rustguac base URL")
+    parser.add_argument("--url", required=True, help="mybastion base URL")
     parser.add_argument("--api-key", required=True, help="Admin API key")
     parser.add_argument("--rdp-host", required=True, help="xrdp target IP")
     parser.add_argument("--rdp-port", type=int, default=3389, help="xrdp port")
@@ -180,7 +181,7 @@ async def main():
     args = parser.parse_args()
 
     print(f"Starting {args.sessions} sessions to {args.rdp_host}:{args.rdp_port} for {args.duration}s")
-    print(f"rustguac: {args.url}")
+    print(f"mybastion: {args.url}")
     print()
 
     all_stats = [SessionStats() for _ in range(args.sessions)]

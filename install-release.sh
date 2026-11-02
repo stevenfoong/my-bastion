@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 #
-# install-release.sh — Install rustguac from a release tarball.
+# install-release.sh — Install mybastion from a release tarball.
 #
 # This script is shipped inside the release tarball and installs
-# pre-built binaries to /opt/rustguac with systemd services.
+# pre-built binaries to /opt/mybastion, config and TLS to /etc/mybastion and
+# data to /var/lib/mybastion, with systemd services.
 #
 # Usage:
 #   sudo ./install.sh
@@ -12,7 +14,9 @@
 #
 set -euo pipefail
 
-PREFIX="/opt/rustguac"
+PREFIX="/opt/mybastion"
+CONF_DIR="/etc/mybastion"
+STATE_DIR="/var/lib/mybastion"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RED='\033[0;31m'
@@ -49,22 +53,22 @@ fi
 # ---------------------------------------------------------------------------
 # Step 1: Create system user
 # ---------------------------------------------------------------------------
-if ! id -u rustguac >/dev/null 2>&1; then
-    useradd --system --create-home --home-dir /home/rustguac --shell /usr/sbin/nologin rustguac
-    info "Created system user 'rustguac'"
+if ! id -u mybastion >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir /home/mybastion --shell /usr/sbin/nologin mybastion
+    info "Created system user 'mybastion'"
 else
-    info "System user 'rustguac' already exists"
+    info "System user 'mybastion' already exists"
 fi
 
 # ---------------------------------------------------------------------------
 # Step 2: Install files
 # ---------------------------------------------------------------------------
-info "Installing rustguac to $PREFIX..."
+info "Installing mybastion to $PREFIX..."
 
-mkdir -p "$PREFIX"/{bin,sbin,lib,static,data,recordings,tls}
+mkdir -p "$PREFIX"/{bin,sbin,lib,static} "$CONF_DIR/tls" "$STATE_DIR/recordings"
 
 # Binaries
-install -m 755 "$SCRIPT_DIR/bin/rustguac" "$PREFIX/bin/rustguac"
+install -m 755 "$SCRIPT_DIR/bin/mybastion" "$PREFIX/bin/mybastion"
 install -m 755 "$SCRIPT_DIR/sbin/guacd"   "$PREFIX/sbin/guacd"
 # guacenc converts recordings to video for MP4 downloads (absent from
 # tarballs built before 1.11.1)
@@ -76,6 +80,9 @@ cp -a "$SCRIPT_DIR/lib/"*.so* "$PREFIX/lib/"
 # Static web assets
 cp -r "$SCRIPT_DIR/static/"* "$PREFIX/static/"
 
+# Licence and attribution (Apache-2.0 requires NOTICE to travel with the work)
+install -m 644 "$SCRIPT_DIR/LICENSE" "$SCRIPT_DIR/NOTICE" "$PREFIX/"
+
 # Drive setup script (if present)
 if [[ -d "$SCRIPT_DIR/scripts" ]]; then
     cp -r "$SCRIPT_DIR/scripts/"* "$PREFIX/bin/"
@@ -83,28 +90,31 @@ if [[ -d "$SCRIPT_DIR/scripts" ]]; then
 fi
 
 # Default config (don't overwrite existing)
-if [[ ! -f "$PREFIX/config.toml" ]]; then
-    cp "$SCRIPT_DIR/config.toml.default" "$PREFIX/config.toml"
+if [[ ! -f "$CONF_DIR/mybastion.toml" ]]; then
+    cp "$SCRIPT_DIR/mybastion.toml.default" "$CONF_DIR/mybastion.toml"
 
     if [[ $NO_TLS -eq 0 ]]; then
-        # config.toml.default already has [tls] section
-        info "Created config at $PREFIX/config.toml (TLS enabled)"
+        # mybastion.toml.default already has [tls] section
+        info "Created config at $CONF_DIR/mybastion.toml (TLS enabled)"
     else
         # Remove TLS section for plain HTTP
-        sed -i '/^\[tls\]/,$d' "$PREFIX/config.toml"
-        sed -i 's/listen_addr = .*/listen_addr = "0.0.0.0:8089"/' "$PREFIX/config.toml"
-        info "Created config at $PREFIX/config.toml (plain HTTP)"
+        sed -i '/^\[tls\]/,$d' "$CONF_DIR/mybastion.toml"
+        sed -i 's/listen_addr = .*/listen_addr = "0.0.0.0:8089"/' "$CONF_DIR/mybastion.toml"
+        info "Created config at $CONF_DIR/mybastion.toml (plain HTTP)"
     fi
 else
-    info "Config already exists at $PREFIX/config.toml (not overwritten)"
+    info "Config already exists at $CONF_DIR/mybastion.toml (not overwritten)"
 fi
 
-chown -R rustguac:rustguac "$PREFIX/data" "$PREFIX/recordings"
+chown -R mybastion:mybastion "$STATE_DIR"
+chown root:mybastion "$CONF_DIR" "$CONF_DIR/mybastion.toml"
+chmod 750 "$CONF_DIR"
+chmod 640 "$CONF_DIR/mybastion.toml"
 
 # ---------------------------------------------------------------------------
 # Step 3: ldconfig
 # ---------------------------------------------------------------------------
-echo "$PREFIX/lib" > /etc/ld.so.conf.d/rustguac.conf
+echo "$PREFIX/lib" > /etc/ld.so.conf.d/mybastion.conf
 ldconfig
 info "Library path configured"
 
@@ -112,12 +122,12 @@ info "Library path configured"
 # Step 4: systemd services
 # ---------------------------------------------------------------------------
 info "Installing systemd services..."
-cp "$SCRIPT_DIR/systemd/rustguac.service"       /etc/systemd/system/
-cp "$SCRIPT_DIR/systemd/rustguac-guacd.service"  /etc/systemd/system/
+cp "$SCRIPT_DIR/systemd/mybastion.service"       /etc/systemd/system/
+cp "$SCRIPT_DIR/systemd/mybastion-guacd.service"  /etc/systemd/system/
 
 systemctl daemon-reload
-systemctl enable rustguac-guacd.service
-systemctl enable rustguac.service
+systemctl enable mybastion-guacd.service
+systemctl enable mybastion.service
 
 info "Systemd services installed and enabled"
 
@@ -125,18 +135,18 @@ info "Systemd services installed and enabled"
 # Step 5: TLS certificate
 # ---------------------------------------------------------------------------
 if [[ $NO_TLS -eq 0 ]]; then
-    if [[ -f "$PREFIX/tls/cert.pem" && -f "$PREFIX/tls/key.pem" ]]; then
+    if [[ -f "$CONF_DIR/tls/cert.pem" && -f "$CONF_DIR/tls/key.pem" ]]; then
         info "TLS certificates already exist (not overwritten)"
     else
         CERT_HOSTNAME="${TLS_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
         info "Generating self-signed TLS certificate for: $CERT_HOSTNAME"
-        "$PREFIX/bin/rustguac" generate-cert \
+        "$PREFIX/bin/mybastion" generate-cert \
             --hostname "$CERT_HOSTNAME" \
-            --out-dir "$PREFIX/tls"
-        chown -R rustguac:rustguac "$PREFIX/tls"
-        chmod 600 "$PREFIX/tls/key.pem"
-        chmod 644 "$PREFIX/tls/cert.pem"
-        info "TLS certificate generated at $PREFIX/tls/"
+            --out-dir "$CONF_DIR/tls"
+        chown -R mybastion:mybastion "$CONF_DIR/tls"
+        chmod 600 "$CONF_DIR/tls/key.pem"
+        chmod 644 "$CONF_DIR/tls/cert.pem"
+        info "TLS certificate generated at $CONF_DIR/tls/"
     fi
 fi
 
@@ -145,25 +155,25 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 info "============================================"
-info "  rustguac installed to $PREFIX"
+info "  mybastion installed to $PREFIX"
 info "============================================"
 echo ""
 info "Next steps:"
 info "  1. Create an admin:"
-info "     $PREFIX/bin/rustguac --config $PREFIX/config.toml add-admin --name admin"
+info "     $PREFIX/bin/mybastion --config $CONF_DIR/mybastion.toml add-admin --name admin"
 info ""
 info "  2. (Optional) Set up encrypted file transfer:"
 info "     sudo $PREFIX/bin/drive-setup.sh"
 info ""
 info "  3. Start the services:"
-info "     sudo systemctl start rustguac"
+info "     sudo systemctl start mybastion"
 echo ""
 if [[ $NO_TLS -eq 0 ]]; then
     info "  4. Open in browser:"
     info "     https://$(hostname -f 2>/dev/null || hostname)"
     info ""
     warn "  Using self-signed cert — browser will show a warning."
-    warn "  Replace $PREFIX/tls/cert.pem and key.pem with real certs for production."
+    warn "  Replace $CONF_DIR/tls/cert.pem and key.pem with real certs for production."
 else
     info "  4. Open in browser:"
     info "     http://localhost:8089"

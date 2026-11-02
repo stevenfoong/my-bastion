@@ -1,5 +1,6 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 /*
- * rustguac shared facet filters.
+ * mybastion shared facet filters.
  *
  * A row of dropdown buttons, one per facet (Type, Folder, User, ...), each a
  * multi-select of the values present in the current rows with a count beside
@@ -78,7 +79,7 @@
 
     function create(opts) {
         var facets = opts.facets || [];
-        var storageKey = 'rustguac_filters_' + (opts.id || 'page');
+        var storageKey = 'mybastion_filters_' + (opts.id || 'page');
         var selected = {};   // facet key -> { value: true }
         var rows = [];
         var ui = {};         // facet key -> { wrap, btn, menu, list, find }

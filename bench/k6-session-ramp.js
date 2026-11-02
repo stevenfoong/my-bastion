@@ -1,15 +1,16 @@
-// k6 session ramp-up test for rustguac.
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+// k6 session ramp-up test for mybastion.
 // Gradually increases concurrent RDP sessions from 0 to 100.
 //
 // Usage:
-//   k6 run --env API_KEY=rgu_xxx \
+//   k6 run --env API_KEY=mbt_xxx \
 //          --env BASE_URL=https://10.10.50.51:8089 \
 //          --env XRDP_HOST=10.10.50.52 \
 //          bench/k6-session-ramp.js
 //
 // Env vars:
-//   API_KEY    - rustguac admin API key
-//   BASE_URL   - rustguac base URL
+//   API_KEY    - mybastion admin API key
+//   BASE_URL   - mybastion base URL
 //   XRDP_HOST  - xrdp target IP (single VM with multiple users)
 //   MAX_VUS    - max concurrent sessions (default 100)
 //   HOLD_SECS  - seconds to hold at max (default 300)

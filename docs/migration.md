@@ -1,10 +1,11 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Migrating from Apache Guacamole
 
-rustguac can import connections from an Apache Guacamole MySQL/MariaDB database into its Vault-backed connections.
+My Bastion can import connections from an Apache Guacamole MySQL/MariaDB database into its Vault-backed connections.
 
 ## Prerequisites
 
-- A running Vault/OpenBao instance with `[vault]` configured in `config.toml`
+- A running Vault/OpenBao instance with `[vault]` configured in `mybastion.toml`
 - `VAULT_SECRET_ID` environment variable set
 - A MySQL/MariaDB dump of your Guacamole database
 
@@ -27,7 +28,7 @@ Only these three tables are needed. Both the default multi-row dump format and `
 Use `--dry-run` to see what would be imported without writing anything:
 
 ```bash
-rustguac --config /opt/rustguac/config.toml \
+mybastion --config /etc/mybastion/mybastion.toml \
   import-guacamole \
   --file guacamole-dump.sql \
   --dry-run
@@ -55,7 +56,7 @@ Connections with unsupported protocols (e.g. telnet, kubernetes) are automatical
 
 ```bash
 VAULT_SECRET_ID=your-secret-id \
-rustguac --config /opt/rustguac/config.toml \
+mybastion --config /etc/mybastion/mybastion.toml \
   import-guacamole \
   --file guacamole-dump.sql \
   --folder my-servers \
@@ -74,7 +75,7 @@ rustguac --config /opt/rustguac/config.toml \
 
 ## What gets imported
 
-The importer maps Guacamole connection parameters to rustguac connections fields:
+The importer maps Guacamole connection parameters to My Bastion connections fields:
 
 | Guacamole parameter | Connections field |
 |--------------------|--------------------|
@@ -115,14 +116,14 @@ Guacamole's connection group hierarchy is flattened into entry name prefixes. Fo
 
 ## Mapping credential tokens
 
-Apache Guacamole uses passthrough tokens like `${GUAC_USERNAME}` and `${GUAC_PASSWORD}` in connection parameters, substituted from the logged-in user's Guacamole credentials (typically via LDAP). rustguac has no such tokens; it uses named [credential variables](credential-variables.md) instead. Imported verbatim, a `${GUAC_USERNAME}` value is just a literal string that rustguac cannot resolve.
+Apache Guacamole uses passthrough tokens like `${GUAC_USERNAME}` and `${GUAC_PASSWORD}` in connection parameters, substituted from the logged-in user's Guacamole credentials (typically via LDAP). My Bastion has no such tokens; it uses named [credential variables](credential-variables.md) instead. Imported verbatim, a `${GUAC_USERNAME}` value is just a literal string that My Bastion cannot resolve.
 
-The `--map FROM=TO` flag rewrites substrings in the credential fields (`username`, `password`, `domain`, `private_key`) as they are imported, so you can convert Guacamole's tokens into rustguac credential variables in one pass. The flag is repeatable and the replacements are applied in order.
+The `--map FROM=TO` flag rewrites substrings in the credential fields (`username`, `password`, `domain`, `private_key`) as they are imported, so you can convert Guacamole's tokens into My Bastion credential variables in one pass. The flag is repeatable and the replacements are applied in order.
 
 For example, to route every imported connection through a `jumpcloud` credential domain:
 
 ```bash
-rustguac --config /opt/rustguac/config.toml \
+mybastion --config /etc/mybastion/mybastion.toml \
   import-guacamole \
   --file guacamole-dump.sql \
   --map '${GUAC_USERNAME}=$jumpcloud_username' \
@@ -145,7 +146,7 @@ Applied credential maps to 39 of 39 imported entries.
 
 After importing, each user sets their `jumpcloud` username and password once in **My Credentials** and every imported connection resolves. See [Credential Variables](credential-variables.md) for the naming convention (`$<domain>_<suffix>`) and how users fill them in.
 
-`--map` is a plain substring replacement applied only to those four credential fields (the ones rustguac expands at connect time). Passwords and keys are never printed in the output.
+`--map` is a plain substring replacement applied only to those four credential fields (the ones My Bastion expands at connect time). Passwords and keys are never printed in the output.
 
 ## After import
 
@@ -159,7 +160,7 @@ Once imported, connections appear in the connections UI. You can:
 ## Notes
 
 - The import is additive: existing entries in the target folder are not deleted or overwritten. If you re-run the import, entries with the same name will be updated.
-- Guacamole user/group permissions are not imported. Use rustguac's OIDC group mappings and folder `allowed_groups` instead.
+- Guacamole user/group permissions are not imported. Use My Bastion's OIDC group mappings and folder `allowed_groups` instead.
 - Credentials (passwords, private keys) are imported into Vault where they are stored encrypted at rest and never touch disk.
 
 ## Splitting to multiple Vaults (disaster recovery)
@@ -181,7 +182,7 @@ Configure the new backend block (e.g. `[vault_shared]`) and its
 
 ```bash
 VAULT_SECRET_ID=... VAULT_SHARED_SECRET_ID=... \
-rustguac --config /opt/rustguac/config.toml \
+mybastion --config /etc/mybastion/mybastion.toml \
   vault-migrate --scope shared --from vault --to vault_shared --dry-run
 ```
 
@@ -189,7 +190,7 @@ rustguac --config /opt/rustguac/config.toml \
 
 ```bash
 VAULT_SECRET_ID=... VAULT_SHARED_SECRET_ID=... \
-rustguac --config /opt/rustguac/config.toml \
+mybastion --config /etc/mybastion/mybastion.toml \
   vault-migrate --scope shared --from vault --to vault_shared
 ```
 
@@ -210,7 +211,7 @@ the `shared` scope reads only from it, with no fall-back to `[vault]`. So the
 order matters:
 
 1. Copy the subtree first (Step 2).
-2. Then add the `[vault_shared]` block and restart rustguac.
+2. Then add the `[vault_shared]` block and restart mybastion.
 
 Doing it the other way round makes shared connections briefly disappear (the
 data is safe in the old Vault, just not being read). Entries and folders are

@@ -1,9 +1,10 @@
+/* Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. */
 /*
  * AFL++/libFuzzer harness for guacd's Guacamole protocol parser.
  *
  * Fuzzes guac_parser_append() — the core state machine that parses
  * Guacamole wire format data. This is the function that processes
- * all input from rustguac before any protocol handling occurs.
+ * all input from mybastion before any protocol handling occurs.
  *
  * Build with build.sh or manually:
  *   libFuzzer:  clang -fsanitize=fuzzer,address,undefined \

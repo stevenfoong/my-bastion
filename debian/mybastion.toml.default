@@ -1,7 +1,8 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 listen_addr = "0.0.0.0:8089"
 guacd_addr = "127.0.0.1:4822"
-static_path = "/opt/rustguac/static"
-db_path = "/opt/rustguac/data/rustguac.db"
+static_path = "/opt/mybastion/static"
+db_path = "/var/lib/mybastion/mybastion.db"
 session_pending_timeout_secs = 60
 xvnc_path = "Xvnc"
 chromium_path = "chromium"
@@ -18,36 +19,42 @@ display_range_end = 199
 # web_allowed_networks = ["0.0.0.0/0", "::/0"]
 
 # DEPRECATED: use [recording] section below
-# recording_path = "/opt/rustguac/recordings"
+# recording_path = "/var/lib/mybastion/recordings"
 
 [recording]
-path = "/opt/rustguac/recordings"
+path = "/var/lib/mybastion/recordings"
 enabled = true
 max_disk_percent = 80
 max_recordings = 0
 rotation_interval_secs = 300
 
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 
 # [vault]
 # addr = "https://vault.example.com:8200"
 # mount = "secret"
-# base_path = "rustguac"
+# base_path = "mybastion"
 # role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # # namespace = "my-ns"
 # # instance_name = "prod-1"
 
 # [drive]
 # enabled = true
-# drive_path = "/mnt/rustguac-drives"
+# drive_path = "/mnt/mybastion-drives"
 # drive_name = "Shared Drive"
 # allow_download = true
 # allow_upload = true
 # cleanup_on_close = true
 # retention_secs = 0
-# luks_device = "/opt/rustguac/drives.luks"
-# luks_name = "rustguac-drives"
-# luks_key_path = "rustguac/luks-key"
+# luks_device = "/var/lib/mybastion/drives.luks"
+# luks_name = "mybastion-drives"
+# luks_key_path = "mybastion/luks-key"
+
+# Inherited session types, off unless switched on here.
+# [web]
+# enabled = true    # headless-Chromium web sessions
+# [spice]
+# enabled = true    # SPICE and Proxmox VE consoles

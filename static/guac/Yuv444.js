@@ -1,5 +1,6 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 /*
- * Copyright (C) 2025 rustguac contributors
+ * Copyright (C) 2025 mybastion contributors
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -116,7 +117,7 @@ Guacamole.Yuv444Renderer = function Yuv444Renderer() {
     if (gl) {
         canvas.addEventListener('webglcontextlost', function(e) {
             e.preventDefault();
-            console.warn('[rustguac] YUV444 WebGL context lost;'
+            console.warn('[mybastion] YUV444 WebGL context lost;'
                     + ' falling back to 4:2:0');
             renderer.supported = false;
         });
@@ -381,7 +382,7 @@ Guacamole.Yuv444Renderer = function Yuv444Renderer() {
         gl.compileShader(shader);
 
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            console.error('[rustguac] YUV444 shader failed to compile:',
+            console.error('[mybastion] YUV444 shader failed to compile:',
                     gl.getShaderInfoLog(shader));
             gl.deleteShader(shader);
             return null;
@@ -420,7 +421,7 @@ Guacamole.Yuv444Renderer = function Yuv444Renderer() {
             gl.linkProgram(program);
 
             if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                console.error('[rustguac] YUV444 program failed to link:',
+                console.error('[mybastion] YUV444 program failed to link:',
                         gl.getProgramInfoLog(program));
                 this.supported = false;
             }
@@ -646,7 +647,7 @@ Guacamole.Yuv444Renderer = function Yuv444Renderer() {
          * after every frame, which costs a GPU sync per frame -- more than the
          * failure it guards against. */
         if (gl.isContextLost()) {
-            console.warn('[rustguac] YUV444 context lost mid-frame;'
+            console.warn('[mybastion] YUV444 context lost mid-frame;'
                     + ' dropping frame and falling back to 4:2:0');
             return null;
         }

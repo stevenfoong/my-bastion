@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Installation
 
-> **Target platform**: rustguac is built and tested against **Debian 13
+> **Target platform**: My Bastion is built and tested against **Debian 13
 > (Trixie)**. The pre-built `.deb` package and the `install.sh` script
 > both assume FreeRDP 3.15+ (Debian 13's `freerdp3-dev`). On other Linux
 > distributions, the recommended path is the Docker image (Option C),
@@ -9,39 +10,39 @@
 
 ## Option A: Debian package (recommended)
 
-Pre-built `.deb` packages are available from the [releases page](https://github.com/sol1/rustguac/releases) for Debian 13 (Trixie) and compatible distributions.
+Pre-built `.deb` packages are available from the [releases page](https://github.com/stevenfoong/my-bastion/releases) for Debian 13 (Trixie) and compatible distributions.
 
 ```bash
-sudo apt install ./rustguac_*.deb
+sudo apt install ./mybastion_*.deb
 ```
 
 Using `apt install` (not `dpkg -i`) ensures all runtime dependencies are resolved automatically.
 
-The package installs to `/opt/rustguac` and creates systemd services for both guacd and rustguac.
+The package installs to `/opt/mybastion` and creates systemd services for both guacd and mybastion.
 
 ### Post-install
 
 1. **Create an admin API key:**
 
 ```bash
-/opt/rustguac/bin/rustguac --config /opt/rustguac/config.toml add-admin --name admin
+/opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml add-admin --name admin
 ```
 
 Save the printed API key — it is only shown once.
 
-2. **Configure** — edit `/opt/rustguac/config.toml` as needed (see [Configuration](configuration.md)).
+2. **Configure** — edit `/etc/mybastion/mybastion.toml` as needed (see [Configuration](configuration.md)).
 
 3. **Start the services:**
 
 ```bash
-sudo systemctl enable --now rustguac
+sudo systemctl enable --now mybastion
 ```
 
-This starts both `rustguac-guacd` (the protocol daemon) and `rustguac` (the web proxy).
+This starts both `mybastion-guacd` (the protocol daemon) and `mybastion` (the web proxy).
 
 4. **(Required for connections) Set up Vault or OpenBao:**
 
-The connections page is rustguac's primary user-facing feature. It stores SSH, RDP, VNC, web session, and VDI entries in [HashiCorp Vault](https://www.vaultproject.io/) or [OpenBao](https://openbao.org/) KV v2 — credentials never reach the browser. **Without one of these, the Connections UI is unavailable** and users can only open ad-hoc connections (**Connect to a host**, beside the search box on every page) or use the API.
+The connections page is My Bastion's primary user-facing feature. It stores SSH, RDP, VNC, web session, and VDI entries in [HashiCorp Vault](https://www.vaultproject.io/) or [OpenBao](https://openbao.org/) KV v2 — credentials never reach the browser. **Without one of these, the Connections UI is unavailable** and users can only open ad-hoc connections (**Connect to a host**, beside the search box on every page) or use the API.
 
 For a single-host install the fastest path is the bundled quickstart helper, which auto-detects vault or bao and provisions everything:
 
@@ -60,22 +61,22 @@ See [Vault / OpenBao Connections](integrations.md#vault--openbao-connections) fo
 5. **(Optional) Set up encrypted drive storage:**
 
 ```bash
-sudo /opt/rustguac/bin/drive-setup.sh
+sudo /opt/mybastion/bin/drive-setup.sh
 ```
 
 See [Drive / File Transfer](integrations.md#drive--file-transfer--luks-encryption) for details.
 
 6. **(Optional) Enable VDI desktop containers:**
 
-If you want to use VDI sessions (ephemeral Docker desktop containers), install Docker and grant rustguac access:
+If you want to use VDI sessions (ephemeral Docker desktop containers), install Docker and grant My Bastion access:
 
 ```bash
 # Install Docker (if not already installed)
 curl -fsSL https://get.docker.com | sh
 
-# Allow rustguac to manage containers
-sudo usermod -aG docker rustguac
-sudo systemctl restart rustguac
+# Allow mybastion to manage containers
+sudo usermod -aG docker mybastion
+sudo systemctl restart mybastion
 ```
 
 Then add a `[vdi]` section to your config — see [VDI Desktop Containers](vdi.md) for full setup.
@@ -93,10 +94,10 @@ This performs the following steps:
 1. Installs system packages (build tools, Xvnc, Chromium, cryptsetup, etc.)
 2. Installs the Rust toolchain (if not present)
 3. Clones and builds guacd from [guacamole-server](https://github.com/apache/guacamole-server) source, applying patches automatically
-4. Builds rustguac with `cargo build --release`
-5. Creates the `rustguac` system user (home: `/home/rustguac`)
+4. Builds My Bastion with `cargo build --release`
+5. Creates the `mybastion` system user (home: `/home/mybastion`)
 6. Generates a self-signed TLS certificate
-7. Installs binaries, static files, and config to `/opt/rustguac`
+7. Installs binaries, static files, and config to `/opt/mybastion`
 8. Sets up systemd services
 
 ### Install flags
@@ -111,38 +112,40 @@ This performs the following steps:
 ### Installed layout
 
 ```
-/opt/rustguac/
-  bin/rustguac           # Main binary
+/opt/mybastion/
+  bin/mybastion          # Main binary
   bin/drive-setup.sh     # LUKS drive setup script
   sbin/guacd             # Guacamole protocol daemon
   lib/                   # guacd shared libraries
   static/                # Web UI files
-  tls/                   # TLS certificates
-  data/                  # SQLite database
-  recordings/            # Session recordings
-  config.toml            # Configuration file
+/etc/mybastion/          # root:mybastion, mode 0750
+  mybastion.toml         # Configuration file (mode 0640)
   env                    # Environment variables (VAULT_SECRET_ID, etc.)
+  tls/                   # TLS certificates
+/var/lib/mybastion/      # owned by the mybastion user
+  mybastion.db           # SQLite database
+  recordings/            # Session recordings
 ```
 
 ### Systemd services
 
 | Service | Description |
 |---------|-------------|
-| `rustguac-guacd` | guacd protocol daemon (TLS, loopback only) |
-| `rustguac` | rustguac web proxy (depends on guacd) |
+| `mybastion-guacd` | guacd protocol daemon (TLS, loopback only) |
+| `mybastion` | My Bastion web proxy (depends on guacd) |
 
-Both services run as the `rustguac` user and restart on failure.
+Both services run as the `mybastion` user and restart on failure.
 
-The `rustguac` service loads environment variables from `/opt/rustguac/env` via systemd's `EnvironmentFile` directive. Use this for secrets like `VAULT_SECRET_ID` and `OIDC_CLIENT_SECRET`.
+The `mybastion` service loads environment variables from `/etc/mybastion/env` via systemd's `EnvironmentFile` directive. Use this for secrets like `VAULT_SECRET_ID` and `OIDC_CLIENT_SECRET`.
 
 ## Option C: Docker
 
-Pre-built images are available on [Docker Hub](https://hub.docker.com/r/sol1/rustguac):
+Pre-built images are available on [Docker Hub](https://github.com/stevenfoong/my-bastion/pkgs/container/mybastion):
 
 ```bash
-docker pull sol1/rustguac:latest
-docker run --rm --entrypoint cat sol1/rustguac:latest /opt/rustguac/seccomp-chromium.json > seccomp-chromium.json
-docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json sol1/rustguac:latest
+docker pull ghcr.io/stevenfoong/mybastion:latest
+docker run --rm --entrypoint cat ghcr.io/stevenfoong/mybastion:latest /opt/mybastion/seccomp-chromium.json > seccomp-chromium.json
+docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json ghcr.io/stevenfoong/mybastion:latest
 ```
 
 The seccomp profile lets Chromium's sandbox start, which web browser sessions need. Docker's default profile blocks the namespaces the sandbox uses, so without it every web session fails; SSH, RDP and VNC sessions work either way. The profile is Docker's default with only that change. See [Web sessions: Running under Docker](web-sessions.md#running-under-docker) for what it allows and the alternatives.
@@ -150,45 +153,45 @@ The seccomp profile lets Chromium's sandbox start, which web browser sessions ne
 To build from source instead:
 
 ```bash
-docker build -t rustguac .
-docker run -d -p 8089:8089 --security-opt seccomp=contrib/docker/seccomp-chromium.json rustguac
+docker build -t mybastion .
+docker run -d -p 8089:8089 --security-opt seccomp=contrib/docker/seccomp-chromium.json mybastion
 ```
 
 The Docker image:
 - Uses a multi-stage build (Debian 13 trixie-slim runtime)
 - Builds guacd from source with patches applied
 - Generates a self-signed TLS certificate at build time
-- Enables TLS between rustguac and guacd by default
+- Enables TLS between My Bastion and guacd by default
 - Exposes HTTP on port 8089 (put a reverse proxy in front for HTTPS)
-- Runs as the unprivileged `rustguac` user, with Chromium's sandbox enabled
-- Includes the seccomp profile for web sessions at `/opt/rustguac/seccomp-chromium.json`
+- Runs as the unprivileged `mybastion` user, with Chromium's sandbox enabled
+- Includes the seccomp profile for web sessions at `/opt/mybastion/seccomp-chromium.json`
 
 ### API key setup
 
 On first run (when no database exists), the container automatically generates an admin API key and prints it to the logs:
 
 ```bash
-docker logs rustguac
+docker logs mybastion
 ```
 
 Save the printed key — it is only shown once. To generate additional keys later:
 
 ```bash
-docker exec rustguac /opt/rustguac/bin/rustguac \
-    --config /opt/rustguac/config.toml add-admin --name my-admin
+docker exec mybastion /opt/mybastion/bin/mybastion \
+    --config /etc/mybastion/mybastion.toml add-admin --name my-admin
 ```
 
 ### Customizing the configuration
 
-To persist config changes across container restarts, bind-mount a local `config.toml` into the container:
+To persist config changes across container restarts, bind-mount a local `mybastion.toml` into the container:
 
 1. **Copy the default config** from the image:
 
 ```bash
-docker run --rm --entrypoint cat sol1/rustguac:latest /opt/rustguac/config.toml.default > config.toml
+docker run --rm --entrypoint cat ghcr.io/stevenfoong/mybastion:latest /opt/mybastion/mybastion.toml.default > mybastion.toml
 ```
 
-2. **Edit** `config.toml` as needed (see [Configuration](configuration.md)):
+2. **Edit** `mybastion.toml` as needed (see [Configuration](configuration.md)):
 
 ```toml
 # Example: allow SSH to private networks
@@ -203,28 +206,28 @@ If no config file is mounted, the container uses a built-in default on first sta
 
 ```yaml
 services:
-  rustguac:
-    image: sol1/rustguac:latest
+  mybastion:
+    image: ghcr.io/stevenfoong/mybastion:latest
     ports:
       - "8089:8089"
     security_opt:
       # Lets Chromium's sandbox start for web sessions (see Option C above)
       - seccomp=./seccomp-chromium.json
     volumes:
-      - ./config.toml:/opt/rustguac/config.toml
-      - rustguac-data:/opt/rustguac/data
-      - rustguac-recordings:/opt/rustguac/recordings
+      - ./mybastion.toml:/etc/mybastion/mybastion.toml
+      - mybastion-data:/var/lib/mybastion
+      - mybastion-recordings:/var/lib/mybastion/recordings
     environment:
       - RUST_LOG=info
 
 volumes:
-  rustguac-data:
-  rustguac-recordings:
+  mybastion-data:
+  mybastion-recordings:
 ```
 
 ## Option D: RPM package (build from source)
 
-Pre-built RPM packages are not currently provided. An RPM spec file (`rustguac.spec`) and build script (`build-rpm.sh`) are included for Red Hat / Fedora / Rocky Linux based systems. You will need FreeRDP 3.x development headers installed.
+Pre-built RPM packages are not currently provided. An RPM spec file (`mybastion.spec`) and build script (`build-rpm.sh`) are included for Red Hat / Fedora / Rocky Linux based systems. You will need FreeRDP 3.x development headers installed.
 
 ```bash
 # Install build dependencies (example for Rocky/RHEL 9)
@@ -237,7 +240,7 @@ sudo dnf install -y gcc gcc-c++ make git autoconf automake libtool \
 
 # Build the RPM
 bash build-rpm.sh
-sudo rpm -i rustguac-*.rpm
+sudo rpm -i mybastion-*.rpm
 ```
 
 RPM builds are untested — contributions and feedback are welcome.
@@ -245,10 +248,10 @@ RPM builds are untested — contributions and feedback are welcome.
 ## Option E: Development
 
 ```bash
-# Clone guacamole-server alongside rustguac
+# Clone guacamole-server alongside mybastion
 git clone https://github.com/apache/guacamole-server.git ../guacamole-server
 
-# Install build deps, build guacd, build + run rustguac
+# Install build deps, build guacd, build + run mybastion
 ./dev.sh deps
 ./dev.sh build-guacd
 ./dev.sh start
@@ -271,7 +274,7 @@ EOF
 
 ## Other Linux distributions
 
-rustguac is built and tested against Debian 13 (Trixie). On other Linux
+My Bastion is built and tested against Debian 13 (Trixie). On other Linux
 distributions the FreeRDP ABI is typically different, and the prebuilt
 `.deb` will fail at runtime even if it installs cleanly. The most common
 symptom is RDP sessions working visually but drive redirection and audio
@@ -293,7 +296,7 @@ daemon. This is the supported path for Ubuntu, RHEL/Rocky/Alma, Arch,
 and any other non-Debian-13 distribution.
 
 ```bash
-docker pull sol1/rustguac:latest
+docker pull ghcr.io/stevenfoong/mybastion:latest
 ```
 
 See [Option C: Docker](#option-c-docker) above for the full setup.
@@ -325,20 +328,20 @@ sudo apt-get install -y \
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # Build guacd against system FreeRDP 3.5 (skip our 3.15+ patches)
-git clone https://github.com/sol1/rustguac.git
+git clone https://github.com/stevenfoong/my-bastion.git
 git clone https://github.com/apache/guacamole-server.git
 cd guacamole-server
-git checkout 6719b20d   # same pin rustguac uses
+git checkout 6719b20d   # same pin mybastion uses
 autoreconf -fi
-./configure --prefix=/opt/rustguac --with-rdp
+./configure --prefix=/opt/mybastion --with-rdp
 make -j"$(nproc)"
 sudo make install
 
-# Build rustguac
-cd ../rustguac
+# Build mybastion
+cd ../mybastion
 cargo build --release
 bash build-deb.sh
-sudo dpkg -i ../rustguac_*_amd64.deb
+sudo dpkg -i ../mybastion_*_amd64.deb
 ```
 
 Drive redirection, audio, and clipboard should work. The 3.15-specific
@@ -352,7 +355,7 @@ scope for this guide.
 Both paths are **untested by us**: we don't run CI against Ubuntu 24.04
 and we don't ship `.deb`s for it. Issues experienced on Ubuntu will be
 triaged as best-effort and will generally close with a pointer back to
-the Docker image. If you do run rustguac on Ubuntu successfully (or
+the Docker image. If you do run My Bastion on Ubuntu successfully (or
 unsuccessfully), reports via GitHub issues are welcome and help inform
 whether we eventually add a CI target.
 
@@ -363,7 +366,7 @@ For everything else, the Docker image is the path of least resistance.
 
 ## System dependencies
 
-For bare-metal installs, rustguac requires:
+For bare-metal installs, My Bastion requires:
 
 - **Rust toolchain** (1.75+)
 - **guacd** (built from guacamole-server source)

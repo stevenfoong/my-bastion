@@ -1,5 +1,5 @@
 //! Where connection entries, folder configs and credential variables are
-//! kept. `VaultClient` holds the rustguac logic (ACLs, folder defaults,
+//! kept. `VaultClient` holds the mybastion logic (ACLs, folder defaults,
 //! credential variables) and does its I/O through a `SecretStore`: one JSON
 //! document per path, KV v2 style.
 
@@ -129,8 +129,8 @@ mod tests {
         )
         .unwrap();
         let sc = sqlite.sqlite_storage().unwrap();
-        assert_eq!(sc.kek_source, "file:/etc/rustguac/kek");
-        assert_eq!(sc.base_path, "rustguac");
+        assert_eq!(sc.kek_source, "file:/etc/mybastion/kek");
+        assert_eq!(sc.base_path, "mybastion");
         assert_eq!(sc.instance_name.as_deref(), Some("n1"));
         assert!(sqlite.secrets_configured());
 

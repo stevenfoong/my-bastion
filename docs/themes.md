@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Themes
 
-rustguac ships with a small set of built-in colour presets and lets you
+My Bastion ships with a small set of built-in colour presets and lets you
 add your own without recompiling. This page covers everything theme:
 choosing a preset, overriding individual colours, and authoring a brand
 new theme as a `.toml` file.
@@ -12,7 +13,7 @@ new theme as a `.toml` file.
   follows you across sessions on that machine but doesn't affect anyone
   else.
 - **Want to set the default for the whole deployment?** Add a `[theme]`
-  block to `config.toml` (see below). Individual users can still override
+  block to `mybastion.toml` (see below). Individual users can still override
   via the gear menu.
 - **Want a custom palette or your org's brand colours?** Drop a `.toml`
   file into the themes directory. No recompile, no PR to the project.
@@ -33,15 +34,15 @@ new theme as a `.toml` file.
 Plus any user-supplied themes you've dropped into the themes directory
 (see [User-supplied themes](#user-supplied-themes) below).
 
-## Setting the default in `config.toml`
+## Setting the default in `mybastion.toml`
 
-The `[theme]` block in `config.toml` picks the default preset for new
+The `[theme]` block in `mybastion.toml` picks the default preset for new
 users and lets you override individual colours on top of that preset.
 
 ```toml
 [theme]
 preset = "aurora"            # base preset; defaults to "aurora" if omitted
-logo_url = "/logo.png"       # optional, replaces the rustguac logo
+logo_url = "/logo.png"       # optional, replaces the mybastion logo
 primary_color = "#003366"    # any of the per-field overrides below
 ```
 
@@ -96,9 +97,9 @@ accent_color = "#FF6600"
 
 Since v1.7.1 you can ship arbitrary themes as standalone files without
 touching Rust or the project repo. Drop a `<name>.toml` file into
-`<static_path>/themes/` (typically `/opt/rustguac/static/themes/`), restart
-rustguac, and the theme appears in the gear-menu picker. Available to all
-users; selectable as `preset = "<name>"` in `config.toml`.
+`<static_path>/themes/` (typically `/opt/mybastion/static/themes/`), restart
+My Bastion, and the theme appears in the gear-menu picker. Available to all
+users; selectable as `preset = "<name>"` in `mybastion.toml`.
 
 ### File format
 
@@ -110,7 +111,7 @@ match the per-field overrides above, but **without** the `_color` suffix
 which defaults to `"none"` if omitted.
 
 ```toml
-# /opt/rustguac/static/themes/acme-night.toml
+# /opt/mybastion/static/themes/acme-night.toml
 primary          = "#003366"
 primary_hover    = "#002244"
 accent           = "#FF6600"
@@ -144,7 +145,7 @@ hop_fg           = "#34d399"
 bg_pattern       = "none"
 ```
 
-A complete example ships with rustguac at
+A complete example ships with My Bastion at
 `static/themes/catppuccin-macchiato.toml`. Copy it and tweak.
 
 ### Naming rules
@@ -161,12 +162,12 @@ path-traversal or homoglyph mischief from crafted filenames.
 If you create a file named after a built-in (`aurora.toml`,
 `corporate.toml`, …) it **replaces** the built-in in the picker and in
 `preset` resolution. This is the supported way to re-brand a built-in
-without forking rustguac: edit your own `aurora.toml` rather than
+without forking mybastion: edit your own `aurora.toml` rather than
 patching the Rust source.
 
 ### Loading rules
 
-- Loaded once at rustguac startup. Restart `rustguac` after adding,
+- Loaded once at My Bastion startup. Restart `mybastion` after adding,
   editing, or removing a theme file.
 - Files must have a `.toml` extension to be loaded.
 - Each file must contain all required colour fields. Files missing
@@ -178,19 +179,19 @@ patching the Rust source.
 ### Where the themes directory lives
 
 The themes directory is `<static_path>/themes/`. The `static_path` is
-set in `config.toml`; defaults are:
+set in `mybastion.toml`; defaults are:
 
 | Install method | Default static_path |
 |----------------|---------------------|
-| `.deb` (Debian) | `/opt/rustguac/static/` |
-| Docker image | `/opt/rustguac/static/` |
-| `install.sh` (bare metal) | `/opt/rustguac/static/` |
+| `.deb` (Debian) | `/opt/mybastion/static/` |
+| Docker image | `/opt/mybastion/static/` |
+| `install.sh` (bare metal) | `/opt/mybastion/static/` |
 | Cargo run from source | `./static/` |
 
 For Docker, mount your themes directory over the in-image path:
 
 ```bash
-docker run -v /etc/rustguac/themes:/opt/rustguac/static/themes:ro ...
+docker run -v /etc/mybastion/themes:/opt/mybastion/static/themes:ro ...
 ```
 
 ## Per-user theme switching

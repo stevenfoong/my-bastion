@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Guacamole protocol instruction encoding and decoding.
 //!
 //! Wire format: `LENGTH.ELEMENT,LENGTH.ELEMENT,...;`
@@ -311,7 +312,7 @@ mod tests {
     }
 
     // ── Adversarial parser cases ───────────────────────────────────────────
-    // guacd is a trust boundary: even under compromise, the rustguac parser
+    // guacd is a trust boundary: even under compromise, the mybastion parser
     // must refuse to panic, must reject malformed frames cleanly, and must
     // bound memory. Every negative case here should produce a ParseError or
     // be dropped by the 1 MiB buffer cap — never a panic or OOM.

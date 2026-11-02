@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 mod api;
 mod auth;
 mod browser;
@@ -40,7 +41,10 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "rustguac", about = "Lightweight Guacamole SSH proxy")]
+#[command(
+    name = "mybastion",
+    about = "My Bastion: one gateway for privileged access to desktops, servers and databases"
+)]
 struct Cli {
     /// Path to TOML config file
     #[arg(short, long)]
@@ -115,7 +119,7 @@ enum Command {
 
     /// Generate a self-signed TLS certificate for development/testing
     GenerateCert {
-        /// Hostname for the certificate (e.g. "rustguac.example.com")
+        /// Hostname for the certificate (e.g. "mybastion.example.com")
         #[arg(long)]
         hostname: String,
         /// Output directory for cert.pem and key.pem
@@ -195,7 +199,7 @@ enum Command {
         dry_run: bool,
         /// Rewrite substrings in the credential fields (username, password,
         /// domain, private_key) during import. Repeatable; format FROM=TO.
-        /// Maps Apache Guacamole passthrough tokens to rustguac credential
+        /// Maps Apache Guacamole passthrough tokens to mybastion credential
         /// variables, e.g. --map '${GUAC_USERNAME}=$corp_username'
         /// --map '${GUAC_PASSWORD}=$corp_password'
         #[arg(long = "map")]
@@ -257,7 +261,7 @@ async fn main() {
         None | Some(Command::Serve) => {
             // Only the server talks to the IdP, so only the server insists on
             // an OIDC client secret. Checked here rather than in Config::load
-            // so `add-admin` & co. work from a shell where /opt/rustguac/env
+            // so `add-admin` & co. work from a shell where /etc/mybastion/env
             // (systemd's EnvironmentFile) has not been sourced.
             if let Err(msg) = config.validate_oidc_secret() {
                 eprintln!("[config] ERROR: {}", msg);
@@ -519,7 +523,7 @@ fn cmd_generate_cert(hostname: &str, out_dir: &str, extra_sans: &[String]) {
     println!("  Private key: {}", key_path.display());
     println!("  SANs:        {}", sans.join(", "));
     println!();
-    println!("Add to config.toml:");
+    println!("Add to mybastion.toml:");
     println!("  [tls]");
     println!("  cert_path = \"{}\"", cert_path.display());
     println!("  key_path = \"{}\"", key_path.display());
@@ -753,7 +757,7 @@ struct TlsEnabled(bool);
 /// (`cursor: url(data:...)`) and blob: image URLs need the same allowance.
 ///
 /// No page may be framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY`):
-/// a framed rustguac page, above all a live session, would take the clicks
+/// a framed mybastion page, above all a live session, would take the clicks
 /// and keystrokes of whoever is fooled into using it. The one exception is
 /// `FRAMEABLE_CONTENT_SECURITY_POLICY` below.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
@@ -1064,7 +1068,7 @@ async fn run_server(config: Config, database: Db) {
         // One hash per distinct asset, not per reference: every page links
         // the same stylesheet and client.html alone carries 36 scripts.
         let mut hashes = std::collections::HashMap::new();
-        let version_assets_enabled = std::env::var_os("RUSTGUAC_NO_ASSET_VERSIONING").is_none();
+        let version_assets_enabled = std::env::var_os("MYBASTION_NO_ASSET_VERSIONING").is_none();
         let mut brand = |html: &str| {
             let html = rewrite_branding(html, title, logo);
             if version_assets_enabled {
@@ -1098,7 +1102,7 @@ async fn run_server(config: Config, database: Db) {
         if version_assets_enabled {
             tracing::info!("Content-hashed {} static asset URLs", versioned);
         } else {
-            tracing::info!("Asset versioning disabled (RUSTGUAC_NO_ASSET_VERSIONING)");
+            tracing::info!("Asset versioning disabled (MYBASTION_NO_ASSET_VERSIONING)");
         }
         Arc::new(pages)
     };
@@ -1680,7 +1684,7 @@ async fn run_server(config: Config, database: Db) {
     } else {
         "http"
     };
-    tracing::info!("rustguac starting on {}://{}", scheme, listen_addr);
+    tracing::info!("mybastion starting on {}://{}", scheme, listen_addr);
     tracing::info!("Static files served from {:?}", static_path);
 
     // TCP keepalive on the listener. Linux inherits SO_KEEPALIVE and the
@@ -1946,7 +1950,7 @@ async fn asset_cache_control(
 /// The hash is taken at startup, in the same pass that brands the page, so
 /// the URL and the bytes it names are produced together and cannot disagree.
 /// The corollary is that **editing an asset now needs a restart to be seen**,
-/// where before a reload was enough; `RUSTGUAC_NO_ASSET_VERSIONING` turns
+/// where before a reload was enough; `MYBASTION_NO_ASSET_VERSIONING` turns
 /// this off for that reason.
 ///
 /// An asset that cannot be read is left alone: a missing file is a 404 either
@@ -2094,19 +2098,19 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-/// Rewrite branding in HTML: replace default "rustguac" site title and logo.
+/// Rewrite branding in HTML: replace default "mybastion" site title and logo.
 fn rewrite_branding(html: &str, site_title: &str, logo_url: Option<&str>) -> String {
     let mut out = html.to_string();
-    if site_title != "rustguac" {
+    if site_title != "My Bastion" {
         let safe_title = html_escape(site_title);
-        // <title>rustguac</title> and <title>rustguac - Sessions</title> etc.
+        // <title>My Bastion</title> and <title>My Bastion - Sessions</title> etc.
         out = out.replace(
-            "<title>rustguac</title>",
+            "<title>My Bastion</title>",
             &format!("<title>{}</title>", safe_title),
         );
-        out = out.replace("<title>rustguac - ", &format!("<title>{} - ", safe_title));
-        // <h1>rustguac</h1> (with or without inline style)
-        out = out.replace(">rustguac</h1>", &format!(">{}</h1>", safe_title));
+        out = out.replace("<title>My Bastion - ", &format!("<title>{} - ", safe_title));
+        // <h1>My Bastion</h1> (with or without inline style)
+        out = out.replace(">My Bastion</h1>", &format!(">{}</h1>", safe_title));
     }
     if let Some(url) = logo_url {
         let safe_url = html_escape(url);
@@ -2247,11 +2251,11 @@ mod tests {
         let static_path = std::path::Path::new("static");
         let mut hashes = std::collections::HashMap::new();
         let html = concat!(
-            "<link rel=\"stylesheet\" href=\"/rustguac.css\">",
+            "<link rel=\"stylesheet\" href=\"/mybastion.css\">",
             "<script src=\"/guac/Client.js\"></script>",
         );
         let out = version_assets(html, static_path, &mut hashes);
-        assert!(out.contains("/rustguac.css?v="), "{out}");
+        assert!(out.contains("/mybastion.css?v="), "{out}");
         assert!(out.contains("/guac/Client.js?v="), "{out}");
         // The rest of the markup survives untouched.
         assert!(out.starts_with("<link rel=\"stylesheet\""));
@@ -2320,7 +2324,7 @@ mod tests {
     fn test_asset_hash_is_content_derived_and_cached() {
         let static_path = std::path::Path::new("static");
         let mut hashes = std::collections::HashMap::new();
-        let css = asset_hash("/rustguac.css", static_path, &mut hashes).expect("css hashes");
+        let css = asset_hash("/mybastion.css", static_path, &mut hashes).expect("css hashes");
         let js = asset_hash("/guac/Client.js", static_path, &mut hashes).expect("js hashes");
         assert_ne!(css, js);
         assert_eq!(css.len(), 8);
@@ -2328,7 +2332,7 @@ mod tests {
         // One entry per distinct URL, hit or miss -- a miss is cached too, so
         // a page full of broken links does not re-stat the disk per reference.
         assert_eq!(
-            asset_hash("/rustguac.css", static_path, &mut hashes),
+            asset_hash("/mybastion.css", static_path, &mut hashes),
             Some(css)
         );
         assert!(asset_hash("/guac/NoSuchFile.js", static_path, &mut hashes).is_none());
@@ -2362,7 +2366,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_branding_title() {
-        let html = "<title>rustguac - Sessions</title>";
+        let html = "<title>My Bastion - Sessions</title>";
         assert_eq!(
             rewrite_branding(html, "MyGateway", None),
             "<title>MyGateway - Sessions</title>"
@@ -2371,7 +2375,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_branding_h1() {
-        let html = r#"<h1 style="display:inline">rustguac</h1>"#;
+        let html = r#"<h1 style="display:inline">My Bastion</h1>"#;
         assert_eq!(
             rewrite_branding(html, "MyGateway", None),
             r#"<h1 style="display:inline">MyGateway</h1>"#
@@ -2382,15 +2386,15 @@ mod tests {
     fn test_rewrite_branding_logo() {
         let html = r#"<img id="site-logo" src="/logo.svg" style="max-height:40px">"#;
         assert_eq!(
-            rewrite_branding(html, "rustguac", Some("https://example.com/logo.png")),
+            rewrite_branding(html, "My Bastion", Some("https://example.com/logo.png")),
             r#"<img id="site-logo" src="https://example.com/logo.png" style="max-height:40px">"#
         );
     }
 
     #[test]
     fn test_rewrite_branding_noop() {
-        let html = "<title>rustguac</title><h1>rustguac</h1>";
-        assert_eq!(rewrite_branding(html, "rustguac", None), html);
+        let html = "<title>My Bastion</title><h1>My Bastion</h1>";
+        assert_eq!(rewrite_branding(html, "My Bastion", None), html);
     }
 
     // ── Rate-limit plumbing ─────────────────────────────────────────────

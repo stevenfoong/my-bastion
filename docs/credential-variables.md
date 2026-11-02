@@ -1,14 +1,15 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Credential Variables
 
-Credential variables let connections entries reference shared credentials by name instead of storing passwords directly. Users maintain their own credential values in Vault via the **My Credentials** dialog (the **Credentials** link in the top navigation, or the gear menu). When a session launches, rustguac substitutes the variables from the user's saved values.
+Credential variables let connections entries reference shared credentials by name instead of storing passwords directly. Users maintain their own credential values in Vault via the **My Credentials** dialog (the **Credentials** link in the top navigation, or the gear menu). When a session launches, My Bastion substitutes the variables from the user's saved values.
 
-This gives a similar experience to LDAP credential passthrough in Apache Guacamole — users log in once and sessions just work — without rustguac needing to bind to LDAP. Credentials stay in Vault, never on disk or in the browser.
+This gives a similar experience to LDAP credential passthrough in Apache Guacamole — users log in once and sessions just work — without My Bastion needing to bind to LDAP. Credentials stay in Vault, never on disk or in the browser.
 
 ## How it works
 
 1. **Admin** creates connections entries with variable references like `$corp_username` and `$corp_password` in the credential fields
 2. **Users** open **My Credentials** from the gear menu and fill in their values (stored per-user in Vault)
-3. **At connect time**, rustguac substitutes the variables. If all are set, the session launches silently. If any are missing, the user is prompted.
+3. **At connect time**, My Bastion substitutes the variables. If all are set, the session launches silently. If any are missing, the user is prompted.
 
 ## Variable naming
 
@@ -124,10 +125,10 @@ In addition to the existing connections policy, add:
 
 ```hcl
 # User credential variables (read/write own credentials)
-path "secret/data/rustguac/users/*" {
+path "secret/data/mybastion/users/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
-path "secret/metadata/rustguac/users/*" {
+path "secret/metadata/mybastion/users/*" {
   capabilities = ["list", "read", "delete"]
 }
 ```
@@ -183,7 +184,7 @@ The folder where the walk stops still applies its own `.defaults` to its entries
 
 ### Migration between Vaults
 
-`rustguac vault-migrate` copies each folder's `.defaults` alongside its `.config`, so a DR split keeps the defaults; the dry run lists them as `[defaults] <folder>`. Deleting a folder removes its `.defaults` with it.
+`mybastion vault-migrate` copies each folder's `.defaults` alongside its `.config`, so a DR split keeps the defaults; the dry run lists them as `[defaults] <folder>`. Deleting a folder removes its `.defaults` with it.
 
 ### Web entries: the password is visible to the user
 

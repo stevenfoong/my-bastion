@@ -1,8 +1,9 @@
 <!DOCTYPE html>
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>rustguac - SSH Session</title>
+    <title>My Bastion - SSH Session</title>
     <style>
         :root { --primary: #e94560; --primary-hover: #c73652; --accent: #5bc0be; --accent-hover: #4aa3a1; --bg: #1a1a2e; --surface: #16213e; --input: #0f3460; --text: #e0e0e0; --text-muted: #aaa; --border: #333; --text-dim: #888; --text-on-primary: #fff; --btn-disabled: #555; --status-pending: #f0c040; --status-active: #5bc0be; --status-completed: #888; --status-error: #e94560; --status-expired: #666; --type-ssh-bg: #1a3a2a; --type-ssh-fg: #5bc0be; --type-rdp-bg: #2a1a3a; --type-rdp-fg: #a78bfa; --type-vnc-bg: #3a2a1a; --type-vnc-fg: #f0c040; --type-web-bg: #1a2a3a; --type-web-fg: #60a5fa; --hop-bg: #1e3a5f; --hop-fg: #7ec8e3; --bg-pattern: none; }
         html, body {
@@ -213,7 +214,7 @@
             max-width: 320px;
         }
     </style>
-    <script>(function(){var c=localStorage.getItem('rustguac_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
+    <script>(function(){var c=localStorage.getItem('mybastion_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
 
     <!-- Guacamole common JS modules -->
     <script src="/guac/Namespace.js"></script>
@@ -289,9 +290,9 @@
     <div id="display"></div>
 
     <script>
-        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('rustguac_theme_colors',JSON.stringify(colors))}
+        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('mybastion_theme_colors',JSON.stringify(colors))}
         var _themePresets={},_adminPreset='aurora';
-        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('rustguac_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);}
+        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('mybastion_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);}
         var pathParts = window.location.pathname.split('/');
         var sessionId = pathParts[pathParts.length - 1];
 
@@ -333,7 +334,7 @@
         var statusEl = document.getElementById('status');
         var urlParams = new URLSearchParams(window.location.search);
         var shareToken = urlParams.get('token');
-        var apiKey = sessionStorage.getItem('rustguac_api_key');
+        var apiKey = sessionStorage.getItem('mybastion_api_key');
         // Pre-minted single-use WebSocket ticket passed in the URL. Lets a
         // headless API integration authenticate the owner connection without an
         // OIDC session or a stored API key: the backend mints it via
@@ -436,7 +437,7 @@
         var wantAutohideTabs = false;
 
         fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
-            var siteTitle = d.site_title || 'rustguac';
+            var siteTitle = d.site_title || 'My Bastion';
             document.title = entryName ? (entryName + ' — ' + siteTitle) : (siteTitle + ' - Session');
             initTheme(d.theme);
         });
@@ -570,8 +571,8 @@
             // instruction stream here shows the server's actual drawing.
             // A ring buffer records recent draw ops (decoded to coordinates)
             // with near-zero overhead and no console noise. After reproducing
-            // a black tile, call rustguacDumpDraws() in the console to print
-            // the recent history, or rustguacDumpDraws(x, y) to show only ops
+            // a black tile, call mybastionDumpDraws() in the console to print
+            // the recent history, or mybastionDumpDraws(x, y) to show only ops
             // whose rectangle covers that pixel. Append ?debug=draw to the URL
             // for live per-op logging.
             var DRAW_RING = [];
@@ -611,7 +612,7 @@
             tunnel.oninstruction = function(opcode, args) {
                 if (!seenOpcodes[opcode]) {
                     seenOpcodes[opcode] = true;
-                    if (typeof console !== 'undefined') console.log('[rustguac] instruction: ' + opcode + (args.length ? ' (' + args.length + ' args)' : ''));
+                    if (typeof console !== 'undefined') console.log('[mybastion] instruction: ' + opcode + (args.length ? ' (' + args.length + ' args)' : ''));
                 }
                 var d = decodeDraw(opcode, args);
                 if (d) {
@@ -630,7 +631,7 @@
             // Dump the recent draw-op history. With (x,y) filters to ops whose
             // rectangle covers that pixel on the default layer — point this at
             // a black tile's top-left to see what last painted there.
-            window.rustguacDumpDraws = function(x, y) {
+            window.mybastionDumpDraws = function(x, y) {
                 var rows = DRAW_RING;
                 if (typeof x === 'number' && typeof y === 'number') {
                     rows = rows.filter(function(d) {
@@ -640,7 +641,7 @@
                         return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
                     });
                 }
-                console.log('[rustguac] ' + rows.length + ' draw ops'
+                console.log('[mybastion] ' + rows.length + ' draw ops'
                     + (typeof x === 'number' ? ' covering (' + x + ',' + y + ')' : '') + ':');
                 console.table(rows.map(function(d) {
                     return { op: d.op, layer: d.layer,
@@ -659,7 +660,7 @@
                 var ctx = Guacamole.AudioContextFactory.getAudioContext();
                 if (ctx && ctx.state === 'suspended') {
                     ctx.resume().then(function() {
-                        if (typeof console !== 'undefined') console.log('[rustguac] AudioContext resumed');
+                        if (typeof console !== 'undefined') console.log('[mybastion] AudioContext resumed');
                     });
                 }
             }
@@ -778,7 +779,7 @@
                     if (name !== 'secondary-monitors') return;
                     var secondary = parseInt(buf, 10);
                     if (!isNaN(secondary)) maxMonitors = secondary + 1;
-                    console.log('[rustguac] multimon: server allows ' + maxMonitors
+                    console.log('[mybastion] multimon: server allows ' + maxMonitors
                         + ' monitor(s) (secondary-monitors=' + buf.trim() + ')');
                     // Refresh the Controls panel's monitor section if it's built.
                     if (typeof renderMonitorControls === 'function') renderMonitorControls();
@@ -790,10 +791,10 @@
                 try {
                     monitorLayout = JSON.parse(value);
                 } catch (e) {
-                    console.warn('[rustguac] multimon-layout parse error:', e, value);
+                    console.warn('[mybastion] multimon-layout parse error:', e, value);
                     return;
                 }
-                console.log('[rustguac] multimon-layout:', monitorLayout);
+                console.log('[mybastion] multimon-layout:', monitorLayout);
                 // Reflect the newly-active monitors in the Controls panel. Open
                 // windows read monitorLayout[index] each frame, so no per-window
                 // update is needed here.
@@ -906,10 +907,10 @@
             // View: 'fit' scales the desktop to the window, 'actual' draws it
             // at 100% with scroll bars. Remembered per browser.
             var viewMode = 'fit';
-            try { if (localStorage.getItem('rustguac_view_mode') === 'actual') viewMode = 'actual'; } catch (e) {}
+            try { if (localStorage.getItem('mybastion_view_mode') === 'actual') viewMode = 'actual'; } catch (e) {}
             function setViewMode(mode) {
                 viewMode = mode === 'actual' ? 'actual' : 'fit';
-                try { localStorage.setItem('rustguac_view_mode', viewMode); } catch (e) {}
+                try { localStorage.setItem('mybastion_view_mode', viewMode); } catch (e) {}
                 scaleDisplay();
             }
 
@@ -1042,7 +1043,7 @@
             // coordinates.
             function openMonitorWindow(index) {
                 if (monitorWindows[index]) return;
-                var win = window.open('', 'rustguac-mon-' + index,
+                var win = window.open('', 'mybastion-mon-' + index,
                     'width=1280,height=800,menubar=no,toolbar=no,location=no,status=no');
                 if (!win) {
                     rgAlert('Popup blocked. Allow popups for this site to open an extra monitor.');
@@ -1549,7 +1550,7 @@
             };
 
             function tracing_log(msg) {
-                if (typeof console !== 'undefined') console.log('[rustguac] ' + msg);
+                if (typeof console !== 'undefined') console.log('[mybastion] ' + msg);
             }
 
             // Also support drag-drop on the display
@@ -1630,15 +1631,15 @@
             // Escape is locked, so a single press doesn't leave fullscreen.
             // Remembered per browser; set from the Controls panel.
             var lockAllKeys = false;
-            try { lockAllKeys = localStorage.getItem('rustguac_lock_all_keys') === '1'; } catch (e) {}
+            try { lockAllKeys = localStorage.getItem('mybastion_lock_all_keys') === '1'; } catch (e) {}
             function rgKeyboardLockSupported() {
                 return !!(navigator.keyboard && navigator.keyboard.lock);
             }
             function rgSetLockAllKeys(on) {
                 lockAllKeys = !!on;
                 try {
-                    if (lockAllKeys) localStorage.setItem('rustguac_lock_all_keys', '1');
-                    else localStorage.removeItem('rustguac_lock_all_keys');
+                    if (lockAllKeys) localStorage.setItem('mybastion_lock_all_keys', '1');
+                    else localStorage.removeItem('mybastion_lock_all_keys');
                 } catch (e) {}
                 if (rgFullscreenEl()) rgRequestKeyboardLock();
             }
@@ -1763,8 +1764,8 @@
                 } catch (e) {}
             }
             function rgShowEscNoticeOnce() {
-                if (sessionStorage.getItem('rustguac_esc_notice_seen')) return;
-                sessionStorage.setItem('rustguac_esc_notice_seen', '1');
+                if (sessionStorage.getItem('mybastion_esc_notice_seen')) return;
+                sessionStorage.setItem('mybastion_esc_notice_seen', '1');
                 var t = document.getElementById('fs-esc-notice');
                 if (!t) return;
                 t.textContent = 'Press Esc to exit fullscreen in this browser.';
@@ -1973,7 +1974,7 @@
             // existing client.onerror closes that loop.
             tunnel.onerror = function(status) {
                 if (typeof console !== 'undefined')
-                    console.log('[rustguac] tunnel error:',
+                    console.log('[mybastion] tunnel error:',
                                 status && status.message,
                                 'code=' + (status && status.code));
                 if (client.onerror) client.onerror(status || {
@@ -1984,14 +1985,14 @@
             tunnel.onstatechange = function(state) {
                 if (state === Guacamole.Tunnel.State.CLOSED) {
                     if (typeof console !== 'undefined')
-                        console.log('[rustguac] tunnel closed');
+                        console.log('[mybastion] tunnel closed');
                     if (client.onerror) client.onerror({
                         code: 519,
                         message: 'Connection lost'
                     });
                 } else if (state === Guacamole.Tunnel.State.UNSTABLE) {
                     if (typeof console !== 'undefined')
-                        console.log('[rustguac] tunnel unstable');
+                        console.log('[mybastion] tunnel unstable');
                     statusEl.textContent = 'Connection unstable...';
                 }
             };
@@ -2054,7 +2055,7 @@
                     screen_height: screen.height,
                     dpi: Math.round((window.devicePixelRatio || 1) * 96),
                     keyboard_layout: (function() {
-                        try { return localStorage.getItem('rustguac_keyboard_layout') || undefined; } catch (e) { return undefined; }
+                        try { return localStorage.getItem('mybastion_keyboard_layout') || undefined; } catch (e) { return undefined; }
                     })()
                 };
 

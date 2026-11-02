@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Live check of the SQLite secret store with no Vault: starts rustguac with
+# Live check of the SQLite secret store with no Vault: starts mybastion with
 # [storage] backend = "sqlite", creates a folder and an RDP entry over the
 # REST API, restarts and reads them back, then exercises `storage put` and
 # `storage rotate-kek`. Needs only cargo and curl.
@@ -14,8 +14,8 @@ cd "$(dirname "$0")/.."
 PORT="${PORT:-18089}"
 U="http://127.0.0.1:$PORT"
 cargo build -q || exit 1
-BIN="$PWD/target/debug/rustguac"
-W=$(mktemp -d /tmp/rustguac-sqlite.XXXXXX)
+BIN="$PWD/target/debug/mybastion"
+W=$(mktemp -d /tmp/mybastion-sqlite.XXXXXX)
 PID=
 cleanup() {
     [ -n "$PID" ] && kill "$PID" 2>/dev/null
@@ -40,7 +40,7 @@ mkdir -p "$W/rec"
 head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$W/kek" && chmod 400 "$W/kek"
 cat > "$W/config.toml" <<EOF
 listen_addr = "127.0.0.1:$PORT"
-db_path = "$W/rustguac.db"
+db_path = "$W/mybastion.db"
 static_path = "$PWD/static"
 recording_path = "$W/rec"
 
@@ -73,8 +73,8 @@ check "$(cat "$W"/secrets.db* | grep -c 'S3cret-e2e-pw')" 0 "password not in cle
 check "$(stat -c %a "$W/secrets.db")" 600 "secrets.db is mode 0600"
 
 printf 'luks-key-material' > "$W/luks.key"
-check "$("$BIN" --config "$W/config.toml" storage put rustguac/luks "key=@$W/luks.key" 2>/dev/null)" \
-    "Wrote rustguac/luks on sqlite (version 1)" "storage put"
+check "$("$BIN" --config "$W/config.toml" storage put mybastion/luks "key=@$W/luks.key" 2>/dev/null)" \
+    "Wrote mybastion/luks on sqlite (version 1)" "storage put"
 head -c 32 /dev/urandom | base64 > "$W/kek2" && chmod 400 "$W/kek2"
 "$BIN" --config "$W/config.toml" storage rotate-kek --new-kek-source "file:$W/kek2" >/dev/null 2>&1
 start

@@ -1,157 +1,133 @@
-# CLAUDE.md — Project state for rustguac
+# CLAUDE.md — My Bastion
 
 ## What this project is
 
-rustguac is a lightweight Rust replacement for the Apache Guacamole Java webapp. It proxies the Guacamole protocol over WebSockets between web browsers and guacd (the C daemon from guacamole-server). Supports SSH, RDP, VNC, web browser sessions (headless Chromium on Xvnc), and VDI desktop containers (Docker).
+My Bastion (`mybastion`) is one gateway for privileged access: people and AI
+agents reaching desktops, servers and, later, databases, with every action
+recorded, controlled and, when it matters, approved. It is a **hard fork** of
+[sol1/rustguac](https://github.com/sol1/rustguac) v1.13.4 and does not track
+upstream: refactor, rename and delete freely when it makes the design cleaner.
+
+The plan and its phases are in `docs/fork-design.md`; read it before starting
+a phase. Status:
+
+- Phase 0 (rename, NOTICE, CI, inherited features off by default): done
+- Phase 1 (SQLite secret store): `SecretStore` trait, Vault and SQLite
+  backends, migration CLI done; still to do is splitting `vault.rs` into
+  `src/connections/` (renaming `VaultClient` to `ConnectionStore`),
+  `src/storage/` to `src/store/`, SQLite as default, dropping the multi-Vault
+  DR split
+- Phases 2–4 (policy/approval engine, MCP, DB proxy): not started
 
 ## Architecture
 
-- **Rust binary** (`rustguac`) — axum web server, session manager, WebSocket proxy
-- **guacd** — built from apache/guacamole-server source, handles SSH/VNC/RDP protocol translation
-- **Xvnc + Chromium** — spawned per web-browser session, streamed via VNC through guacd
-- **Docker** — VDI containers spawned per-user, connected via RDP through guacd
+- **Core** (`mybastion`, Rust): axum web UI + REST API, identity (OIDC, roles,
+  API keys), secret store, audit + recordings, desktop proxy (WebSocket <->
+  guacd). Later: policy/approval engine and the MCP endpoint.
+- **guacd** (C, Apache Guacamole guacamole-server, built with `patches/`):
+  RDP/VNC/SSH/SPICE protocol translation. Never modified beyond the patches.
+- **Xvnc + Chromium**: web sessions, one per session. Off unless `[web]`.
+- **Docker**: VDI containers. Off unless `[vdi]`; socket access is
+  root-equivalent, so installers never add the service user to `docker`.
 
 ## Key files
 
-- `src/main.rs` — entry point, CLI (clap), server setup
-- `src/api.rs` — REST API endpoints (session CRUD, recordings, admin)
-- `src/session.rs` — session state machine, SessionManager
-- `src/browser.rs` — Xvnc + Chromium process lifecycle (display allocator, per-session profile dirs)
-- `src/vdi/mod.rs` — VdiDriver trait, container types (ContainerSpec, ContainerInfo, ManagedContainer)
-- `src/vdi/docker.rs` — Docker-based VDI driver (bollard, unix socket, start/reuse/stop)
-- `src/guacd.rs` — TCP connection to guacd, Guacamole protocol handshake
-- `src/protocol.rs` — Guacamole wire format parser/encoder
-- `src/websocket.rs` — WebSocket <-> guacd TCP bridge, recording tee
-- `src/config.rs` — TOML config loading with defaults
-- `src/auth.rs` — API key auth middleware (SHA-256, IP allowlists, expiry), role system
-- `src/oidc.rs` — OIDC authentication (login, callback, logout, group extraction)
-- `src/vault.rs` — Vault/OpenBao KV v2 client for connections (AppRole auth, token renewal)
-- `src/db.rs` — SQLite admin database (rusqlite, bundled)
-- `static/client.html` — Guacamole JS client with auto-scaling display
-- `static/connections.html` — Vault-backed connections UI (folder/entry management, connect)
-- `static/recordings.html` — recording playback with auto-scaling
-- `static/sessions.html` — session management dashboard
-- `dev.sh` — development script (build guacd, run, deps)
-- `install.sh` — bare-metal Debian 13 installer (systemd services)
-- `Dockerfile` — multi-stage build (guacd + rustguac + runtime)
+- `src/main.rs` — entry point, CLI (clap), server setup, startup wiring
+- `src/api.rs` — REST API (sessions, connections, recordings, admin)
+- `src/session.rs` — session state machine, `SessionManager`, the
+  per-type switches in `create_session`
+- `src/config.rs` — TOML config with defaults
+- `src/auth.rs` — API key auth (SHA-256, IP allowlists, expiry), roles
+- `src/oidc.rs` — OIDC login, callback, logout, group extraction
+- `src/vault.rs` — connections logic (folders, ACL walk, folder defaults,
+  credential variables) as `VaultClient`, over a `SecretStore`
+- `src/storage/` — `SecretStore` trait (`mod.rs`), `vault.rs` (Vault/OpenBao
+  KV v2 over HTTP: AppRole/JWT login, renewal, TLS), `sqlite.rs`, `crypto.rs`
+  (AES-256-GCM envelope: KEK wraps a data key; row AAD = path + version),
+  `cli.rs` (`mybastion storage migrate|rotate-kek|put`)
+- `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
+- `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
+  wire format, WebSocket <-> guacd bridge with recording tee
+- `src/browser.rs`, `src/vdi/`, `src/pve.rs` — web, VDI, Proxmox sessions
+- `static/` — web UI; `static/guac/` is the Apache Guacamole JS client
+- `install.sh` (Debian 13 from source), `install-release.sh` (tarball),
+  `debian/`, `mybastion.spec`, `Dockerfile` + `entrypoint.sh`
 
-## Configuration
+## Installed layout
 
-TOML config file (`config.local.toml` for dev, `--config` flag for production). Key settings: `listen_addr`, `guacd_addr`, `recording_path`, `static_path`, `db_path`, `xvnc_path`, `chromium_path`, `display_range_start/end`.
+- `/opt/mybastion` — `bin/mybastion`, `sbin/guacd`, `lib/`, `static/`,
+  `LICENSE`, `NOTICE`
+- `/etc/mybastion` (root:mybastion 0750) — `mybastion.toml` (0640), `env`
+  (`VAULT_SECRET_ID`, `OIDC_CLIENT_SECRET`, …), `guacd.env`, `tls/`, `kek`
+- `/var/lib/mybastion` (mybastion) — `mybastion.db`, `secrets.db`,
+  `recordings/`, `drives.luks`
+- systemd: `mybastion.service`, `mybastion-guacd.service`; user `mybastion`
+  with a real home (`/home/mybastion`, Chromium's crashpad needs it)
 
-### Vault / Connections
+Config is found via `--config`, else `/etc/mybastion/mybastion.toml`;
+`mybastion.example.toml` documents every key.
 
-Optional `[vault]` section enables the Vault-backed connections. Connection entries (SSH/RDP/Web) are stored in Vault KV v2 — credentials never touch disk or the browser.
+## Configuration notes
 
-```toml
-[vault]
-addr = "https://vault.example.com:8200"
-mount = "secret"           # KV v2 mount (default)
-base_path = "rustguac"     # base path under mount (default)
-role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-# namespace = "my-ns"      # optional, for Vault Enterprise / OpenBao namespaces
-# instance_name = "prod-1" # optional, enables instance-scoped entries
-```
+- **Secret store:** `[storage] backend = "sqlite"` (`path`, `kek_source` =
+  `file:`/`env:`/`systemd-creds:`, `base_path`, `instance_name`) or `[vault]`
+  (`addr`, `role_id` or `[vault.jwt_auth]`, `mount`, `base_path` default
+  `mybastion`, `namespace`, `instance_name`; secret via `VAULT_SECRET_ID`).
+  Existing rustguac Vault data lives under `base_path = "rustguac"`.
+- Store paths (relative to the KV mount): `<base>/shared/<folder>/<entry>`,
+  `<base>/instance/<name>/<folder>/<entry>`, `<folder>/.config` (ACL),
+  `<folder>/.defaults` (default credentials, inherited only while a subfolder
+  has `inherit_from_parent` and no ACL of its own), `<base>/users/<key>`.
+- **Inherited features, off by default:** `[web] enabled`, `[spice] enabled`
+  (SPICE + Proxmox), `[vdi] enabled`. NetBox sync has no code of its own: it
+  is NetBox calling the REST API with a key an admin creates.
+- `[vault_shared]` / `[vault_local]` (multi-Vault DR split) still exist and are
+  slated for removal in Phase 1.
+- **OIDC:** `[oidc]` `issuer_url`, `client_id`, `client_secret` (or
+  `OIDC_CLIENT_SECRET`), `redirect_uri`, `groups_claim`, `extra_scopes`.
+- **Roles:** `admin` (4) > `poweruser` (3, ad-hoc sessions) > `operator` (2,
+  connect from connections) > `viewer` (1).
 
-`VAULT_SECRET_ID` env var provides the AppRole secret ID.
+## Licence rules (Apache-2.0)
 
-Vault KV v2 path structure:
-- `<base_path>/shared/<folder>/<entry>` — shared across all instances
-- `<base_path>/instance/<name>/<folder>/<entry>` — instance-specific
-- `<folder>/.config` — folder metadata: `{"allowed_groups":["group1"], "description":"..."}`
-- `<folder>/.defaults` — default credentials per session type, lent to entries without their own; subfolders inherit them only while the subfolder has `inherit_from_parent: true` and no `allowed_groups`/`allowed_users` of its own
-- `<base_path>/users/<sanitized_email>` — per-user credential variables
-
-#### Multiple Vault backends (DR)
-
-Optional `[vault_shared]` / `[vault_local]` blocks (same keys as `[vault]`) give
-the `shared` / `instance` scopes their own Vault so one being down can't take the
-other with it. A bare `[vault]` is unchanged (shared+local both alias it). Secret
-IDs: `VAULT_SECRET_ID`, `VAULT_SHARED_SECRET_ID`, `VAULT_LOCAL_SECRET_ID`. Each
-backend connects/retries/renews independently; a down backend greys that scope in
-the UI. Per-credential scope: a credential variable can be stored shared or local
-(location = truth), toggled per-row in My Credentials (hidden with a single
-Vault); `user_credentials_default_scope` (default `local`) seeds new ones. Split
-an existing single-Vault deployment with `rustguac vault-migrate` (copy subtree +
-.config, then add the block + restart — routing is single-source, no read
-fallback). Implemented on branch `feature/multi-vault-dr` (see project memory).
-
-#### SQLite secret store (fork, Phase 1 of `docs/fork-design.md`)
-
-`[storage] backend = "sqlite"` replaces Vault with an encrypted SQLite file
-(`path`, `kek_source`, `base_path`, `instance_name`). `VaultClient` keeps the
-address-book logic and does its I/O through `storage::SecretStore`
-(`src/storage/`: `vault.rs` = the moved HTTP code, `sqlite.rs`, `crypto.rs` =
-AES-256-GCM envelope with the KEK wrapping a data key, `cli.rs` =
-`rustguac storage migrate|rotate-kek|put`). In SQLite mode one store serves
-every scope, so `creds_split` is false. Docs: `docs/configuration.md`.
-
-### OIDC
-
-Optional `[oidc]` section enables OpenID Connect authentication. Key settings: `issuer_url`, `client_id`, `client_secret`, `redirect_uri`. `OIDC_CLIENT_SECRET` env var can override the config value. `groups_claim` (default: "groups") specifies the JWT claim for group memberships. `extra_scopes` requests additional scopes.
-
-### Roles
-
-4-tier role hierarchy: `admin` (4) > `poweruser` (3) > `operator` (2) > `viewer` (1).
-- **admin**: full access, connections folder/entry management
-- **poweruser**: ad-hoc session creation + connections connect
-- **operator**: connections connect only (no ad-hoc sessions)
-- **viewer**: read-only
-
-## Deployment
-
-- **Bare metal**: `sudo ./install.sh` on Debian 13. Installs to `/opt/rustguac`, creates `rustguac` system user with home dir, sets up systemd services.
-- **Docker**: `docker build -t rustguac .` — multi-stage, debian:trixie-slim runtime.
-- **Remote test machine**: See project memory for connection details. Binary at `/opt/rustguac/bin/rustguac`, config at `/opt/rustguac/config.toml`.
+- Keep `LICENSE` as is and keep `NOTICE` crediting sol1/rustguac and Apache
+  Guacamole; every package ships both.
+- A file inherited from rustguac that you change must carry the one-line
+  "Changed for My Bastion" notice near its top (most already do). New files
+  don't need it.
 
 ## Build notes
 
-- guacd is built from `../guacamole-server` (apache/guacamole-server)
-- Debian 13 ships freerdp3-dev, not freerdp2-dev. guacamole-server 1.6.1+ has FreeRDP 3 auto-detection. Building with `--with-rdp`.
-- **Patches required:** guacamole-server needs patches for FreeRDP 3.15+ (Debian 13). See `patches/README.md`. All build scripts apply these automatically.
-- Chromium on headless VMs needs: `--in-process-gpu`, `--use-gl=angle`, `--use-angle=swiftshader`, `--disable-gpu-*`, `--disable-dev-shm-usage`
-- The `rustguac` system user MUST have a real home directory (`/home/rustguac`) or Chromium's crashpad crashes with `trap int3`.
-- Each Chromium session gets an isolated `--user-data-dir` to avoid profile lock conflicts.
-
-## guacamole-server patches
-
-The `patches/` directory contains patches applied to guacamole-server before building. These fix:
-
-1. **Autoconf `-Werror` vs deprecated FreeRDP headers** — FreeRDP 3.15 deprecates `codecs_free()`, breaking `-Werror` compile tests and cascading into missing feature macros.
-2. **Deprecated function pointer API** — Replaces `->input->KeyboardEvent()` etc. with `freerdp_input_send_keyboard_event()` safe API.
-3. **NULL deref in display channel** — FreeRDP 3.x fires PubSub events before `guac_rdp_disp` is allocated.
-
-To add a new patch: edit `../guacamole-server`, export with `git diff > patches/NNN-description.patch`.
+- guacd is built from `../guacamole-server` if present, else cloned at the
+  pinned commit; `patches/` (see `patches/README.md`) is applied by every
+  build script. Debian 13 ships FreeRDP 3 (`freerdp3-dev`).
+- Chromium on headless VMs needs `--in-process-gpu`, `--use-gl=angle`,
+  `--use-angle=swiftshader`, `--disable-gpu-*`, `--disable-dev-shm-usage`; each
+  session gets its own `--user-data-dir`.
+- CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`,
+  `cargo clippy -- -D warnings`, `cargo test` on Debian trixie. Releases
+  (`release.yml`, on `v*` tags) build .deb/tarballs and push
+  `ghcr.io/stevenfoong/mybastion`.
 
 ## Session types
 
-- **SSH** — connects guacd directly to target SSH server
-- **RDP** — connects guacd directly to target RDP server (same pattern as SSH, no browser spawning)
-- **VNC** — connects guacd directly to target VNC server
-- **Web** — spawns Xvnc + Chromium, guacd connects via VNC to local Xvnc display
-- **VDI** — spawns Docker container with xrdp, guacd connects via RDP to container port 3389
-
-### VDI (Docker containers)
-
-Ephemeral per-user Docker desktop containers. `VdiDriver` trait in `src/vdi/mod.rs` enables downstream forks (JumpboxVDI) to add alternative backends (Nomad, Proxmox).
-
-- Container naming: `rustguac-vdi-{username}` (deterministic, one per user)
-- Lifecycle: created on first connect, persists after disconnect for `idle_timeout_mins`, reused on reconnect, destroyed on desktop logout or idle timeout
-- Credentials: auto-generated per session (username from OIDC, random hex password), `chpasswd` updates on reuse
-- BYO image: any Docker image with xrdp on port 3389 accepting `VDI_USERNAME`/`VDI_PASSWORD` env vars
-- Test image: `contrib/vdi-test-image/` (Debian trixie + xrdp + xorgxrdp + xfce4)
-- Thumbnails: client captures display screenshot every 10s, shown in connections "Active Sessions"
-- Config: `[vdi]` section — `enabled`, `docker_socket`, `default_cpu_limit`, `default_memory_limit`, `ready_timeout_secs`, `idle_timeout_mins`, `allowed_images`, `home_base`
-- Requires: `rustguac` user in `docker` group for socket access
+SSH, RDP, VNC (guacd straight to the target); Web (Xvnc + Chromium, `[web]`);
+SPICE and Proxmox (`[spice]`); VDI (Docker container with xrdp, `[vdi]`,
+`mybastion-vdi-<user>`, image must take `VDI_USERNAME`/`VDI_PASSWORD`; test
+image in `contrib/vdi-test-image/`).
 
 ## Ports
 
-- 8089: rustguac HTTP/WebSocket
-- 4822: guacd
-- 6000-6099: Xvnc displays (:100-:199, internal)
+8089 My Bastion HTTP/WebSocket · 4822 guacd · 6000-6099 Xvnc (:100-:199)
 
 ## Testing
 
-- `tests/test_browser_session.sh` — spawns Xvnc + Chromium, screenshots with xwd/ImageMagick, asserts non-black pixels
-- `tests/test_storage_sqlite.sh` — rustguac on the SQLite secret store with no Vault: API create/read across restarts, `storage put`, `rotate-kek`
-- `tests/test_storage_openbao.sh` — Vault → SQLite → Vault migration against a dev-mode OpenBao (`bao` on PATH); documents must match
+- `cargo test` — unit and CLI tests (`tests/cli_*.rs`)
+- `tests/test_storage_sqlite.sh` — live: SQLite store with no Vault (API
+  create/read across restarts, `storage put`, `rotate-kek`)
+- `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
+  against a dev-mode OpenBao (`bao` on PATH); documents must match
+- `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels
+- `tests/e2e/` — Playwright specs against the static UI with a stubbed API
+- Remote test machine (Debian 13, Rust and OpenBao installed): see project
+  memory for host, key and the `ec2-test.bat` start/stop helper.

@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Import connections from an Apache Guacamole MySQL dump into the Vault address book.
 //!
 //! Parses `INSERT INTO` statements for `guacamole_connection`,
@@ -49,7 +50,7 @@ pub async fn cmd_import_guacamole(
 
     // Parse --map FROM=TO pairs. These rewrite substrings in the credential
     // fields during import, e.g. mapping Apache Guacamole passthrough tokens
-    // (${GUAC_USERNAME}) to rustguac credential variables ($corp_username).
+    // (${GUAC_USERNAME}) to mybastion credential variables ($corp_username).
     let cred_maps = match parse_credential_maps(maps) {
         Ok(m) => m,
         Err(e) => {

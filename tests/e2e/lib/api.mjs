@@ -1,5 +1,6 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 /*
- * Stubbed rustguac API for the end-to-end tests.
+ * Stubbed mybastion API for the end-to-end tests.
  *
  * installApi(page, options) routes every /api/* request the page makes to a
  * JSON answer built from a small fixture address book, so the real pages run
@@ -110,7 +111,7 @@ export async function installApi(page, options = {}) {
     // mark it seen so it never sits over the elements a test clicks.
     if (!options.onboarding) {
         await page.addInitScript(() => {
-            try { localStorage.setItem('rustguac_onboarding_dismissed', '1'); } catch (e) { /* no storage */ }
+            try { localStorage.setItem('mybastion_onboarding_dismissed', '1'); } catch (e) { /* no storage */ }
         });
     }
 

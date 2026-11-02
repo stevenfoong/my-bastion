@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Proxmox VE API client for brokering SPICE console access.
 //!
 //! Proxmox issues short-lived (~30s), single-use SPICE tickets via its API, so
@@ -44,7 +45,7 @@ pub struct PveBroker {
     pub api_token: String,
     /// Verify the PVE API server's TLS certificate. Proxmox ships a
     /// self-signed cluster cert by default, so this is often disabled unless
-    /// the cluster CA is trusted on the rustguac host.
+    /// the cluster CA is trusted on the mybastion host.
     pub verify_tls: bool,
 }
 

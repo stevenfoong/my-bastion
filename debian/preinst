@@ -1,10 +1,11 @@
 #!/bin/sh
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 set -e
 
-# Create rustguac system user if it doesn't exist.
+# Create mybastion system user if it doesn't exist.
 # Chromium's crashpad requires a real home directory.
-if ! getent passwd rustguac >/dev/null 2>&1; then
-    adduser --system --group --home /home/rustguac --quiet rustguac
+if ! getent passwd mybastion >/dev/null 2>&1; then
+    adduser --system --group --home /home/mybastion --quiet mybastion
 fi
 
 #DEBHELPER#

@@ -1,10 +1,11 @@
-# Screenshot environment: rustguac with OpenBao (dev mode), a mock OIDC
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# Screenshot environment: mybastion with OpenBao (dev mode), a mock OIDC
 # provider and throwaway SSH and web targets. See README.md.
 #
 # Nothing is published on the host. The capture service reaches everything
 # over the compose network and writes PNGs to ./out.
 
-name: rustguac-screenshots
+name: mybastion-screenshots
 
 services:
   openbao:
@@ -26,21 +27,21 @@ services:
       JSON_CONFIG: '{"interactiveLogin": true}'
 
   # Pre-provision the admin who signs in to seed everything else.
-  rustguac-init:
-    image: ${RUSTGUAC_IMAGE:-sol1/rustguac:1.12.1}
+  mybastion-init:
+    image: ${MYBASTION_IMAGE:-ghcr.io/stevenfoong/mybastion:1.12.1}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        /opt/rustguac/bin/rustguac --config /opt/rustguac/config.toml list-users
+        /opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml list-users
         | grep -q alex@example.com
-        || /opt/rustguac/bin/rustguac --config /opt/rustguac/config.toml add-user
+        || /opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml add-user
         --email alex@example.com --role admin --name "Alex Rivera"
     volumes:
-      - ./config.toml:/opt/rustguac/config.toml:ro
-      - data:/opt/rustguac/data
+      - ./config.toml:/etc/mybastion/mybastion.toml:ro
+      - data:/var/lib/mybastion
 
-  rustguac:
-    image: ${RUSTGUAC_IMAGE:-sol1/rustguac:1.12.1}
+  mybastion:
+    image: ${MYBASTION_IMAGE:-ghcr.io/stevenfoong/mybastion:1.12.1}
     environment:
       VAULT_SECRET_ID: screenshots-secret
     shm_size: 1gb
@@ -50,13 +51,13 @@ services:
     security_opt:
       - seccomp=unconfined
     volumes:
-      - ./config.toml:/opt/rustguac/config.toml:ro
-      - data:/opt/rustguac/data
-      - recordings:/opt/rustguac/recordings
+      - ./config.toml:/etc/mybastion/mybastion.toml:ro
+      - data:/var/lib/mybastion
+      - recordings:/var/lib/mybastion/recordings
     depends_on:
       openbao-init:
         condition: service_completed_successfully
-      rustguac-init:
+      mybastion-init:
         condition: service_completed_successfully
       oidc:
         condition: service_started
@@ -93,12 +94,12 @@ services:
     profiles: ["capture"]
     shm_size: 1gb
     environment:
-      RUSTGUAC_URL: https://rustguac:8089
+      MYBASTION_URL: https://mybastion:8089
       THEMES: ${THEMES:-aurora,light}
     volumes:
       - ./out:/out
     depends_on:
-      - rustguac
+      - mybastion
       - ssh
       - web
 

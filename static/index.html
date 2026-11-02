@@ -1,9 +1,10 @@
 <!DOCTYPE html>
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>rustguac</title>
-    <link rel="stylesheet" href="/rustguac.css">
+    <title>My Bastion</title>
+    <link rel="stylesheet" href="/mybastion.css">
     <style>
         body { display: flex; flex-direction: column; align-items: center; }
         .login-container { max-width: 380px; width: 100%; margin: var(--s-4) 0; }
@@ -66,12 +67,12 @@
             font-size: var(--fz-md);
         }
     </style>
-    <script>(function(){var c=localStorage.getItem('rustguac_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
+    <script>(function(){var c=localStorage.getItem('mybastion_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
 </head>
 <body>
     <div class="brand-row">
         <img id="site-logo" src="/logo.svg" alt="">
-        <h1>rustguac</h1>
+        <h1>My Bastion</h1>
     </div>
 
     <div class="login-container">
@@ -116,7 +117,7 @@
         }
 
         // If already logged in via API key, redirect
-        if (sessionStorage.getItem('rustguac_api_key')) {
+        if (sessionStorage.getItem('mybastion_api_key')) {
             window.location.href = '/connections.html';
         }
 
@@ -126,9 +127,9 @@
             if (res.ok) window.location.href = '/connections.html';
         });
 
-        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('rustguac_theme_colors',JSON.stringify(colors))}
+        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('mybastion_theme_colors',JSON.stringify(colors))}
         var _themePresets={},_adminPreset='aurora';
-        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('rustguac_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);if(t.logo_url){var l=document.getElementById('site-logo');if(l){if(l.src!==t.logo_url&&!l.src.endsWith(t.logo_url))l.src=t.logo_url;l.style.display=''}}}
+        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('mybastion_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);if(t.logo_url){var l=document.getElementById('site-logo');if(l){if(l.src!==t.logo_url&&!l.src.endsWith(t.logo_url))l.src=t.logo_url;l.style.display=''}}}
 
         var loginForm = document.getElementById('login-form');
         var apiKeyToggle = document.getElementById('api-key-toggle');
@@ -208,7 +209,7 @@
             })
             .then(function(res) {
                 if (!res.ok) throw new Error('Invalid API key');
-                sessionStorage.setItem('rustguac_api_key', key);
+                sessionStorage.setItem('mybastion_api_key', key);
                 window.location.href = '/connections.html';
             })
             .catch(function(err) {

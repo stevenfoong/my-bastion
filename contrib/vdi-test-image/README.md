@@ -1,18 +1,19 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # VDI Test Image
 
-Minimal Docker image for testing rustguac VDI sessions. Provides a basic xfce4 desktop accessible via xrdp on port 3389.
+Minimal Docker image for testing My Bastion VDI sessions. Provides a basic xfce4 desktop accessible via xrdp on port 3389.
 
 ## Build
 
 ```bash
-docker build -t rustguac-vdi-test:latest .
+docker build -t mybastion-vdi-test:latest .
 ```
 
 ## Usage
 
-This image is designed to be launched by rustguac's VDI driver. Create an address book entry of type **VDI (Docker)** with the image name `rustguac-vdi-test:latest`.
+This image is designed to be launched by My Bastion's VDI driver. Create an address book entry of type **VDI (Docker)** with the image name `mybastion-vdi-test:latest`.
 
-The entrypoint accepts these environment variables (set automatically by rustguac):
+The entrypoint accepts these environment variables (set automatically by My Bastion):
 
 | Variable | Description |
 |----------|-------------|
@@ -28,7 +29,7 @@ The entrypoint accepts these environment variables (set automatically by rustgua
 
 ## Building your own image
 
-Any Docker image that meets these requirements will work with rustguac VDI:
+Any Docker image that meets these requirements will work with My Bastion VDI:
 
 1. Run xrdp on port 3389
 2. Accept `VDI_USERNAME` and `VDI_PASSWORD` environment variables

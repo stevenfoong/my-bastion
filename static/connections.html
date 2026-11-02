@@ -1,13 +1,14 @@
 <!DOCTYPE html>
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>rustguac - Connections</title>
-    <link rel="stylesheet" href="/rustguac.css">
+    <title>My Bastion - Connections</title>
+    <link rel="stylesheet" href="/mybastion.css">
     <style>
         /* ============================================================
            Connections — page-specific styles only. Shared design
-           system lives in /rustguac.css.
+           system lives in /mybastion.css.
            ============================================================ */
 
         /* Two-column connections layout */
@@ -195,7 +196,7 @@
            padding and sidebar, 16px cells with less padding, a narrower
            Connect button. Everything then fits with ~250px to spare. */
         @media (max-width: 1800px) {
-            /* page padding at this width lives in rustguac.css, shared by
+            /* page padding at this width lives in mybastion.css, shared by
                every page, so switching tabs does not shift the gutter */
             .layout { gap: var(--s-4); }
             .sidebar { min-width: 240px; max-width: 280px; padding-right: var(--s-3); }
@@ -646,12 +647,12 @@
         #entry-modal.adhoc.adhoc-restricted.drive-off #em-drive-section { display: none !important; }
         .var-pick { margin-top: 0.3em; font-size: 0.85em; width: auto; max-width: 100%; }
     </style>
-    <script>(function(){var c=localStorage.getItem('rustguac_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
+    <script>(function(){var c=localStorage.getItem('mybastion_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
 </head>
 <body>
     <div class="brand-row">
         <img id="site-logo" src="/logo.svg" alt="">
-        <h1>rustguac</h1>
+        <h1>My Bastion</h1>
     </div>
     <nav>
         <a href="/connections.html" class="active">Connections</a>
@@ -691,7 +692,7 @@
     <div id="vault-unavailable" class="no-vault" style="display:none">
         <strong>Connections is temporarily unavailable.</strong><br>
         Cannot reach the Vault server. The service will retry automatically every 30 seconds.<br>
-        Check the rustguac logs for details: <code>journalctl -u rustguac -f</code>
+        Check the My Bastion logs for details: <code>journalctl -u mybastion -f</code>
     </div>
 
     <div id="empty-state" class="empty-state" style="display:none">
@@ -940,7 +941,7 @@
                         <option value="negotiate">Negotiate (Kerberos first, NTLM fallback)</option>
                     </select>
                 </label>
-                <div class="field-hint">Leave blank to use the server default (NTLM unless overridden in <code>config.toml</code> <code>[rdp] default_auth_pkg</code>). Kerberos and Negotiate need a domain-joined host with a KDC reachable via DNS; when that isn't set up the RDP connection hangs silently, so NTLM is the safe default.</div>
+                <div class="field-hint">Leave blank to use the server default (NTLM unless overridden in <code>mybastion.toml</code> <code>[rdp] default_auth_pkg</code>). Kerberos and Negotiate need a domain-joined host with a KDC reachable via DNS; when that isn't set up the RDP connection hangs silently, so NTLM is the safe default.</div>
                 <label>KDC URL <span style="color:#666;font-size:0.85em">(Kerberos only)</span>
                     <input type="text" id="em-rdp-kdc-url" placeholder="e.g. https://dc.example.com/KdcProxy">
                 </label>
@@ -990,7 +991,7 @@
                         <option value="slow">Slow link: least bandwidth, 16-bit colour</option>
                     </select>
                 </label>
-                <div class="field-hint">How the VNC server encodes the screen for rustguac, like UltraVNC Viewer's quick options. Auto lets the server and client agree; pick a preset only if a link is slow or the picture is poor. A colour depth set above takes precedence.</div>
+                <div class="field-hint">How the VNC server encodes the screen for My Bastion, like UltraVNC Viewer's quick options. Auto lets the server and client agree; pick a preset only if a link is slow or the picture is poor. A colour depth set above takes precedence.</div>
                 <div class="entry-only">
                 <label style="margin-top:0.8em">
                     <input type="checkbox" id="em-vnc-prompt-creds" style="display:inline;width:auto;margin-right:0.4em"> Prompt for credentials at connect time
@@ -1071,13 +1072,13 @@
                 <label style="margin-top:0.8em">
                     <input type="checkbox" id="em-proxmox-verify-tls" style="display:inline;width:auto;margin-right:0.4em"> Verify the PVE cluster TLS certificate
                 </label>
-                <div class="field-hint">Opens a Proxmox VE VM console via SPICE. rustguac calls the PVE <code>spiceproxy</code> API at connect to fetch a one-time ticket, so nothing sensitive is stored beyond the API token. Leave <strong>Node</strong> blank to auto-detect which cluster node hosts the VM. The token needs <code>VM.Console</code> (and <code>VM.Audit</code> for node auto-detect) on the target VM. PVE ships a self-signed cluster certificate, so leave TLS verification off unless the cluster CA is trusted.</div>
+                <div class="field-hint">Opens a Proxmox VE VM console via SPICE. My Bastion calls the PVE <code>spiceproxy</code> API at connect to fetch a one-time ticket, so nothing sensitive is stored beyond the API token. Leave <strong>Node</strong> blank to auto-detect which cluster node hosts the VM. The token needs <code>VM.Console</code> (and <code>VM.Audit</code> for node auto-detect) on the target VM. PVE ships a self-signed cluster certificate, so leave TLS verification off unless the cluster CA is trusted.</div>
             </div>
             <div id="em-web-fields" style="display:none">
                 <label>URL
                     <input type="text" id="em-url" placeholder="https://example.com">
                 </label>
-                <div class="field-hint">Use <code>$RUSTGUAC_USERNAME</code> and <code>$RUSTGUAC_PASSWORD</code> in the URL for basic auth (e.g. <code>https://$RUSTGUAC_USERNAME:$RUSTGUAC_PASSWORD@host</code>).</div>
+                <div class="field-hint">Use <code>$MYBASTION_USERNAME</code> and <code>$MYBASTION_PASSWORD</code> in the URL for basic auth (e.g. <code>https://$MYBASTION_USERNAME:$MYBASTION_PASSWORD@host</code>).</div>
                 <label>Banner <span style="color:var(--text-muted);font-size:0.85em">(optional)</span>
                     <input type="text" id="em-banner" placeholder="Shown before session starts (user must click Continue)">
                 </label>
@@ -1086,7 +1087,7 @@
                         <span id="em-automation-arrow">&#9654;</span> Automation
                     </label>
                     <div id="em-automation-fields" style="display:none">
-                        <div class="field-hint" style="margin-bottom:0.5em">Credentials and scripts for automated login. Username and password are also used for URL substitution (<code>$RUSTGUAC_USERNAME</code> / <code>$RUSTGUAC_PASSWORD</code>).</div>
+                        <div class="field-hint" style="margin-bottom:0.5em">Credentials and scripts for automated login. Username and password are also used for URL substitution (<code>$MYBASTION_USERNAME</code> / <code>$MYBASTION_PASSWORD</code>).</div>
                         <label>Username <span style="color:var(--text-muted);font-size:0.85em">(optional)</span>
                             <input type="text" id="em-web-username" placeholder="For URL substitution or login script">
                         </label>
@@ -1126,7 +1127,7 @@
                 <label>Container Image
                     <input type="text" id="em-vdi-image" placeholder="e.g. myregistry/xrdp-desktop:latest">
                 </label>
-                <div class="field-hint">Docker image with xrdp on port 3389. By default the entrypoint should read <code>VDI_USERNAME</code> / <code>VDI_PASSWORD</code> env vars (rustguac derives them from your identity and generates an ephemeral password per connect). For images with a baked-in account, fill in the Container username / password fields below. Container is ephemeral - persists while idle, then removed.</div>
+                <div class="field-hint">Docker image with xrdp on port 3389. By default the entrypoint should read <code>VDI_USERNAME</code> / <code>VDI_PASSWORD</code> env vars (My Bastion derives them from your identity and generates an ephemeral password per connect). For images with a baked-in account, fill in the Container username / password fields below. Container is ephemeral - persists while idle, then removed.</div>
                 <label>CPU Limit <span style="color:var(--text-muted);font-size:0.85em">(optional, cores)</span>
                     <input type="number" id="em-vdi-cpu" step="0.5" min="0" placeholder="e.g. 2.0 (0 = use default)">
                 </label>
@@ -1143,7 +1144,7 @@
                 <label>Container password <span style="color:var(--text-muted);font-size:0.85em">(optional, overrides ephemeral)</span>
                     <input type="password" id="em-vdi-container-password" placeholder="Leave blank to generate per-connect" autocomplete="new-password">
                 </label>
-                <div class="field-hint">Use these only when the container image has a fixed account (Pattern B in the <a href="/docs.html#vdi" style="color:var(--accent)">VDI docs</a>). When set, rustguac uses these creds for the RDP login into the container, and the same container is shared by everyone connecting through this entry (deterministic name from the username). When left blank, rustguac derives a per-operator username and generates a fresh password every connect. Both fields support <a href="/docs.html#credential-variables" style="color:var(--accent)">credential variables</a> (e.g. <code>$corp_username</code>).</div>
+                <div class="field-hint">Use these only when the container image has a fixed account (Pattern B in the <a href="/docs.html#vdi" style="color:var(--accent)">VDI docs</a>). When set, My Bastion uses these creds for the RDP login into the container, and the same container is shared by everyone connecting through this entry (deterministic name from the username). When left blank, My Bastion derives a per-operator username and generates a fresh password every connect. Both fields support <a href="/docs.html#credential-variables" style="color:var(--accent)">credential variables</a> (e.g. <code>$corp_username</code>).</div>
                 </div>
                 <label>Idle Timeout <span style="color:var(--text-muted);font-size:0.85em">(optional, minutes)</span>
                     <input type="number" id="em-vdi-idle-timeout" min="0" placeholder="e.g. 60 (0 = use global default)">
@@ -1318,7 +1319,7 @@
                     On the first user gesture after the session connects, enter browser fullscreen
                     and lock the Escape key so it reaches the remote session (Chromium-based
                     browsers; Firefox / Safari fall back to standard fullscreen). Reduces the risk
-                    of users accidentally closing the rustguac tab.
+                    of users accidentally closing the My Bastion tab.
                 </div>
                 <label style="text-transform:none;letter-spacing:0;cursor:pointer;margin-top:0.8em">
                     <input type="checkbox" id="em-autohide-side-tabs" style="display:inline;width:auto;margin-right:0.5em">
@@ -1472,15 +1473,15 @@
 <script src="/filters.js"></script>
         <script>
         function togglePw(btn){var inp=btn.previousElementSibling;if(inp.type==='password'){inp.type='text';btn.textContent='\u25CB'}else{inp.type='password';btn.textContent='\u25CF'}}
-        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('rustguac_theme_colors',JSON.stringify(colors))}
+        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('mybastion_theme_colors',JSON.stringify(colors))}
         var _themePresets={},_adminPreset='aurora';
         var _themeDescriptions={dark:'Navy & cyan \u2014 the default',light:'Clean white & blue','high-contrast':'Maximum readability',terminal:'Retro green-on-black',nord:'Arctic, muted blues',corporate:'Slate & steel blue',aurora:'Midnight blue with ambient glow',jaguar:'Racing green & gold'};
-        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('rustguac_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);if(t.logo_url){var l=document.getElementById('site-logo');if(l){if(l.src!==t.logo_url&&!l.src.endsWith(t.logo_url))l.src=t.logo_url;l.style.display=''}}var menu=document.getElementById('um-theme-list');if(menu){menu.innerHTML='';Object.keys(_themePresets).forEach(function(name){var item=document.createElement('div');item.className='um-item'+(name===active?' active':'');var sw=document.createElement('span');sw.className='um-swatch';var p=_themePresets[name];sw.style.background='linear-gradient(135deg,'+p.primary+' 50%,'+p.accent+' 50%)';item.appendChild(sw);var info=document.createElement('div');info.className='um-theme-info';var nm=document.createElement('span');nm.className='um-theme-name';nm.textContent=name;info.appendChild(nm);var desc=document.createElement('span');desc.className='um-theme-desc';desc.textContent=_themeDescriptions[name]||'';info.appendChild(desc);item.appendChild(info);item.addEventListener('click',function(){localStorage.setItem('rustguac_theme',name);applyThemeColors(_themePresets[name]);menu.querySelectorAll('.um-item').forEach(function(el){el.classList.remove('active')});item.classList.add('active');document.getElementById('user-menu').style.display='none'});menu.appendChild(item)})}}
+        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('mybastion_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);if(t.logo_url){var l=document.getElementById('site-logo');if(l){if(l.src!==t.logo_url&&!l.src.endsWith(t.logo_url))l.src=t.logo_url;l.style.display=''}}var menu=document.getElementById('um-theme-list');if(menu){menu.innerHTML='';Object.keys(_themePresets).forEach(function(name){var item=document.createElement('div');item.className='um-item'+(name===active?' active':'');var sw=document.createElement('span');sw.className='um-swatch';var p=_themePresets[name];sw.style.background='linear-gradient(135deg,'+p.primary+' 50%,'+p.accent+' 50%)';item.appendChild(sw);var info=document.createElement('div');info.className='um-theme-info';var nm=document.createElement('span');nm.className='um-theme-name';nm.textContent=name;info.appendChild(nm);var desc=document.createElement('span');desc.className='um-theme-desc';desc.textContent=_themeDescriptions[name]||'';info.appendChild(desc);item.appendChild(info);item.addEventListener('click',function(){localStorage.setItem('mybastion_theme',name);applyThemeColors(_themePresets[name]);menu.querySelectorAll('.um-item').forEach(function(el){el.classList.remove('active')});item.classList.add('active');document.getElementById('user-menu').style.display='none'});menu.appendChild(item)})}}
         // The keyboard on this device, sent with each connect so an RDP or
         // desktop connection without a layout of its own types correctly.
         // Per browser, like the theme: it describes the hardware.
         function rgKeyboardLayout() {
-            try { return localStorage.getItem('rustguac_keyboard_layout') || undefined; } catch (e) { return undefined; }
+            try { return localStorage.getItem('mybastion_keyboard_layout') || undefined; } catch (e) { return undefined; }
         }
         (function() {
             var sel = document.getElementById('um-kb-layout');
@@ -1498,8 +1499,8 @@
             document.getElementById('um-kb').addEventListener('click', function(e) { e.stopPropagation(); });
             sel.addEventListener('change', function() {
                 try {
-                    if (sel.value) localStorage.setItem('rustguac_keyboard_layout', sel.value);
-                    else localStorage.removeItem('rustguac_keyboard_layout');
+                    if (sel.value) localStorage.setItem('mybastion_keyboard_layout', sel.value);
+                    else localStorage.removeItem('mybastion_keyboard_layout');
                 } catch (e) {}
             });
         })();
@@ -1511,7 +1512,7 @@
             document.getElementById('entry-modal').classList.toggle('drive-off', !d.drive_enabled);
             initTheme(d.theme);
         });
-        var apiKey = sessionStorage.getItem('rustguac_api_key');
+        var apiKey = sessionStorage.getItem('mybastion_api_key');
 
         if (!apiKey) {
             fetch('/api/me', { credentials: 'same-origin' })
@@ -1522,7 +1523,7 @@
         }
 
         document.getElementById('logout-item').addEventListener('click', function() {
-            sessionStorage.removeItem('rustguac_api_key');
+            sessionStorage.removeItem('mybastion_api_key');
             fetch('/auth/logout', { credentials: 'same-origin' })
             .finally(function() { window.location.href = '/'; });
         });
@@ -1549,8 +1550,8 @@
         var bulkState = null;      // open bulk dialog: { action, items, source, target, folders }
         var subfolderCache = {};   // "scope|path" -> [FolderInfo] (lazy-loaded children)
         var expandedPaths = {};    // "scope|path" -> true (tree expansion state; persisted)
-        var EXPANDED_STORAGE_KEY = 'rustguac_connections_expanded';
-        var SELECTED_STORAGE_KEY = 'rustguac_connections_selected';
+        var EXPANDED_STORAGE_KEY = 'mybastion_connections_expanded';
+        var SELECTED_STORAGE_KEY = 'mybastion_connections_selected';
         function folderKey(scope, path) { return scope + '|' + path; }
         function folderPath(f) { return f.path || f.name; }
 
@@ -1787,7 +1788,7 @@
         // so the next fresh login auto-opens again.
         function maybeAutoOpenSingleton() {
             try {
-                if (sessionStorage.getItem('rustguac_auto_opened') === '1') return;
+                if (sessionStorage.getItem('mybastion_auto_opened') === '1') return;
             } catch (e) { /* no sessionStorage */ }
 
             // Gather every entry the user currently sees across top-level
@@ -1810,7 +1811,7 @@
             var scope = hit.key.slice(0, sep);
             var path = hit.key.slice(sep + 1);
             var name = hit.entry.name;
-            try { sessionStorage.setItem('rustguac_auto_opened', '1'); } catch (e) {}
+            try { sessionStorage.setItem('mybastion_auto_opened', '1'); } catch (e) {}
 
             // Use the same connect path the table's Connect button uses,
             // minus the UI chrome. Open the resulting session in a new tab.
@@ -1892,7 +1893,7 @@
                 isAdmin = data.role === 'admin';
                 currentUserRole = data.role || 'viewer';
                 var level = roleLevel[data.role] || 0;
-                // Reconcile the server-written nav gate (see rustguac.css): the page
+                // Reconcile the server-written nav gate (see mybastion.css): the page
                 // GET carried no API key, so key users arrive on the anonymous variant.
                 document.documentElement.setAttribute('data-role-level', String((typeof apiKey !== 'undefined' && apiKey) ? 4 : level));
                 if (level < 3) {
@@ -2349,7 +2350,7 @@
                 scopeBadge.className = 'folder-scope';
                 scopeBadge.setAttribute('data-scope', f.scope);
                 scopeBadge.title = f.scope === 'shared'
-                    ? 'Shared — visible across all rustguac instances'
+                    ? 'Shared — visible across all My Bastion instances'
                     : 'Instance — this server only';
                 nameRow.appendChild(scopeBadge);
             }
@@ -2463,7 +2464,7 @@
 
         // ── Live refresh ──
         // GET /api/addressbook/version?since=N answers from memory with what
-        // rustguac changed in the address book after version N: which folders,
+        // My Bastion changed in the address book after version N: which folders,
         // and whether it was their entries or the folder itself. It is polled
         // every few seconds while the tab is visible and no dialog is open,
         // and a tab acts only on what it shows:
@@ -2498,7 +2499,7 @@
 
         // ── Live refresh ──
         // GET /api/addressbook/version?since=N answers from memory with what
-        // rustguac changed in the address book after version N: which folders,
+        // My Bastion changed in the address book after version N: which folders,
         // and whether it was their entries or the folder itself. It is polled
         // every few seconds while the tab is visible and no dialog is open,
         // and a tab acts only on what it shows:
@@ -2936,7 +2937,7 @@
         // genuinely NEW unset credential shows up (not merely because the set
         // shrank after a partial save) — dismissing silences today's set, not
         // future needs.
-        var CREDS_DISMISS_KEY = 'rustguac_creds_banner_dismissed';
+        var CREDS_DISMISS_KEY = 'mybastion_creds_banner_dismissed';
         var currentUnsetCreds = []; // names behind the banner right now (for dismiss)
         function getDismissedCreds() {
             try {
@@ -3316,7 +3317,7 @@
                 if (f.scope !== bulkState.source.scope) {
                     var s = document.createElement('p');
                     s.className = 'bulk-warn';
-                    s.textContent = 'This crosses from ' + bulkState.source.scope + ' to ' + f.scope + ', which changes which rustguac instances can see these entries.';
+                    s.textContent = 'This crosses from ' + bulkState.source.scope + ' to ' + f.scope + ', which changes which My Bastion instances can see these entries.';
                     preview.appendChild(s);
                 }
                 // Groups match case-sensitively, emails do not.
@@ -5712,7 +5713,7 @@
 
         // ── Onboarding Wizard ──
         var onboardSteps = [
-            { title: 'Welcome to rustguac', minRole: 1, body:
+            { title: 'Welcome to My Bastion', minRole: 1, body:
                 'This is your remote access gateway. Browse connection entries organised by folder, then click <span class="onboard-hl">Connect</span> to launch a session in a new browser tab.' +
                 '<br><br>This quick tour covers the essentials &mdash; you can dismiss it at any time.'
             },
@@ -5758,7 +5759,7 @@
         var onboardFiltered = [];
 
         function startOnboarding(role) {
-            if (localStorage.getItem('rustguac_onboarding_dismissed')) return;
+            if (localStorage.getItem('mybastion_onboarding_dismissed')) return;
             var level = roleLevel[role] || 1;
             onboardFiltered = onboardSteps.filter(function(s) { return s.minRole <= level; });
             if (onboardFiltered.length === 0) return;
@@ -5781,7 +5782,7 @@
         function closeOnboarding() {
             document.getElementById('onboarding-modal').classList.remove('active');
             if (document.getElementById('onboard-dismiss').checked) {
-                localStorage.setItem('rustguac_onboarding_dismissed', '1');
+                localStorage.setItem('mybastion_onboarding_dismissed', '1');
             }
         }
 
@@ -5790,7 +5791,7 @@
                 onboardCurrent++;
                 renderOnboardStep();
             } else {
-                localStorage.setItem('rustguac_onboarding_dismissed', '1');
+                localStorage.setItem('mybastion_onboarding_dismissed', '1');
                 closeOnboarding();
             }
         });
@@ -5803,7 +5804,7 @@
         document.getElementById('onboard-close').addEventListener('click', function() {
             // Corner "×" skips the intro entirely and won't show again until
             // re-triggered via Settings → Welcome Tour.
-            localStorage.setItem('rustguac_onboarding_dismissed', '1');
+            localStorage.setItem('mybastion_onboarding_dismissed', '1');
             closeOnboarding();
         });
         document.getElementById('onboarding-modal').addEventListener('click', function(e) {
@@ -5812,7 +5813,7 @@
 
         document.getElementById('show-tour-item').addEventListener('click', function() {
             document.getElementById('user-menu').style.display = 'none';
-            localStorage.removeItem('rustguac_onboarding_dismissed');
+            localStorage.removeItem('mybastion_onboarding_dismissed');
             startOnboarding(currentUserRole);
         });
 
@@ -5997,7 +5998,7 @@
         // it): a live filter box mounted in #sidebar-tools, tree/treeitem ARIA
         // roles with a roving tabindex, arrow-key navigation, and an `f`
         // shortcut mirroring the `/` quick-find one above.
-        var FOLDER_FILTER_KEY = 'rustguac_folder_filter';
+        var FOLDER_FILTER_KEY = 'mybastion_folder_filter';
         var _ffWrap = null, _ffInput = null, _ffCount = null;
 
         (function mountFolderFilter() {

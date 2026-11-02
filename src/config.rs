@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -7,7 +8,7 @@ pub struct TlsConfig {
     pub cert_path: Option<PathBuf>,
     /// Path to server TLS private key (PEM). Required for HTTPS serving.
     pub key_path: Option<PathBuf>,
-    /// Path to guacd's TLS certificate (PEM). When set, rustguac connects to guacd over TLS.
+    /// Path to guacd's TLS certificate (PEM). When set, mybastion connects to guacd over TLS.
     /// This is independent of server HTTPS — you can use guacd TLS without serving HTTPS.
     pub guacd_cert_path: Option<PathBuf>,
 }
@@ -16,7 +17,7 @@ pub struct TlsConfig {
 pub struct OidcConfig {
     pub issuer_url: String,
     pub client_id: String,
-    /// OIDC client secret. May be set in config.toml or via the
+    /// OIDC client secret. May be set in mybastion.toml or via the
     /// `OIDC_CLIENT_SECRET` environment variable; the env var wins when
     /// both are present. `serve` validates it is non-empty when `[oidc]`
     /// is configured (see Config::validate_oidc_secret); admin CLI
@@ -161,11 +162,11 @@ fn default_storage_backend() -> String {
 }
 
 fn default_secrets_path() -> PathBuf {
-    PathBuf::from("/var/lib/rustguac/secrets.db")
+    PathBuf::from("/var/lib/mybastion/secrets.db")
 }
 
 fn default_kek_source() -> String {
-    "file:/etc/rustguac/kek".into()
+    "file:/etc/mybastion/kek".into()
 }
 
 /// `[vault.jwt_auth]` (or under `[vault_shared]` / `[vault_local]`): log in
@@ -274,13 +275,13 @@ pub struct DriveConfig {
     #[serde(default)]
     #[allow(dead_code)]
     pub retention_secs: u64,
-    /// LUKS container device/file path (e.g. "/opt/rustguac/drives.luks").
-    /// When set (along with luks_key_path), rustguac manages LUKS open/close lifecycle.
+    /// LUKS container device/file path (e.g. "/var/lib/mybastion/drives.luks").
+    /// When set (along with luks_key_path), mybastion manages LUKS open/close lifecycle.
     pub luks_device: Option<PathBuf>,
-    /// Device-mapper name for the LUKS volume. Default: "rustguac-drives".
+    /// Device-mapper name for the LUKS volume. Default: "mybastion-drives".
     #[serde(default = "default_luks_name")]
     pub luks_name: String,
-    /// Vault KV path for the LUKS encryption key (e.g. "rustguac/luks-key").
+    /// Vault KV path for the LUKS encryption key (e.g. "mybastion/luks-key").
     /// The secret must have a "key" field containing the passphrase.
     pub luks_key_path: Option<String>,
 }
@@ -298,7 +299,7 @@ fn default_true() -> bool {
 }
 
 fn default_luks_name() -> String {
-    "rustguac-drives".into()
+    "mybastion-drives".into()
 }
 
 impl Default for DriveConfig {
@@ -343,7 +344,7 @@ pub struct RecordingConfig {
     pub typescript_path: Option<PathBuf>,
     /// Base filename template for the typescript. guacd itself does NOT
     /// substitute tokens in this name (it uses it verbatim and appends a
-    /// numeric suffix to avoid collisions), so rustguac expands its own
+    /// numeric suffix to avoid collisions), so mybastion expands its own
     /// brace tokens before passing it on: `{user}`, `{connection}`
     /// (address-book entry name, falls back to hostname), `{host}`,
     /// `{date}` (UTC YYYYMMDD), `{time}` (UTC HHMMSS), `{session}` (short
@@ -358,7 +359,7 @@ pub struct RecordingConfig {
     /// (#241). Default: true. Has no effect when guacenc is not installed.
     #[serde(default = "default_true")]
     pub mp4_enabled: bool,
-    /// The guacenc binary. Default: /opt/rustguac/bin/guacenc.
+    /// The guacenc binary. Default: /opt/mybastion/bin/guacenc.
     #[serde(default = "default_guacenc_path")]
     pub guacenc_path: PathBuf,
     /// Where converted MP4s are kept. Default: `mp4-cache` inside the
@@ -386,7 +387,7 @@ pub struct RecordingConfig {
 }
 
 fn default_guacenc_path() -> PathBuf {
-    PathBuf::from("/opt/rustguac/bin/guacenc")
+    PathBuf::from("/opt/mybastion/bin/guacenc")
 }
 
 fn default_mp4_cache_hours() -> u64 {
@@ -443,6 +444,14 @@ impl Default for RecordingConfig {
             mp4_max_height: default_mp4_max_height(),
         }
     }
+}
+
+/// `[web]` / `[spice]`: switch for an inherited session type. Off unless
+/// `enabled = true`, so a fresh install exposes only SSH, RDP and VNC.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct FeatureSwitch {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// VDI (Docker container) configuration.
@@ -517,7 +526,7 @@ fn default_user_credentials_scope() -> String {
 }
 
 fn default_vault_base_path() -> String {
-    "rustguac".into()
+    "mybastion".into()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -611,7 +620,7 @@ pub struct Config {
     pub session_cleanup_delay_secs: u64,
 
     /// Enable API rate limiting. Default: false.
-    /// When behind a reverse proxy (HAProxy, nginx) or access gateway (KnockNoc),
+    /// When behind a reverse proxy (HAProxy, nginx) or access gateway,
     /// rate limiting is typically handled upstream and not needed here.
     #[serde(default)]
     pub rate_limit: bool,
@@ -652,6 +661,11 @@ pub struct Config {
     pub theme: Option<ThemeConfig>,
     pub recording: Option<RecordingConfig>,
     pub vdi: Option<VdiConfig>,
+    /// `[web]`: headless-Chromium web sessions (the Xvnc/Chromium settings
+    /// above apply once enabled).
+    pub web: Option<FeatureSwitch>,
+    /// `[spice]`: SPICE and Proxmox VE console sessions.
+    pub spice: Option<FeatureSwitch>,
     pub rdp: Option<RdpConfig>,
 }
 
@@ -659,7 +673,7 @@ pub struct Config {
 /// connect request) leaves a field unset.
 ///
 /// `default_auth_pkg` picks the NLA/CredSSP authentication package
-/// FreeRDP uses. Rustguac defaults to `"ntlm"` because Kerberos
+/// FreeRDP uses. My Bastion defaults to `"ntlm"` because Kerberos
 /// requires a working KDC reachable via DNS, which most deployments
 /// don't have, and the failure mode is a silent hang. Override here
 /// with `"kerberos"` or `"negotiate"` if your environment actually
@@ -1164,7 +1178,7 @@ impl ThemeConfig {
 ///
 /// Built-ins (the eight `aurora`/`dark`/`light`/... presets in [`builtin_presets`])
 /// are always returned even if `<static_path>/themes/` is absent, so a fresh
-/// install or a misconfigured static_path can never leave rustguac without
+/// install or a misconfigured static_path can never leave mybastion without
 /// any themes. Operators add a new theme by dropping a `<name>.toml` file
 /// into `<static_path>/themes/`; the filename (minus extension) is the theme
 /// id. A disk theme with the same id as a built-in **overrides** the built-in,
@@ -1270,7 +1284,7 @@ fn default_static_path() -> PathBuf {
 }
 
 fn default_db_path() -> PathBuf {
-    PathBuf::from("./rustguac.db")
+    PathBuf::from("./mybastion.db")
 }
 
 fn default_session_timeout_secs() -> u64 {
@@ -1330,11 +1344,11 @@ fn default_login_script_timeout_secs() -> u64 {
 }
 
 fn default_login_scripts_dir() -> String {
-    "/opt/rustguac/scripts".into()
+    "/opt/mybastion/scripts".into()
 }
 
 fn default_site_title() -> String {
-    "rustguac".into()
+    "My Bastion".into()
 }
 
 fn default_localhost_networks() -> Vec<String> {
@@ -1382,6 +1396,8 @@ impl Default for Config {
             theme: None,
             recording: None,
             vdi: None,
+            web: None,
+            spice: None,
             rdp: None,
         }
     }
@@ -1405,8 +1421,8 @@ impl Config {
         // everything they configured.
         let (path, required) = if let Some(p) = path {
             (Some(p.to_string()), true)
-        } else if std::path::Path::new("/opt/rustguac/config.toml").exists() {
-            (Some("/opt/rustguac/config.toml".to_string()), true)
+        } else if std::path::Path::new("/etc/mybastion/mybastion.toml").exists() {
+            (Some("/etc/mybastion/mybastion.toml".to_string()), true)
         } else {
             (None, false)
         };
@@ -1456,6 +1472,16 @@ impl Config {
         config
     }
 
+    /// Whether `[web] enabled = true`.
+    pub fn web_enabled(&self) -> bool {
+        self.web.as_ref().is_some_and(|w| w.enabled)
+    }
+
+    /// Whether `[spice] enabled = true` (SPICE and Proxmox sessions).
+    pub fn spice_enabled(&self) -> bool {
+        self.spice.as_ref().is_some_and(|s| s.enabled)
+    }
+
     /// `[storage]` when it selects the SQLite backend.
     pub fn sqlite_storage(&self) -> Option<&StorageConfig> {
         self.storage.as_ref().filter(|s| s.backend == "sqlite")
@@ -1478,11 +1504,11 @@ impl Config {
     }
 
     /// Check that `[oidc]`, when present, has a usable client secret from
-    /// either config.toml or `OIDC_CLIENT_SECRET` (already merged by
+    /// either mybastion.toml or `OIDC_CLIENT_SECRET` (already merged by
     /// `Config::load`). Returns the operator-facing error text on failure.
     /// Only the server needs this; see the note in `Config::load`. Bug #121
     /// was that the field was non-Optional in serde, so omitting it from
-    /// config.toml failed parsing before the env var could fill it in.
+    /// mybastion.toml failed parsing before the env var could fill it in.
     pub fn validate_oidc_secret(&self) -> Result<(), String> {
         let Some(ref oidc) = self.oidc else {
             return Ok(());
@@ -1496,9 +1522,9 @@ impl Config {
             Ok(())
         } else {
             Err("[oidc] is configured but no client_secret was provided.\n\
-                 [config]        Set `client_secret = \"...\"` in config.toml, or export\n\
-                 [config]        OIDC_CLIENT_SECRET in the rustguac environment\n\
-                 [config]        (e.g. /opt/rustguac/env)."
+                 [config]        Set `client_secret = \"...\"` in mybastion.toml, or export\n\
+                 [config]        OIDC_CLIENT_SECRET in the mybastion environment\n\
+                 [config]        (e.g. /etc/mybastion/env)."
                 .to_string())
         }
     }
@@ -1578,7 +1604,7 @@ mod tests {
 
     #[test]
     fn test_theme_resolve_from_default_struct_is_aurora() {
-        // When config.toml has no [theme] section at all, main.rs resolves
+        // When mybastion.toml has no [theme] section at all, main.rs resolves
         // via ThemeConfig::default(). This must produce aurora, not dark or
         // whatever happens to be first in builtin_presets().
         let (name, colors) = ThemeConfig::default().resolve();
@@ -1636,7 +1662,7 @@ mod tests {
         let config: VaultConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.addr, "https://vault:8200");
         assert_eq!(config.mount, "secret");
-        assert_eq!(config.base_path, "rustguac");
+        assert_eq!(config.base_path, "mybastion");
         assert!(!config.tls_skip_verify);
         assert!(config.ca_cert.is_none());
     }
@@ -1648,7 +1674,7 @@ mod tests {
             addr = "https://secrets.example.com"
             [jwt_auth]
             mount = "workload-jwt"
-            role = "rustguac"
+            role = "mybastion"
             path = "/var/run/secrets/vault/token"
         "#,
         )
@@ -1681,16 +1707,16 @@ mod tests {
 
     #[test]
     fn oidc_config_parses_without_client_secret() {
-        // Regression for #121: omitting client_secret from config.toml used
+        // Regression for #121: omitting client_secret from mybastion.toml used
         // to fail TOML parsing before OIDC_CLIENT_SECRET could fill it in.
         // Now it's optional at parse time and validated at startup.
         let toml_str = r#"
             issuer_url = "https://idp.example.com/"
-            client_id = "rustguac"
+            client_id = "mybastion"
             redirect_uri = "https://console.example.com/oidc/callback"
         "#;
         let config: OidcConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.client_id, "rustguac");
+        assert_eq!(config.client_id, "mybastion");
         assert!(config.client_secret.is_none());
     }
 
@@ -1698,7 +1724,7 @@ mod tests {
     fn oidc_config_parses_with_client_secret() {
         let toml_str = r#"
             issuer_url = "https://idp.example.com/"
-            client_id = "rustguac"
+            client_id = "mybastion"
             client_secret = "from-config"
             redirect_uri = "https://console.example.com/oidc/callback"
         "#;
@@ -1717,11 +1743,11 @@ mod tests {
     fn validate_oidc_secret_rejects_missing_secret() {
         // The [oidc] block parses fine without a secret (see #121); the
         // presence check is a separate, serve-only step so that admin CLI
-        // subcommands run from a shell that hasn't sourced /opt/rustguac/env.
+        // subcommands run from a shell that hasn't sourced /etc/mybastion/env.
         let oidc: OidcConfig = toml::from_str(
             r#"
             issuer_url = "https://idp.example.com/"
-            client_id = "rustguac"
+            client_id = "mybastion"
             redirect_uri = "https://console.example.com/oidc/callback"
         "#,
         )
@@ -1740,7 +1766,7 @@ mod tests {
         let oidc: OidcConfig = toml::from_str(
             r#"
             issuer_url = "https://idp.example.com/"
-            client_id = "rustguac"
+            client_id = "mybastion"
             client_secret = ""
             redirect_uri = "https://console.example.com/oidc/callback"
         "#,
@@ -1758,7 +1784,7 @@ mod tests {
         let oidc: OidcConfig = toml::from_str(
             r#"
             issuer_url = "https://idp.example.com/"
-            client_id = "rustguac"
+            client_id = "mybastion"
             client_secret = "from-config"
             redirect_uri = "https://console.example.com/oidc/callback"
         "#,
@@ -1775,7 +1801,7 @@ mod tests {
     fn oidc_config_debug_redacts_client_secret() {
         let config = OidcConfig {
             issuer_url: "https://idp.example.com/".into(),
-            client_id: "rustguac".into(),
+            client_id: "mybastion".into(),
             client_secret: Some("sensitive-value".into()),
             redirect_uri: "https://console.example.com/oidc/callback".into(),
             default_role: default_oidc_default_role(),
@@ -1842,7 +1868,7 @@ mod tests {
         // Backward-compat: a static_path with no themes/ subdir loads
         // exactly the Rust-baked built-ins (8 of them, in their defined
         // order). Existing deployments upgrading to 1.7.1 see no change.
-        let tmp = std::env::temp_dir().join(format!("rustguac-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mybastion-test-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let themes = load_themes(&tmp);
         assert_eq!(themes.len(), builtin_presets().len());
@@ -1855,7 +1881,7 @@ mod tests {
     #[test]
     fn load_themes_adds_new_disk_theme() {
         // A new .toml in the themes dir is appended after the built-ins.
-        let tmp = std::env::temp_dir().join(format!("rustguac-test-{}-add", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mybastion-test-{}-add", std::process::id()));
         let themes_dir = tmp.join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         std::fs::write(themes_dir.join("custom-brand.toml"), theme_toml("#ff00ff")).unwrap();
@@ -1871,7 +1897,7 @@ mod tests {
     fn load_themes_disk_overrides_builtin_with_same_name() {
         // A .toml named after a built-in (e.g. aurora.toml) replaces the
         // built-in. Operators re-brand by editing the file, not the Rust code.
-        let tmp = std::env::temp_dir().join(format!("rustguac-test-{}-ovr", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mybastion-test-{}-ovr", std::process::id()));
         let themes_dir = tmp.join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         std::fs::write(themes_dir.join("aurora.toml"), theme_toml("#abcdef")).unwrap();
@@ -1889,7 +1915,7 @@ mod tests {
         // is skipped with a log warning, not loaded. Protects the frontend
         // picker, log lines, and config-file matching from injection or
         // homoglyph confusion via crafted filenames.
-        let tmp = std::env::temp_dir().join(format!("rustguac-test-{}-bad", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("mybastion-test-{}-bad", std::process::id()));
         let themes_dir = tmp.join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         // Whitespace, HTML, traversal-ish, and overlong all rejected.
@@ -1919,7 +1945,7 @@ mod tests {
         // A garbage .toml in the themes dir is skipped with a warning, not
         // fatal. The rest of the directory continues to load.
         let tmp =
-            std::env::temp_dir().join(format!("rustguac-test-{}-bad-toml", std::process::id()));
+            std::env::temp_dir().join(format!("mybastion-test-{}-bad-toml", std::process::id()));
         let themes_dir = tmp.join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         std::fs::write(themes_dir.join("bad.toml"), "this is = not\nvalid toml [[[").unwrap();
@@ -1969,11 +1995,11 @@ mod tests {
 
     #[test]
     fn existing_user_config_with_theme_section_keeps_working_after_upgrade() {
-        // Backward-compat: a config.toml that already has a [theme] section
+        // Backward-compat: a mybastion.toml that already has a [theme] section
         // from a 1.7.0-or-earlier install must produce the exact same
         // resolved colors after the v1.7.1 refactor. This test loads three
         // realistic shapes of existing [theme] configs as if from
-        // config.toml, then runs each through resolve() and resolve_with()
+        // mybastion.toml, then runs each through resolve() and resolve_with()
         // against the merged themes list and asserts they match.
         //
         // resolve() is now a thin wrapper over resolve_with(builtins), so

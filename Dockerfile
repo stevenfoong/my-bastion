@@ -1,24 +1,25 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 # =============================================================================
-# Multi-stage Dockerfile for rustguac
+# Multi-stage Dockerfile for mybastion
 #
 # Stages:
 #   1. guacd-builder  — compile guacd from guacamole-server source
-#   2. rust-builder   — compile rustguac binary
+#   2. rust-builder   — compile mybastion binary
 #   3. runtime        — minimal image with both binaries + runtime deps
 #
 # Build:
-#   docker build -t rustguac .
+#   docker build -t mybastion .
 #
 # Run:
-#   docker run -d -p 8089:8089 rustguac
+#   docker run -d -p 8089:8089 mybastion
 #
 # Run with VDI (Docker desktop containers):
 #   docker run -d -p 8089:8089 \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     --group-add $(getent group docker | cut -d: -f3) \
-#     rustguac
+#     mybastion
 #
-# The image runs both guacd and rustguac under a simple entrypoint script.
+# The image runs both guacd and mybastion under a simple entrypoint script.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,7 @@ RUN autoreconf -fi
 
 WORKDIR /build/guacd-build
 RUN /build/guacamole-server/configure \
-        --prefix=/opt/rustguac \
+        --prefix=/opt/mybastion \
         --with-ssh \
         --with-vnc \
         --with-rdp \
@@ -67,13 +68,13 @@ RUN /build/guacamole-server/configure \
         --disable-static \
     && make -j"$(nproc)" \
     && make install \
-    && bash /build/check-guacd-plugins.sh /opt/rustguac/lib \
-    && mkdir -p /opt/rustguac/lib/freerdp3 \
-    && cp /opt/rustguac/lib/libguac*.so* /opt/rustguac/lib/freerdp3/ \
-    && { cp /usr/lib/x86_64-linux-gnu/freerdp3/libguac*.so* /opt/rustguac/lib/freerdp3/ 2>/dev/null || true; }
+    && bash /build/check-guacd-plugins.sh /opt/mybastion/lib \
+    && mkdir -p /opt/mybastion/lib/freerdp3 \
+    && cp /opt/mybastion/lib/libguac*.so* /opt/mybastion/lib/freerdp3/ \
+    && { cp /usr/lib/x86_64-linux-gnu/freerdp3/libguac*.so* /opt/mybastion/lib/freerdp3/ 2>/dev/null || true; }
 
 # ---------------------------------------------------------------------------
-# Stage 2: Build rustguac
+# Stage 2: Build mybastion
 # ---------------------------------------------------------------------------
 FROM rust:1-bookworm AS rust-builder
 
@@ -110,62 +111,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install guacd
-COPY --from=guacd-builder /opt/rustguac/sbin/ /opt/rustguac/sbin/
+COPY --from=guacd-builder /opt/mybastion/sbin/ /opt/mybastion/sbin/
 # guacenc converts recordings to video for MP4 downloads
-COPY --from=guacd-builder /opt/rustguac/bin/guacenc /opt/rustguac/bin/guacenc
-COPY --from=guacd-builder /opt/rustguac/lib/ /opt/rustguac/lib/
+COPY --from=guacd-builder /opt/mybastion/bin/guacenc /opt/mybastion/bin/guacenc
+COPY --from=guacd-builder /opt/mybastion/lib/ /opt/mybastion/lib/
 
-# Install rustguac binary
-COPY --from=rust-builder /build/target/release/rustguac /opt/rustguac/bin/rustguac
+# Install mybastion binary
+COPY --from=rust-builder /build/target/release/mybastion /opt/mybastion/bin/mybastion
 
 # Install static web assets
-COPY static/ /opt/rustguac/static/
+COPY static/ /opt/mybastion/static/
 
 # Seccomp profile that lets Chromium's sandbox start, for the host to pass to
 # `docker run --security-opt seccomp=...` (see docs/web-sessions.md)
-COPY contrib/docker/seccomp-chromium.json /opt/rustguac/seccomp-chromium.json
+COPY contrib/docker/seccomp-chromium.json /opt/mybastion/seccomp-chromium.json
 
 # Library path for guacd
-RUN echo "/opt/rustguac/lib" > /etc/ld.so.conf.d/rustguac.conf && ldconfig
+RUN echo "/opt/mybastion/lib" > /etc/ld.so.conf.d/mybastion.conf && ldconfig
 
 # FreeRDP plugin setup: guacd loads "guac-common-svc" by name, which FreeRDP
 # resolves to "guac-common-svc.so" in its plugin path. The build installs it as
 # "libguac-common-svc-client.so", so we create a symlink with the expected name.
 # We also ensure the system FreeRDP plugin dir exists and contains the plugins.
 RUN mkdir -p /usr/lib/x86_64-linux-gnu/freerdp3 && \
-    if [ -d /opt/rustguac/lib/freerdp3 ]; then \
-        cp /opt/rustguac/lib/freerdp3/*.so* /usr/lib/x86_64-linux-gnu/freerdp3/ 2>/dev/null; \
-        ln -sf libguac-common-svc-client.so /opt/rustguac/lib/freerdp3/guac-common-svc.so; \
+    if [ -d /opt/mybastion/lib/freerdp3 ]; then \
+        cp /opt/mybastion/lib/freerdp3/*.so* /usr/lib/x86_64-linux-gnu/freerdp3/ 2>/dev/null; \
+        ln -sf libguac-common-svc-client.so /opt/mybastion/lib/freerdp3/guac-common-svc.so; \
         ln -sf libguac-common-svc-client.so /usr/lib/x86_64-linux-gnu/freerdp3/guac-common-svc.so; \
         echo "FreeRDP plugins installed:"; \
-        ls /usr/lib/x86_64-linux-gnu/freerdp3/guac* /opt/rustguac/lib/freerdp3/guac-common-svc.so 2>/dev/null; \
+        ls /usr/lib/x86_64-linux-gnu/freerdp3/guac* /opt/mybastion/lib/freerdp3/guac-common-svc.so 2>/dev/null; \
     fi
 
 # Create writable runtime directories
-RUN mkdir -p /opt/rustguac/data /opt/rustguac/recordings /opt/rustguac/tls \
-    /opt/rustguac/certs /opt/rustguac/drives /opt/rustguac/scripts \
-    /opt/rustguac/vdi-homes
+RUN mkdir -p /var/lib/mybastion /var/lib/mybastion/recordings /etc/mybastion/tls \
+    /opt/mybastion/certs /opt/mybastion/drives /opt/mybastion/scripts \
+    /opt/mybastion/vdi-homes
 
 # Chromium policy: web session hardening.
 # DeveloperToolsAvailability=0: CDP needed for login scripts. Users can't reach DevTools
 # through the UI anyway — chrome://* is in URLBlocklist.
 RUN mkdir -p /etc/chromium/policies/managed && \
     echo '{"AllowFileSelectionDialogs": false, "PasswordManagerEnabled": true, "ImportSavedPasswords": false, "DeveloperToolsAvailability": 0, "DownloadRestrictions": 3, "PrintingEnabled": false, "EditBookmarksEnabled": false, "BrowserSignin": 0, "SyncDisabled": true, "ExtensionInstallBlocklist": ["*"], "URLBlocklist": ["file://*", "chrome://*", "chrome-extension://*", "view-source:*", "javascript:*"], "URLAllowlist": ["chrome://policy"]}' \
-    > /etc/chromium/policies/managed/rustguac.json
+    > /etc/chromium/policies/managed/mybastion.json
 
 # Create non-root user with a real home directory (Chromium crashpad needs it)
-RUN groupadd -r rustguac && useradd -r -g rustguac -m -d /home/rustguac -s /bin/sh rustguac
+RUN groupadd -r mybastion && useradd -r -g mybastion -m -d /home/mybastion -s /bin/sh mybastion
 
 # Generate self-signed cert for guacd TLS (internal loopback encryption)
-RUN /opt/rustguac/bin/rustguac generate-cert --hostname localhost --out-dir /opt/rustguac/tls
+RUN /opt/mybastion/bin/mybastion generate-cert --hostname localhost --out-dir /etc/mybastion/tls
 
-# Default config template (copied to config.toml on first run if not mounted)
-RUN cat > /opt/rustguac/config.toml.default <<'EOF'
+# Default config template (copied to mybastion.toml on first run if not mounted)
+RUN cat > /opt/mybastion/mybastion.toml.default <<'EOF'
 listen_addr = "0.0.0.0:8089"
 guacd_addr = "127.0.0.1:4822"
-recording_path = "/opt/rustguac/recordings"
-static_path = "/opt/rustguac/static"
-db_path = "/opt/rustguac/data/rustguac.db"
+recording_path = "/var/lib/mybastion/recordings"
+static_path = "/opt/mybastion/static"
+db_path = "/var/lib/mybastion/mybastion.db"
 session_pending_timeout_secs = 60
 xvnc_path = "Xvnc"
 chromium_path = "chromium"
@@ -173,38 +174,45 @@ display_range_start = 100
 display_range_end = 199
 
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
+
+# Inherited session types, off unless switched on here.
+# [web]
+# enabled = true    # headless-Chromium web sessions
+# [spice]
+# enabled = true    # SPICE and Proxmox VE consoles
 
 # VDI Docker desktop containers (uncomment to enable)
 # Requires: -v /var/run/docker.sock:/var/run/docker.sock
 # [vdi]
 # enabled = true
 # idle_timeout_mins = 60
-# home_base = "/opt/rustguac/vdi-homes"
+# home_base = "/opt/mybastion/vdi-homes"
 EOF
 
 # Set ownership so the non-root user can write to runtime dirs.
-# The top-level dir is chowned (not recursive) so loaders can create config.toml;
-# subdirs are chowned recursively for data, certs, etc.
-RUN chown rustguac:rustguac /opt/rustguac && \
-    chown -R rustguac:rustguac /opt/rustguac/data /opt/rustguac/recordings \
-    /opt/rustguac/tls /opt/rustguac/certs /opt/rustguac/drives \
-    /opt/rustguac/scripts /opt/rustguac/vdi-homes /opt/rustguac/config.toml.default
+# /etc/mybastion is chowned (not recursive) so the entrypoint can create
+# mybastion.toml there; subdirs are chowned recursively for data, certs, etc.
+RUN chown mybastion:mybastion /opt/mybastion /etc/mybastion && \
+    chown -R mybastion:mybastion /var/lib/mybastion /var/lib/mybastion/recordings \
+    /etc/mybastion/tls /opt/mybastion/certs /opt/mybastion/drives \
+    /opt/mybastion/scripts /opt/mybastion/vdi-homes /opt/mybastion/mybastion.toml.default
 
-COPY entrypoint.sh /opt/rustguac/entrypoint.sh
-RUN chmod +x /opt/rustguac/entrypoint.sh
+COPY entrypoint.sh /opt/mybastion/entrypoint.sh
+COPY LICENSE NOTICE /opt/mybastion/
+RUN chmod +x /opt/mybastion/entrypoint.sh
 
-WORKDIR /opt/rustguac
+WORKDIR /opt/mybastion
 EXPOSE 8089
-VOLUME ["/opt/rustguac/data", "/opt/rustguac/recordings", "/opt/rustguac/drives", "/opt/rustguac/vdi-homes"]
+VOLUME ["/var/lib/mybastion", "/var/lib/mybastion/recordings", "/opt/mybastion/drives", "/opt/mybastion/vdi-homes"]
 
 ENV RUST_LOG=info
 ENV GUACD_LOG_LEVEL=info
-ENV HOME=/home/rustguac
+ENV HOME=/home/mybastion
 
-USER rustguac
+USER mybastion
 ENV TINI_KILL_PROCESS_GROUP=1
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/opt/rustguac/entrypoint.sh"]
+CMD ["/opt/mybastion/entrypoint.sh"]

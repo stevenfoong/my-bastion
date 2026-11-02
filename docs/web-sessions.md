@@ -1,4 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Web Browser Sessions
+
+**Off by default.** Turn web sessions on with `[web] enabled = true` in `mybastion.toml` (see [Configuration](configuration.md#web-and-spice-sections)).
 
 Web browser sessions give users a full Chromium browser running on the server, streamed to their own browser via the Guacamole protocol. Each session spawns a headless Xvnc display with Chromium in kiosk mode — the user sees and interacts with a real browser without installing anything locally.
 
@@ -16,7 +19,7 @@ User's browser
     │
     │ WebSocket (Guacamole protocol)
     ▼
-rustguac
+mybastion
     │
     │ Guacamole protocol (TCP/TLS)
     ▼
@@ -31,8 +34,8 @@ Xvnc (virtual display :100–:199)
             └── https://target-app.example.com
 ```
 
-1. rustguac allocates an X display number and spawns Xvnc
-2. A unique Chromium profile directory is created (`/tmp/rustguac-chromium-{uuid}`)
+1. My Bastion allocates an X display number and spawns Xvnc
+2. A unique Chromium profile directory is created (`/tmp/mybastion-chromium-{uuid}`)
 3. Optionally, the autofill database is pre-populated with credentials
 4. Chromium launches on the Xvnc display, navigating to the configured URL
 5. guacd connects to the Xvnc display via VNC and streams it to the user
@@ -60,7 +63,7 @@ Optionally add credentials for autofill or login scripts:
 ### API
 
 ```bash
-curl -X POST https://rustguac.example.com/api/sessions \
+curl -X POST https://mybastion.example.com/api/sessions \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -83,7 +86,7 @@ This is a server-side CIDR check applied at session creation. The URL's hostname
 
 ## Native autofill
 
-For simple login flows (a form with username and password fields), native autofill is the easiest approach. rustguac pre-populates Chromium's built-in password manager database before launch — no scripts, no external runtimes, no CDP.
+For simple login flows (a form with username and password fields), native autofill is the easiest approach. My Bastion pre-populates Chromium's built-in password manager database before launch — no scripts, no external runtimes, no CDP.
 
 When the user clicks on a login form, Chromium shows its familiar autofill dropdown with the pre-filled credentials.
 
@@ -132,7 +135,7 @@ Chromium will offer autofill on both domains.
 
 ### How it works internally
 
-rustguac creates a Chromium profile directory before launch and writes to `Default/Login Data` (a SQLite database that Chromium uses for its password manager). Passwords are encrypted using Chromium's Linux `os_crypt` backend:
+My Bastion creates a Chromium profile directory before launch and writes to `Default/Login Data` (a SQLite database that Chromium uses for its password manager). Passwords are encrypted using Chromium's Linux `os_crypt` backend:
 
 1. Derive a 16-byte AES key via PBKDF2 (password `"peanuts"`, salt `"saltysalt"`, 1 iteration, SHA-1)
 2. Encrypt with AES-128-CBC, IV = 16 × `0x20` (space characters)
@@ -165,12 +168,12 @@ There are two separate mechanisms that control what a web session can access:
 
 | Layer | Config | Applied | Scope |
 |-------|--------|---------|-------|
-| **`web_allowed_networks`** | `config.toml` (global) | Server-side, at session creation | CIDR ranges — controls which IPs rustguac will connect to |
+| **`web_allowed_networks`** | `mybastion.toml` (global) | Server-side, at session creation | CIDR ranges — controls which IPs My Bastion will connect to |
 | **`allowed_domains`** | Connections entry | Client-side, inside Chromium at runtime | Domain names — controls which sites the user can navigate to |
 
 They don't conflict — both can be active simultaneously for defense in depth:
 
-- `web_allowed_networks` prevents rustguac from initiating connections to disallowed networks (SSRF protection)
+- `web_allowed_networks` prevents My Bastion from initiating connections to disallowed networks (SSRF protection)
 - `allowed_domains` prevents the user from navigating to sites outside the allowlist within an already-running session
 
 **Example:** Your config allows `10.0.0.0/8` for web sessions (server-side). An connections entry for the internal wiki sets `allowed_domains: ["wiki.internal.example.com"]`. The session can only reach the wiki — even though the server-side allowlist permits the entire `10.0.0.0/8` range.
@@ -178,7 +181,7 @@ They don't conflict — both can be active simultaneously for defense in depth:
 ### API
 
 ```bash
-curl -X POST https://rustguac.example.com/api/sessions \
+curl -X POST https://mybastion.example.com/api/sessions \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -198,7 +201,7 @@ A login script is a server-side executable that connects to the already-running 
 
 1. The connections entry specifies a `login_script` filename (e.g., `portal-login.js`)
 2. When the session starts, Chromium is launched with `--remote-debugging-port={cdp_port}`
-3. After Chromium is ready, rustguac spawns the script as a child process
+3. After Chromium is ready, My Bastion spawns the script as a child process
 4. The script connects to Chromium via CDP, performs automation, then exits
 5. The user watches the automation live (it's all happening on the VNC display) and takes over the authenticated session
 
@@ -209,11 +212,11 @@ A login script is a server-side executable that connects to the already-running 
 | Variable | Description |
 |----------|-------------|
 | `DISPLAY` | X display number (e.g., `:100`) |
-| `RUSTGUAC_CDP_PORT` | Chrome DevTools Protocol port (e.g., `9200`) |
-| `RUSTGUAC_URL` | Target URL |
-| `RUSTGUAC_USERNAME` | Username (empty string if not set) |
-| `RUSTGUAC_PASSWORD` | Password (empty string if not set) |
-| `RUSTGUAC_SESSION_ID` | Session UUID |
+| `MYBASTION_CDP_PORT` | Chrome DevTools Protocol port (e.g., `9200`) |
+| `MYBASTION_URL` | Target URL |
+| `MYBASTION_USERNAME` | Username (empty string if not set) |
+| `MYBASTION_PASSWORD` | Password (empty string if not set) |
+| `MYBASTION_SESSION_ID` | Session UUID |
 
 **Stdin (preferred for credentials):**
 
@@ -231,7 +234,7 @@ Credentials are also sent as JSON on stdin, which is more secure than environmen
 
 **Requirements:**
 
-- The script must be in the `login_scripts_dir` directory (default: `/opt/rustguac/scripts`)
+- The script must be in the `login_scripts_dir` directory (default: `/opt/mybastion/scripts`)
 - The script must be executable (`chmod +x`)
 - Path traversal is blocked — the filename is validated against the scripts directory
 - Scripts have a timeout (default: 120 seconds, configurable via `login_script_timeout_secs`)
@@ -243,9 +246,9 @@ This example uses [Playwright](https://playwright.dev/) to automate a login flow
 
 ```javascript
 #!/usr/bin/env node
-// login-example.js — Playwright login script for rustguac
+// login-example.js — Playwright login script for mybastion
 //
-// Install: npm install playwright-core  (in /opt/rustguac/scripts or globally)
+// Install: npm install playwright-core  (in /opt/mybastion/scripts or globally)
 // The script uses playwright-core (no bundled browsers) since Chromium is
 // already running — it connects via CDP rather than launching a new browser.
 
@@ -271,10 +274,10 @@ async function getCredentials() {
         }
     }
     return {
-        cdpPort:  parseInt(process.env.RUSTGUAC_CDP_PORT, 10),
-        url:      process.env.RUSTGUAC_URL || '',
-        username: process.env.RUSTGUAC_USERNAME || '',
-        password: process.env.RUSTGUAC_PASSWORD || '',
+        cdpPort:  parseInt(process.env.MYBASTION_CDP_PORT, 10),
+        url:      process.env.MYBASTION_URL || '',
+        username: process.env.MYBASTION_USERNAME || '',
+        password: process.env.MYBASTION_PASSWORD || '',
     };
 }
 
@@ -363,9 +366,9 @@ main().catch((err) => {
 
 **To use this script:**
 
-1. Save it to `/opt/rustguac/scripts/login-example.js`
-2. Make it executable: `chmod +x /opt/rustguac/scripts/login-example.js`
-3. Install Playwright: `cd /opt/rustguac/scripts && npm install playwright-core`
+1. Save it to `/opt/mybastion/scripts/login-example.js`
+2. Make it executable: `chmod +x /opt/mybastion/scripts/login-example.js`
+3. Install Playwright: `cd /opt/mybastion/scripts && npm install playwright-core`
 4. Set the `login_script` field on an connections entry to `login-example.js`
 
 ### Example: Shell script with curl
@@ -415,7 +418,7 @@ The autofill database is written before Chromium launches, and the login script 
 
 | Config key | Default | Description |
 |------------|---------|-------------|
-| `login_scripts_dir` | `/opt/rustguac/scripts` | Directory containing login scripts |
+| `login_scripts_dir` | `/opt/mybastion/scripts` | Directory containing login scripts |
 | `login_script_timeout_secs` | `120` | Maximum script runtime before it's killed |
 | `cdp_port_range_start` | `9200` | First CDP port in the allocation pool |
 | `cdp_port_range_end` | `9299` | Last CDP port |
@@ -438,8 +441,8 @@ The session page supports a small set of browser-side shortcuts:
 | Shortcut | Action | Notes |
 |----------|--------|-------|
 | `Ctrl+Alt+Shift` | Toggle the clipboard side panel | Works globally on the session page (capture phase), including when the remote display is focused. |
-| `Ctrl+V` (Windows/Linux) or `Cmd+V` (macOS) | Sync browser clipboard text to the remote session, then send paste | If clipboard API access is available, rustguac reads local clipboard text and sends it to the remote before forwarding the paste key event. |
-| `Esc` (browser fullscreen) | Exit fullscreen | Browser-native fullscreen key. rustguac may request keyboard lock while in fullscreen; if lock is unavailable, an on-screen notice reminds users to press Esc. |
+| `Ctrl+V` (Windows/Linux) or `Cmd+V` (macOS) | Sync browser clipboard text to the remote session, then send paste | If clipboard API access is available, My Bastion reads local clipboard text and sends it to the remote before forwarding the paste key event. |
+| `Esc` (browser fullscreen) | Exit fullscreen | Browser-native fullscreen key. My Bastion may request keyboard lock while in fullscreen; if lock is unavailable, an on-screen notice reminds users to press Esc. |
 
 Additional behavior:
 
@@ -452,13 +455,13 @@ Additional behavior:
 The entry URL supports credential placeholders that are URL-encoded and substituted before Chromium navigates:
 
 ```
-https://app.example.com/login?user=$RUSTGUAC_USERNAME&pass=$RUSTGUAC_PASSWORD
+https://app.example.com/login?user=$MYBASTION_USERNAME&pass=$MYBASTION_PASSWORD
 ```
 
 | Placeholder | Substituted with |
 |-------------|-----------------|
-| `$RUSTGUAC_USERNAME` | Entry username (URL-encoded) |
-| `$RUSTGUAC_PASSWORD` | Entry password (URL-encoded) |
+| `$MYBASTION_USERNAME` | Entry username (URL-encoded) |
+| `$MYBASTION_PASSWORD` | Entry password (URL-encoded) |
 
 This is useful for applications that accept credentials as URL parameters (e.g., some IPMI/KVM web consoles).
 
@@ -476,7 +479,7 @@ Web sessions support [multi-hop SSH tunnel chains](overview.md#ssh-tunnel--jump-
 
 Every web session runs Chromium with a comprehensive managed policy and an isolated profile. See [Security: Web session hardening](security.md#web-session-hardening) for the full policy table.
 
-**Warning:** The Chromium managed policy is installed globally at `/etc/chromium/policies/managed/rustguac.json`. This affects **all** Chromium instances on the machine — not just rustguac sessions. Do not install rustguac on a desktop machine where you want to use Chromium for normal browsing. rustguac is designed to run on a dedicated server or VM.
+**Warning:** The Chromium managed policy is installed globally at `/etc/chromium/policies/managed/mybastion.json`. This affects **all** Chromium instances on the machine — not just My Bastion sessions. Do not install My Bastion on a desktop machine where you want to use Chromium for normal browsing. My Bastion is designed to run on a dedicated server or VM.
 
 Key restrictions:
 
@@ -489,13 +492,13 @@ Key restrictions:
 
 ## Chromium sandbox
 
-Chromium runs with its sandbox enabled. rustguac adds `--no-sandbox` only when it runs as root, which neither the packages nor the Docker image do.
+Chromium runs with its sandbox enabled. My Bastion adds `--no-sandbox` only when it runs as root, which neither the packages nor the Docker image do.
 
-Chromium sandboxes its renderers with Linux namespaces: each runs in its own user, PID and network namespace. If the kernel or the container runtime refuses to create those namespaces, Chromium falls back to the SUID `chrome-sandbox` helper from the `chromium-sandbox` package, which must be owned by root with mode 4755. If neither works, Chromium aborts at start-up rather than run unsandboxed, and creating the web session fails. rustguac then logs, and returns in the API error, a message that starts with `Chromium's sandbox could not start:` and names the cause, followed by Chromium's own output.
+Chromium sandboxes its renderers with Linux namespaces: each runs in its own user, PID and network namespace. If the kernel or the container runtime refuses to create those namespaces, Chromium falls back to the SUID `chrome-sandbox` helper from the `chromium-sandbox` package, which must be owned by root with mode 4755. If neither works, Chromium aborts at start-up rather than run unsandboxed, and creating the web session fails. My Bastion then logs, and returns in the API error, a message that starts with `Chromium's sandbox could not start:` and names the cause, followed by Chromium's own output.
 
 ### Running under Docker
 
-Docker's default seccomp profile only lets a container create namespaces if it has `CAP_SYS_ADMIN`. The rustguac image runs as an unprivileged user without that capability, so neither the namespace sandbox nor the SUID helper can start, and every web session fails with:
+Docker's default seccomp profile only lets a container create namespaces if it has `CAP_SYS_ADMIN`. The My Bastion image runs as an unprivileged user without that capability, so neither the namespace sandbox nor the SUID helper can start, and every web session fails with:
 
 ```
 Chromium exited immediately (signal: 6 (SIGABRT)). Chromium's sandbox could not start: creating user, PID or network namespaces was refused. ...
@@ -503,19 +506,19 @@ Chromium exited immediately (signal: 6 (SIGABRT)). Chromium's sandbox could not 
 
 SSH, RDP and VNC sessions are not affected.
 
-Run the container with the seccomp profile shipped with rustguac, [`contrib/docker/seccomp-chromium.json`](../contrib/docker/seccomp-chromium.json). It is Docker's default profile with one change: `clone` and `unshare` may create user, PID and network namespaces without `CAP_SYS_ADMIN`. Mount, UTS, IPC and cgroup namespaces are still refused, every other rule is unchanged, and the profile grants no capabilities. The relaxation applies to every process in the container, not only Chromium, and user namespaces are a common way into kernel bugs, so keep the Docker host's kernel up to date. The image includes a copy that matches its version:
+Run the container with the seccomp profile shipped with My Bastion, [`contrib/docker/seccomp-chromium.json`](../contrib/docker/seccomp-chromium.json). It is Docker's default profile with one change: `clone` and `unshare` may create user, PID and network namespaces without `CAP_SYS_ADMIN`. Mount, UTS, IPC and cgroup namespaces are still refused, every other rule is unchanged, and the profile grants no capabilities. The relaxation applies to every process in the container, not only Chromium, and user namespaces are a common way into kernel bugs, so keep the Docker host's kernel up to date. The image includes a copy that matches its version:
 
 ```bash
-docker run --rm --entrypoint cat sol1/rustguac:latest /opt/rustguac/seccomp-chromium.json > seccomp-chromium.json
-docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json sol1/rustguac:latest
+docker run --rm --entrypoint cat ghcr.io/stevenfoong/mybastion:latest /opt/mybastion/seccomp-chromium.json > seccomp-chromium.json
+docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json ghcr.io/stevenfoong/mybastion:latest
 ```
 
 In Docker Compose:
 
 ```yaml
 services:
-  rustguac:
-    image: sol1/rustguac:latest
+  mybastion:
+    image: ghcr.io/stevenfoong/mybastion:latest
     security_opt:
       - seccomp=./seccomp-chromium.json
 ```
@@ -529,7 +532,7 @@ Other options, and why the profile is preferred:
 | Option | Effect |
 |--------|--------|
 | `--security-opt seccomp=seccomp-chromium.json` | Recommended. Allows only the three namespace types Chromium needs. |
-| `--security-opt seccomp=unconfined` | Also works, but turns off syscall filtering for every process in the container: rustguac, guacd, Xvnc and Chromium. Use it only where a custom profile cannot be used. |
+| `--security-opt seccomp=unconfined` | Also works, but turns off syscall filtering for every process in the container: My Bastion, guacd, Xvnc and Chromium. Use it only where a custom profile cannot be used. |
 | `--cap-add SYS_ADMIN` | Also works, but grants mount and many other administrative operations. Not recommended. |
 | Running as root (`--no-sandbox`) | Disables Chromium's sandbox entirely. Not supported. |
 
@@ -608,9 +611,9 @@ When creating entries via the Vault connections (UI or API), the same fields are
 - Check the browser's address bar — if it shows "This site can't be reached", the domain is being blocked.
 
 **Login script doesn't run:**
-- The script must be executable: `chmod +x /opt/rustguac/scripts/my-script.js`
+- The script must be executable: `chmod +x /opt/mybastion/scripts/my-script.js`
 - Check the `login_scripts_dir` config points to the right directory.
-- Check rustguac logs for `[login-script]` messages — script stdout/stderr is captured.
+- Check My Bastion logs for `[login-script]` messages — script stdout/stderr is captured.
 - The script has a timeout (default 120s). Increase `login_script_timeout_secs` if needed.
 
 **Web session fails with "Chromium's sandbox could not start":**
@@ -620,7 +623,7 @@ When creating entries via the Vault connections (UI or API), the same fields are
 **Browser shows a blank white screen:**
 - The Xvnc display may not be ready. Check logs for Xvnc startup errors.
 - Verify `chromium_path` and `xvnc_path` in the config point to valid binaries.
-- Ensure the `rustguac` system user has a real home directory (`/home/rustguac`) — Chromium's crashpad handler crashes without one.
+- Ensure the `mybastion` system user has a real home directory (`/home/mybastion`) — Chromium's crashpad handler crashes without one.
 
 **"Controlled by automated test software" banner:**
 - This appears when `allowed_domains` is set, because `--enable-automation` is used to suppress a different infobar about `--host-rules`. The banner is cosmetic and does not affect functionality.

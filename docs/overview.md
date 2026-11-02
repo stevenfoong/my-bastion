@@ -1,36 +1,36 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Overview
 
-## What is rustguac?
+## What is My Bastion?
 
-rustguac is a lightweight Rust replacement for the Apache Guacamole Java webapp. It provides browser-based remote access to SSH, RDP, VNC, web browser sessions, and VDI desktop containers through [guacd](https://github.com/apache/guacamole-server), the Guacamole protocol daemon.
+My Bastion is a lightweight Rust replacement for the Apache Guacamole Java webapp. It provides browser-based remote access to SSH, RDP, VNC, web browser sessions, and VDI desktop containers through [guacd](https://github.com/apache/guacamole-server), the Guacamole protocol daemon.
 
-rustguac sits between web browsers and guacd, proxying the Guacamole protocol over WebSockets. It manages session lifecycle, authentication, session recording, VDI container orchestration, and Vault-backed connection storage.
+My Bastion sits between web browsers and guacd, proxying the Guacamole protocol over WebSockets. It manages session lifecycle, authentication, session recording, VDI container orchestration, and Vault-backed connection storage.
 
-The connections feature (the main user-facing UI) requires HashiCorp Vault or OpenBao for credential storage. Without one, rustguac falls back to ad-hoc connections only (**Connect to a host** beside the search box, or the API). See [Vault / OpenBao Connections](integrations.md#vault--openbao-connections) for setup, including the `contrib/vault-quickstart.sh` helper.
+The connections feature (the main user-facing UI) requires HashiCorp Vault or OpenBao for credential storage. Without one, My Bastion falls back to ad-hoc connections only (**Connect to a host** beside the search box, or the API). See [Vault / OpenBao Connections](integrations.md#vault--openbao-connections) for setup, including the `contrib/vault-quickstart.sh` helper.
 
 ## Why not Apache Guacamole?
 
-Apache Guacamole is a mature, feature-rich platform. rustguac is a purpose-built alternative for organisations that want:
+Apache Guacamole is a mature, feature-rich platform. My Bastion is a purpose-built alternative for organisations that want:
 
-- **No Java stack** — rustguac is a single Rust binary. No Tomcat, no WAR files, no JVM tuning.
+- **No Java stack** — My Bastion is a single Rust binary. No Tomcat, no WAR files, no JVM tuning.
 - **Security-first design** — CIDR allowlists, TLS everywhere, LUKS-encrypted file transfer, Vault integration, rate limiting, audit logging.
 - **Simpler deployment** — one binary + guacd. Install with a single script or Docker image.
 - **VDI desktops** — ephemeral Docker containers give each user an isolated Linux desktop on demand. No VM infrastructure required.
 - **Connections in Vault** — connection credentials stored in HashiCorp Vault / OpenBao KV v2. Credentials never reach the browser.
-- **Zero-trust integration** — works with [Knocknoc](https://knocknoc.io) for identity-aware network access control at the HAProxy layer.
 
 ## Similarities to Apache Guacamole
 
-rustguac and Apache Guacamole share the same foundation:
+My Bastion and Apache Guacamole share the same foundation:
 
 - **guacd** — both use guacd from [guacamole-server](https://github.com/apache/guacamole-server) for protocol translation. This is the same battle-tested C daemon.
-- **Guacamole protocol** — the wire protocol between the webapp and guacd is identical. rustguac uses the same instruction format, the same JavaScript client library (`guac-common-js`), and the same WebSocket framing.
+- **Guacamole protocol** — the wire protocol between the webapp and guacd is identical. My Bastion uses the same instruction format, the same JavaScript client library (`guac-common-js`), and the same WebSocket framing.
 - **Session recording** — recordings are in the standard Guacamole format and can be played back with the bundled player.
-- **SSH/RDP/VNC support** — the same protocol backends provided by guacd. rustguac adds web browser and VDI container session types on top.
+- **SSH/RDP/VNC support** — the same protocol backends provided by guacd. My Bastion adds web browser and VDI container session types on top.
 
 ## Key differences from Apache Guacamole
 
-| Feature | Apache Guacamole | rustguac |
+| Feature | Apache Guacamole | My Bastion |
 |---------|-----------------|----------|
 | **Runtime** | Java (Tomcat + Guice + Jersey) | Rust (single binary) |
 | **Database** | MySQL/PostgreSQL | SQLite (embedded) |
@@ -42,7 +42,7 @@ rustguac and Apache Guacamole share the same foundation:
 | **Multi-hop SSH tunnels** | Not supported | Chain multiple SSH bastion hops to reach isolated targets |
 | **Network allowlists** | Not supported | CIDR allowlists per protocol |
 | **Rate limiting** | Not built-in | Per-IP, per-endpoint (tower_governor) |
-| **Reverse proxy integration** | Generic | HAProxy + Knocknoc examples |
+| **Reverse proxy integration** | Generic | HAProxy, nginx, Caddy, Apache and Traefik examples |
 | **Session sharing** | Connection sharing | Share links (view-only or collaborative) |
 | **Clipboard control** | Not per-connection | Per-entry disable copy/paste |
 | **Web session autofill** | Not supported | Native Chromium autofill from Vault credentials |
@@ -56,7 +56,7 @@ Browser (HTML/JS)
     |
     | WebSocket over HTTPS
     v
-rustguac (Rust, axum)
+mybastion (Rust, axum)
     |
     | TLS (Guacamole protocol)
     v
@@ -76,10 +76,10 @@ guacd (C, from guacamole-server)
 For SSH, RDP, VNC, and web browser sessions, an optional multi-hop SSH tunnel chain can route the connection through one or more bastion hosts. VDI sessions connect to local Docker containers and do not use tunnels.
 
 ```
-Browser -> rustguac -> SSH tunnel (hop 1) -> SSH tunnel (hop 2) -> ... -> guacd -> target
+Browser -> mybastion -> SSH tunnel (hop 1) -> SSH tunnel (hop 2) -> ... -> guacd -> target
 ```
 
-Both links are encrypted by default: HTTPS between browsers and rustguac, TLS between rustguac and guacd.
+Both links are encrypted by default: HTTPS between browsers and My Bastion, TLS between My Bastion and guacd.
 
 ## Session types
 
@@ -87,13 +87,13 @@ Both links are encrypted by default: HTTPS between browsers and rustguac, TLS be
 
 Connects guacd directly to a target SSH server. Supports password, private key, and ephemeral keypair authentication. Terminal rendering is handled by guacd's SSH plugin with `xterm-256color` terminal type.
 
-SFTP file transfer is available directly between the browser and the target SSH server (no files stored on the rustguac server).
+SFTP file transfer is available directly between the browser and the target SSH server (no files stored on the My Bastion server).
 
 Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) to reach targets through bastion hosts.
 
 ### RDP
 
-Connects guacd to a target RDP server. Supports username/password, domain, and various RDP settings (security mode, certificate ignore, display resize). Drive redirection provides file transfer via a per-session directory on the rustguac server.
+Connects guacd to a target RDP server. Supports username/password, domain, and various RDP settings (security mode, certificate ignore, display resize). Drive redirection provides file transfer via a per-session directory on the My Bastion server.
 
 Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) and [Kerberos NLA authentication](integrations.md#rdp-kerberos-nla-authentication).
 
@@ -118,7 +118,7 @@ A remote screen much bigger than the window, such as two monitors viewed from a 
 
 #### VNC network presets
 
-**Network** on a VNC connection chooses how the server encodes the screen for rustguac, like UltraVNC Viewer's quick options:
+**Network** on a VNC connection chooses how the server encodes the screen for My Bastion, like UltraVNC Viewer's quick options:
 
 | Preset | Encodings (in order) | Compression | JPEG quality | Colour |
 |---|---|---|---|---|
@@ -127,13 +127,13 @@ A remote screen much bigger than the window, such as two monitors viewed from a 
 | WAN | Tight, ZRLE, CopyRect | 6 | 6 | as set |
 | Slow link | Tight, CopyRect | 9 | 3 | 16-bit unless set |
 
-This is the link between the VNC server and rustguac. The picture rustguac sends on to the browser is compressed separately, so a preset helps most when the VNC server is far from rustguac.
+This is the link between the VNC server and mybastion. The picture My Bastion sends on to the browser is compressed separately, so a preset helps most when the VNC server is far from mybastion.
 
 **Authentication.** These work: VNC password, VeNCrypt (including username and password over TLS, e.g. TigerVNC with PAM), macOS Screen Sharing, and UltraVNC's Windows login (MS-Logon II, "New MS-Logon"), which allows Active Directory accounts. These don't: RealVNC's or UltraVNC's RSA-AES encryption (security types 5, 6, 129, 130), UltraVNC's encryption plugins, and MS-Logon III. A server offering only those fails with "Unknown authentication scheme". MS-Logon II protects the password weakly and doesn't encrypt the session, so use it on a trusted network or through a jump host.
 
 ### SPICE and Proxmox VE
 
-SPICE sessions connect guacd's SPICE plugin to a SPICE server, such as a libvirt/QEMU VM console, with optional TLS, CA verification, certificate-subject pinning and a SPICE proxy. Proxmox VE console sessions open a Proxmox VE VM's console: at connect time rustguac fetches a one-time SPICE ticket from the Proxmox API, so only the API token is stored.
+SPICE sessions connect guacd's SPICE plugin to a SPICE server, such as a libvirt/QEMU VM console, with optional TLS, CA verification, certificate-subject pinning and a SPICE proxy. Proxmox VE console sessions open a Proxmox VE VM's console: at connect time My Bastion fetches a one-time SPICE ticket from the Proxmox API, so only the API token is stored.
 
 Both support optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts). See [SPICE and Proxmox VE Sessions](spice-and-proxmox.md) for entry fields, the API token, TLS and troubleshooting.
 
@@ -147,13 +147,13 @@ Supports optional [multi-hop SSH tunnel chains](#ssh-tunnel--jump-hosts) to reac
 
 ### VDI (Docker containers)
 
-Spawns an ephemeral Docker container running xrdp and a Linux desktop, then connects guacd via RDP to the container. Each user gets a dedicated container named `rustguac-vdi-{username}`. Containers persist after disconnect for reconnection and are automatically cleaned up after an idle timeout.
+Spawns an ephemeral Docker container running xrdp and a Linux desktop, then connects guacd via RDP to the container. Each user gets a dedicated container named `mybastion-vdi-{username}`. Containers persist after disconnect for reconnection and are automatically cleaned up after an idle timeout.
 
 VDI sessions support persistent home directories, per-entry resource limits and idle timeouts, session thumbnails, and active session previews in the connections. See [VDI Desktop Containers](vdi.md) for configuration and image requirements.
 
 ## SSH tunnel / jump hosts
 
-SSH, RDP, VNC, SPICE, Proxmox VE, and web browser sessions can be routed through one or more SSH bastion hosts using multi-hop SSH tunnel chains. This is useful when target machines are not directly reachable from the rustguac server. VDI sessions do not support tunnels (containers run locally).
+SSH, RDP, VNC, SPICE, Proxmox VE, and web browser sessions can be routed through one or more SSH bastion hosts using multi-hop SSH tunnel chains. This is useful when target machines are not directly reachable from the My Bastion server. VDI sessions do not support tunnels (containers run locally).
 
 Each hop in the chain establishes an SSH connection and creates a local TCP port forward (`direct-tcpip`). The hops are chained sequentially — each hop connects through the previous hop's local listener. The final hop forwards to the actual target (e.g., an RDP server on port 3389).
 
@@ -171,8 +171,8 @@ Each hop supports independent credentials (username + password or private key). 
 
 | Port | Service |
 |------|---------|
-| 443 | rustguac HTTPS (default with TLS) |
-| 8089 | rustguac HTTP (when TLS is disabled) |
+| 443 | My Bastion HTTPS (default with TLS) |
+| 8089 | My Bastion HTTP (when TLS is disabled) |
 | 4822 | guacd (TLS, loopback only) |
 | 6000-6099 | Xvnc displays (`:100`-`:199`, internal) |
 
@@ -210,7 +210,7 @@ scripts/           Utility scripts (drive-setup.sh)
 ### Getting started
 - [Deployment Guide](deployment-guide.md) -- step-by-step production setup (start here)
 - [Installation](installation.md) -- all install options (Debian, Docker, bare-metal, dev, RPM from source)
-- [Configuration](configuration.md) -- full config.toml reference
+- [Configuration](configuration.md) -- full mybastion.toml reference
 
 ### Features
 - [Roles and Access Control](roles-and-access-control.md) -- 4-tier role hierarchy, OIDC groups, user API tokens
@@ -222,7 +222,7 @@ scripts/           Utility scripts (drive-setup.sh)
 - [VDI Desktop Containers](vdi.md) -- ephemeral Docker desktops, image requirements, persistent homes
 
 ### Integrations
-- [Integrations](integrations.md) -- OIDC, Vault, SSH tunnels, Kerberos, HAProxy, Knocknoc, drive/LUKS
+- [Integrations](integrations.md) -- OIDC, Vault, SSH tunnels, Kerberos, HAProxy, drive/LUKS
 - [NetBox](netbox.md) -- connections sync via custom fields and webhooks
 - [Migration from Apache Guacamole](migration.md) -- MySQL/MariaDB to Vault
 

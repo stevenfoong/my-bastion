@@ -1,10 +1,11 @@
-# rustguac configuration for the screenshot environment. Paths match the
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# mybastion configuration for the screenshot environment. Paths match the
 # official image; everything else is left at its default so the screenshots
 # show what a new install shows.
 listen_addr = "0.0.0.0:8089"
 guacd_addr = "127.0.0.1:4822"
-static_path = "/opt/rustguac/static"
-db_path = "/opt/rustguac/data/rustguac.db"
+static_path = "/opt/mybastion/static"
+db_path = "/var/lib/mybastion/mybastion.db"
 xvnc_path = "Xvnc"
 chromium_path = "chromium"
 display_range_start = 100
@@ -20,26 +21,26 @@ web_allowed_networks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 session_cleanup_delay_secs = 5
 
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 
 [recording]
-path = "/opt/rustguac/recordings"
+path = "/var/lib/mybastion/recordings"
 
 [drive]
 enabled = true
-drive_path = "/opt/rustguac/drives"
+drive_path = "/opt/mybastion/drives"
 
 [vault]
 addr = "http://openbao:8200"
 mount = "secret"
-base_path = "rustguac"
+base_path = "mybastion"
 role_id = "screenshots-role"
 # The secret ID comes from VAULT_SECRET_ID in compose.yaml.
 
 [oidc]
 issuer_url = "http://oidc:8080/default"
-client_id = "rustguac"
+client_id = "mybastion"
 client_secret = "screenshots"
-redirect_uri = "https://rustguac:8089/auth/callback"
+redirect_uri = "https://mybastion:8089/auth/callback"

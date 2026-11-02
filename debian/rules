@@ -1,4 +1,5 @@
 #!/usr/bin/make -f
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 
 export DH_VERBOSE = 1
 
@@ -16,42 +17,46 @@ override_dh_auto_test:
 
 override_dh_auto_install:
 	# Create directory structure
-	install -d debian/rustguac/opt/rustguac/bin
-	install -d debian/rustguac/opt/rustguac/sbin
-	install -d debian/rustguac/opt/rustguac/lib
-	install -d debian/rustguac/opt/rustguac/static
-	install -d debian/rustguac/opt/rustguac/static/guac
-	install -d debian/rustguac/opt/rustguac/data
-	install -d debian/rustguac/opt/rustguac/recordings
-	install -d debian/rustguac/opt/rustguac/tls
-	install -d debian/rustguac/etc/ld.so.conf.d
+	install -d debian/mybastion/opt/mybastion/bin
+	install -d debian/mybastion/opt/mybastion/sbin
+	install -d debian/mybastion/opt/mybastion/lib
+	install -d debian/mybastion/opt/mybastion/static
+	install -d debian/mybastion/opt/mybastion/static/guac
+	install -d debian/mybastion/var/lib/mybastion
+	install -d debian/mybastion/var/lib/mybastion/recordings
+	install -d debian/mybastion/etc/mybastion/tls
+	install -d debian/mybastion/etc/ld.so.conf.d
 
-	# rustguac binary
-	install -m 755 target/release/rustguac debian/rustguac/opt/rustguac/bin/rustguac
+	# mybastion binary
+	install -m 755 target/release/mybastion debian/mybastion/opt/mybastion/bin/mybastion
 
 	# Drive setup helper script
-	install -m 755 scripts/drive-setup.sh debian/rustguac/opt/rustguac/bin/drive-setup.sh
+	install -m 755 scripts/drive-setup.sh debian/mybastion/opt/mybastion/bin/drive-setup.sh
 
 	# guacd binary and libraries from staging
-	install -m 755 debian/staging/opt/rustguac/sbin/guacd debian/rustguac/opt/rustguac/sbin/guacd
-	install -m 755 debian/staging/opt/rustguac/bin/guacenc debian/rustguac/opt/rustguac/bin/guacenc
-	cp -a debian/staging/opt/rustguac/lib/*.so* debian/rustguac/opt/rustguac/lib/
+	install -m 755 debian/staging/opt/mybastion/sbin/guacd debian/mybastion/opt/mybastion/sbin/guacd
+	install -m 755 debian/staging/opt/mybastion/bin/guacenc debian/mybastion/opt/mybastion/bin/guacenc
+	cp -a debian/staging/opt/mybastion/lib/*.so* debian/mybastion/opt/mybastion/lib/
 
 	# FreeRDP plugin for RDPDR/RDPSND channels (drive redirection, audio, printing)
-	install -d debian/rustguac/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3
-	cp -a debian/staging/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3/*.so* debian/rustguac/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3/ 2>/dev/null || true
+	install -d debian/mybastion/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3
+	cp -a debian/staging/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3/*.so* debian/mybastion/usr/lib/$(DEB_HOST_MULTIARCH)/freerdp3/ 2>/dev/null || true
 
 	# Static web assets
-	cp -r static/* debian/rustguac/opt/rustguac/static/
+	cp -r static/* debian/mybastion/opt/mybastion/static/
+
+	# Licence and attribution (Apache-2.0 requires NOTICE to travel with the work)
+	install -d debian/mybastion/usr/share/doc/mybastion
+	install -m 644 LICENSE NOTICE debian/mybastion/usr/share/doc/mybastion/
 
 	# Default config (marked as conffile)
-	install -m 644 debian/config.toml.default debian/rustguac/opt/rustguac/config.toml
+	install -m 644 debian/mybastion.toml.default debian/mybastion/etc/mybastion/mybastion.toml
 
 	# ldconfig drop-in so guacd can find its libs
-	echo "/opt/rustguac/lib" > debian/rustguac/etc/ld.so.conf.d/rustguac.conf
+	echo "/opt/mybastion/lib" > debian/mybastion/etc/ld.so.conf.d/mybastion.conf
 
 override_dh_shlibdeps:
-	dh_shlibdeps -l/opt/rustguac/lib
+	dh_shlibdeps -l/opt/mybastion/lib
 
 # dh_dwz fails on Rust binaries
 override_dh_dwz:
@@ -62,5 +67,5 @@ override_dh_strip:
 
 # Install both systemd services
 override_dh_installsystemd:
-	dh_installsystemd --name=rustguac-guacd
-	dh_installsystemd --name=rustguac
+	dh_installsystemd --name=mybastion-guacd
+	dh_installsystemd --name=mybastion

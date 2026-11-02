@@ -1,7 +1,8 @@
 #!/bin/bash
-# Collect system metrics for rustguac + guacd every N seconds.
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# Collect system metrics for mybastion + guacd every N seconds.
 # Usage: ./collect-metrics.sh [interval_secs] [output_file]
-# Run on the rustguac server during benchmarks.
+# Run on the mybastion server during benchmarks.
 set -e
 
 INTERVAL=${1:-5}
@@ -21,10 +22,10 @@ while true; do
     TS=$(date -Iseconds)
     NOW=$(date +%s%N)
 
-    RG_PID=$(pgrep -x rustguac 2>/dev/null | head -1)
+    RG_PID=$(pgrep -x mybastion 2>/dev/null | head -1)
     GD_PID=$(pgrep -x guacd 2>/dev/null | head -1)
 
-    # rustguac metrics
+    # mybastion metrics
     if [ -n "$RG_PID" ] && [ -d "/proc/$RG_PID" ]; then
         RG_RSS=$(awk '/VmRSS/{print $2}' /proc/$RG_PID/status 2>/dev/null || echo 0)
         RG_THR=$(awk '/Threads/{print $2}' /proc/$RG_PID/status 2>/dev/null || echo 0)

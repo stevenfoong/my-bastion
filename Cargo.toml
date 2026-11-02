@@ -1,5 +1,6 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 [package]
-name = "rustguac"
+name = "mybastion"
 version = "1.13.4"
 edition = "2021"
 description = "Lightweight Rust replacement for Apache Guacamole client"

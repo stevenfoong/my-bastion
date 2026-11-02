@@ -1,4 +1,5 @@
-// Seed a fresh rustguac with demo data, then capture the screenshots/ set.
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+// Seed a fresh mybastion with demo data, then capture the screenshots/ set.
 //
 // Output (under /out):
 //   <name>.png          aurora theme (the default)
@@ -8,7 +9,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { BASE, api, log, openPage, signIn, sleep, waitForRustguac } from './lib.mjs';
+import { BASE, api, log, openPage, signIn, sleep, waitForMy Bastion } from './lib.mjs';
 import {
   ADMIN, USERS, openMoreSessions, openShownSessions, runFinishedSessions, seedAdminExtras, seedDirectory,
 } from './seed.mjs';
@@ -38,7 +39,7 @@ async function editEntry(page, folder, entry) {
   await sleep(800);
 }
 
-// Finished sessions leave the Sessions page once rustguac's cleanup runs.
+// Finished sessions leave the Sessions page once mybastion's cleanup runs.
 async function waitForLiveOnly(context) {
   for (let i = 0; i < 90; i++) {
     const sessions = await api(context, 'GET', '/api/sessions');
@@ -153,14 +154,14 @@ async function themesComposite(browser, dir) {
 async function main() {
   const browser = await chromium.launch();
   const probe = await browser.newContext({ ignoreHTTPSErrors: true });
-  await waitForRustguac(probe.request);
+  await waitForMy Bastion(probe.request);
   await probe.close();
-  log(`rustguac is up at ${BASE}`);
+  log(`mybastion is up at ${BASE}`);
 
   const users = {};
   users[ADMIN.email] = await signIn(browser, ADMIN);
   const admin = users[ADMIN.email].context;
-  // rustguac logs in to OpenBao in the background after it starts.
+  // mybastion logs in to OpenBao in the background after it starts.
   let existing;
   for (let i = 0; !existing; i++) {
     try {
@@ -171,7 +172,7 @@ async function main() {
     }
   }
   if (existing.length) {
-    throw new Error('rustguac already has data; start from a clean stack (docker compose down -v)');
+    throw new Error('mybastion already has data; start from a clean stack (docker compose down -v)');
   }
   await seedDirectory(admin);
   await seedAdminExtras(admin);

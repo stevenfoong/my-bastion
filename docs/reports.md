@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Reports
 
-The reports page provides usage analytics and session history for your rustguac deployment. It is available to users with the **poweruser** role or higher.
+The reports page provides usage analytics and session history for your My Bastion deployment. It is available to users with the **poweruser** role or higher.
 
 ## Summary cards
 
@@ -40,7 +41,7 @@ All report endpoints require the **poweruser** role (level 3) or higher. Users w
 
 ## Session history retention
 
-Session history is retained for a configurable number of days. Old entries are automatically cleaned up once per hour. Configure this in your `config.toml`:
+Session history is retained for a configurable number of days. Old entries are automatically cleaned up once per hour. Configure this in your `mybastion.toml`:
 
 ```toml
 session_history_retention_days = 90   # default: 90, set to 0 to keep forever

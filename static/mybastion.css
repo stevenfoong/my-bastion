@@ -1,5 +1,6 @@
+/* Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. */
 /* ============================================================
-   rustguac — shared operator-console stylesheet
+   mybastion — shared operator-console stylesheet
    - 8px baseline grid for chrome controls (px units).
    - Body copy 18px, control heights 38/44/54px.
    - CSS variable theming is driven by the theme picker; only

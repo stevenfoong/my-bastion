@@ -2193,6 +2193,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "mybastion"
+version = "1.13.4"
+dependencies = [
+ "aes",
+ "assert_cmd",
+ "async-trait",
+ "axum",
+ "axum-server",
+ "base64 0.23.1",
+ "bollard",
+ "cbc",
+ "chrono",
+ "clap",
+ "futures-util",
+ "hex",
+ "hmac 0.13.0",
+ "ipnetwork",
+ "libc",
+ "openidconnect",
+ "pbkdf2",
+ "pulldown-cmark",
+ "rand 0.10.3",
+ "rcgen",
+ "reqwest",
+ "ring",
+ "rusqlite",
+ "russh",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "socket2",
+ "ssh-key 0.6.7",
+ "subtle",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "toml",
+ "tower",
+ "tower-cookies",
+ "tower-http 0.7.1",
+ "tower_governor",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "uuid",
+ "webpki-roots",
+ "zeroize",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3307,61 +3362,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rustguac"
-version = "1.13.4"
-dependencies = [
- "aes",
- "assert_cmd",
- "async-trait",
- "axum",
- "axum-server",
- "base64 0.23.1",
- "bollard",
- "cbc",
- "chrono",
- "clap",
- "futures-util",
- "hex",
- "hmac 0.13.0",
- "ipnetwork",
- "libc",
- "openidconnect",
- "pbkdf2",
- "pulldown-cmark",
- "rand 0.10.3",
- "rcgen",
- "reqwest",
- "ring",
- "rusqlite",
- "russh",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sha1 0.11.0",
- "sha2 0.11.1",
- "socket2",
- "ssh-key 0.6.7",
- "subtle",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "toml",
- "tower",
- "tower-cookies",
- "tower-http 0.7.1",
- "tower_governor",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "uuid",
- "webpki-roots",
- "zeroize",
 ]
 
 [[package]]

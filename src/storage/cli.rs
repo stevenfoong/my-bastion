@@ -1,4 +1,4 @@
-//! `rustguac storage …`: copy secrets between Vault and SQLite, rotate the
+//! `mybastion storage …`: copy secrets between Vault and SQLite, rotate the
 //! SQLite KEK, and write a single secret (e.g. the LUKS drive key).
 
 use std::sync::Arc;
@@ -35,7 +35,7 @@ pub enum StorageCommand {
         new_kek_source: String,
     },
     /// Write a secret, replacing what is there: e.g.
-    /// `storage put rustguac/luks key=@/root/luks.key`. FIELD=@FILE reads the
+    /// `storage put mybastion/luks key=@/root/luks.key`. FIELD=@FILE reads the
     /// value from a file, which keeps it out of shell history.
     Put {
         /// Path under the KV mount
@@ -331,27 +331,27 @@ mod tests {
 
     #[tokio::test]
     async fn round_trip_copy_gives_identical_documents() {
-        let dir = std::env::temp_dir().join(format!("rustguac-migrate-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("mybastion-migrate-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let a = temp_store(&dir, "a.db");
         let b = temp_store(&dir, "b.db");
         let c = temp_store(&dir, "c.db");
         for (p, v) in [
             (
-                "rustguac/shared/Prod/.config",
+                "mybastion/shared/Prod/.config",
                 json!({"allowed_groups": ["ops"]}),
             ),
             (
-                "rustguac/shared/Prod/.defaults",
+                "mybastion/shared/Prod/.defaults",
                 json!({"ssh": {"username": "u"}}),
             ),
             (
-                "rustguac/shared/Prod/web01",
+                "mybastion/shared/Prod/web01",
                 json!({"type": "rdp", "password": "p"}),
             ),
-            ("rustguac/shared/Prod/Web/web02", json!({"type": "ssh"})),
-            ("rustguac/instance/node1/Lab/box", json!({"type": "vnc"})),
-            ("rustguac/users/a_at_b.c", json!({"corp_pw": "x"})),
+            ("mybastion/shared/Prod/Web/web02", json!({"type": "ssh"})),
+            ("mybastion/instance/node1/Lab/box", json!({"type": "vnc"})),
+            ("mybastion/users/a_at_b.c", json!({"corp_pw": "x"})),
             ("other/not-copied", json!({})),
         ] {
             a.put(p, &v, None).await.unwrap();
@@ -360,7 +360,7 @@ mod tests {
             overwrite: false,
             dry_run: false,
         };
-        let r1 = copy_tree(&a, "rustguac", &b, "rg2", opts).await.unwrap();
+        let r1 = copy_tree(&a, "mybastion", &b, "rg2", opts).await.unwrap();
         assert_eq!(
             r1,
             CopyReport {
@@ -369,18 +369,18 @@ mod tests {
                 missing: 0
             }
         );
-        copy_tree(&b, "rg2", &c, "rustguac", opts).await.unwrap();
-        assert_eq!(dump(&a, "rustguac").await, dump(&c, "rustguac").await);
+        copy_tree(&b, "rg2", &c, "mybastion", opts).await.unwrap();
+        assert_eq!(dump(&a, "mybastion").await, dump(&c, "mybastion").await);
         assert!(c.get("other/not-copied").await.unwrap().is_none());
 
         // Again: everything exists, so nothing is written without --overwrite.
         b.put("rg2/shared/Prod/web01", &json!({"changed": true}), None)
             .await
             .unwrap();
-        let r2 = copy_tree(&b, "rg2", &c, "rustguac", opts).await.unwrap();
+        let r2 = copy_tree(&b, "rg2", &c, "mybastion", opts).await.unwrap();
         assert_eq!((r2.copied, r2.skipped), (0, 6));
         assert_eq!(
-            c.get("rustguac/shared/Prod/web01")
+            c.get("mybastion/shared/Prod/web01")
                 .await
                 .unwrap()
                 .unwrap()
@@ -391,9 +391,9 @@ mod tests {
             overwrite: true,
             dry_run: false,
         };
-        copy_tree(&b, "rg2", &c, "rustguac", over).await.unwrap();
+        copy_tree(&b, "rg2", &c, "mybastion", over).await.unwrap();
         assert_eq!(
-            c.get("rustguac/shared/Prod/web01")
+            c.get("mybastion/shared/Prod/web01")
                 .await
                 .unwrap()
                 .unwrap()
@@ -408,13 +408,13 @@ mod tests {
             dry_run: true,
         };
         assert_eq!(
-            copy_tree(&a, "rustguac", &d, "rustguac", dry)
+            copy_tree(&a, "mybastion", &d, "mybastion", dry)
                 .await
                 .unwrap()
                 .copied,
             6
         );
-        assert!(dump(&d, "rustguac").await.is_empty());
+        assert!(dump(&d, "mybastion").await.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

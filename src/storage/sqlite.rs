@@ -86,7 +86,7 @@ impl SqliteStore {
                 let schema = meta("schema_version")?.unwrap_or_default();
                 if schema != SCHEMA_VERSION.as_bytes() {
                     return Err(backend(format!(
-                        "{} has schema version {}, this rustguac reads {}",
+                        "{} has schema version {}, this mybastion reads {}",
                         path.display(),
                         String::from_utf8_lossy(&schema),
                         SCHEMA_VERSION
@@ -258,7 +258,7 @@ mod tests {
     impl TempDb {
         fn new() -> Self {
             let dir =
-                std::env::temp_dir().join(format!("rustguac-secrets-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("mybastion-secrets-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self { dir }
         }
@@ -464,7 +464,7 @@ mod tests {
 
     fn client(db: &TempDb) -> VaultClient {
         let store = SqliteStore::open(&db.path(), &kek()).unwrap();
-        VaultClient::with_store(Arc::new(store), "rustguac".into(), Some("node1".into()))
+        VaultClient::with_store(Arc::new(store), "mybastion".into(), Some("node1".into()))
     }
 
     fn rdp(host: &str) -> AddressBookEntry {

@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # RDP Video Performance
 
-Guide to optimizing RDP video quality and frame rate through rustguac, particularly for video monitoring workloads.
+Guide to optimizing RDP video quality and frame rate through My Bastion, particularly for video monitoring workloads.
 
 ## Connections Settings
 
@@ -75,10 +76,10 @@ Debian 13 (trixie) ships xrdp 0.10.x, but the stock package does **not** include
 
 ### Quick Setup
 
-A single setup script handles everything — desktop, audio, xrdp rebuild, and configuration. Run **on the xrdp target machine** (not the rustguac server):
+A single setup script handles everything — desktop, audio, xrdp rebuild, and configuration. Run **on the xrdp target machine** (not the My Bastion server):
 
 ```bash
-wget -O setup-xrdp-gfx.sh https://raw.githubusercontent.com/sol1/rustguac/main/contrib/setup-xrdp-gfx.sh
+wget -O setup-xrdp-gfx.sh https://raw.githubusercontent.com/stevenfoong/my-bastion/main/contrib/setup-xrdp-gfx.sh
 sudo bash setup-xrdp-gfx.sh --desktop mate
 ```
 
@@ -239,7 +240,7 @@ For video monitoring workloads, a minimum of 20 Mbps per session is recommended.
 1. **RDP Server** sends screen updates (Planar/RemoteFX codec)
 2. **FreeRDP** (inside guacd) decodes to bitmaps
 3. **guacd** re-encodes dirty regions as JPEG, WebP, or PNG based on content type and network conditions
-4. **rustguac** relays over WebSocket to the browser
+4. **My Bastion** relays over WebSocket to the browser
 5. **Browser** decodes and renders to HTML Canvas
 
 guacd automatically adapts encoding quality based on network lag:
@@ -255,7 +256,7 @@ When the RDP server sends H.264 (AVC420/AVC444), guacd passes the raw H.264 NAL 
 2. **FreeRDP** (inside guacd) receives the H.264 SurfaceCommand
 3. **guacd** copies the raw NAL data out of the command and **skips the GDI decode** for it entirely
 4. During frame flush, guacd sends the raw H.264 data as a custom `h264` instruction
-5. **rustguac** relays over WebSocket to the browser
+5. **My Bastion** relays over WebSocket to the browser
 6. **Browser** decodes H.264 using the [WebCodecs VideoDecoder API](https://developer.mozilla.org/en-US/docs/Web/API/VideoDecoder) (hardware-accelerated)
 
 Only H.264 commands skip the decode; RemoteFX, planar and progressive still

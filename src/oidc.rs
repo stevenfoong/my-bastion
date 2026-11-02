@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! OIDC authentication — login, callback, logout handlers.
 
 use crate::config::OidcConfig;
@@ -286,7 +287,7 @@ pub async fn login(State(oidc): State<OidcState>, Query(params): Query<LoginPara
 
     // Set state in a cookie so we can verify on callback, then redirect
     let state_cookie = format!(
-        "rustguac_oidc_state={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
+        "mybastion_oidc_state={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
         state_key
     );
 
@@ -295,7 +296,7 @@ pub async fn login(State(oidc): State<OidcState>, Query(params): Query<LoginPara
     // Store post-login redirect URL in a cookie if provided and safe
     if let Some(next) = params.next.as_deref().and_then(safe_next) {
         let next_cookie = format!(
-            "rustguac_next={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
+            "mybastion_next={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600",
             next
         );
         cookies.push((header::SET_COOKIE, next_cookie));
@@ -350,12 +351,12 @@ pub async fn callback(
     };
 
     // Verify the state cookie matches the state query parameter (binds flow to browser)
-    let state_cookie = extract_cookie_from_headers(&headers, "rustguac_oidc_state");
+    let state_cookie = extract_cookie_from_headers(&headers, "mybastion_oidc_state");
     if state_cookie.as_deref() != Some(&state) {
         // Distinguish "cookie absent" from "cookie present but different" and
         // surface request context — this is the usual point of failure when the
         // browser doesn't send the state cookie back on the callback (e.g. the
-        // proxy→rustguac leg running HTTPS dropping cookies, a SameSite
+        // proxy→mybastion leg running HTTPS dropping cookies, a SameSite
         // interaction, or login host != redirect_uri host).
         let present_cookies = cookie_names(&headers);
         tracing::warn!(
@@ -463,8 +464,8 @@ pub async fn callback(
             );
             if kid_known == Some(false) {
                 tracing::error!(
-                    "The ID token is signed with a key the provider did not publish when rustguac \
-                     started. If the provider has rotated its keys since, restart rustguac. On \
+                    "The ID token is signed with a key the provider did not publish when mybastion \
+                     started. If the provider has rotated its keys since, restart mybastion. On \
                      Microsoft Entra ID, an app with claims mapping or a custom signing \
                      certificate signs with an app-specific key that is only listed under the \
                      ?appid=<client-id> key set."
@@ -563,11 +564,11 @@ pub async fn callback(
         Ok(Ok(db::OidcLogin::SubjectMismatch)) => {
             // Same email, different provider account: possibly someone else
             // claiming the address, or a provider migration that needs
-            // `rustguac reset-oidc-subject`.
+            // `mybastion reset-oidc-subject`.
             tracing::warn!(
                 email = %email,
                 "OIDC login rejected: this email is bound to a different OIDC subject \
-                 (if the identity provider changed, run rustguac reset-oidc-subject)"
+                 (if the identity provider changed, run mybastion reset-oidc-subject)"
             );
             return Redirect::to("/?sso_error=account_mismatch").into_response();
         }
@@ -638,19 +639,19 @@ pub async fn callback(
     tracing::info!(email = %email, role = %effective_role, "OIDC login successful");
 
     // Check for post-login redirect cookie
-    let redirect_to = extract_cookie_from_headers(&headers, "rustguac_next")
+    let redirect_to = extract_cookie_from_headers(&headers, "mybastion_next")
         .and_then(|n| safe_next(&n).map(str::to_string))
         .unwrap_or_else(|| "/addressbook.html".to_string());
 
     // Set session cookie and redirect; clear OIDC state and next cookies
     let session_cookie = format!(
-        "rustguac_session={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
+        "mybastion_session={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
         session_token, ttl_secs
     );
     let clear_state_cookie =
-        "rustguac_oidc_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
+        "mybastion_oidc_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
     let clear_next_cookie =
-        "rustguac_next=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
+        "mybastion_next=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
 
     (
         AppendHeaders([
@@ -669,14 +670,14 @@ pub async fn logout(
     request: axum::extract::Request,
 ) -> Response {
     // Try to delete the session from DB
-    if let Some(token) = extract_cookie_value(&request, "rustguac_session") {
+    if let Some(token) = extract_cookie_value(&request, "mybastion_session") {
         let db_clone = database.clone();
         let _ =
             tokio::task::spawn_blocking(move || db::delete_auth_session(&db_clone, &token)).await;
     }
 
     let clear_cookie =
-        "rustguac_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
+        "mybastion_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
 
     (
         [(header::SET_COOKIE, clear_cookie)],
@@ -823,7 +824,7 @@ fn extract_cookie_value(request: &axum::extract::Request, name: &str) -> Option<
 /// percent-decoded from the query both become `//evil.com`, another site,
 /// after a check for a leading `//` has passed them. Requiring visible ASCII
 /// with no backslash closes those, and also keeps the value safe to place in
-/// the `rustguac_next` cookie and the Location header unescaped (no `;`,
+/// the `mybastion_next` cookie and the Location header unescaped (no `;`,
 /// `,`, quotes or spaces). Legitimate targets are already percent-encoded.
 fn safe_next(next: &str) -> Option<&str> {
     let bytes = next.as_bytes();

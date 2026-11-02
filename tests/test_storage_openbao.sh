@@ -2,11 +2,11 @@
 #
 # Vault <-> SQLite migration against a real OpenBao, run in dev mode (in
 # memory, gone on exit):
-#   1. rustguac on OpenBao writes folders, entries and defaults over the
+#   1. mybastion on OpenBao writes folders, entries and defaults over the
 #      REST API; `storage put --backend vault` adds a user credential and a
-#      LUKS key. Every document under secret/rustguac is dumped.
+#      LUKS key. Every document under secret/mybastion is dumped.
 #   2. `storage migrate --from vault --to sqlite` (dry run first), then
-#      rustguac serves the entries from SQLite.
+#      mybastion serves the entries from SQLite.
 #   3. A fresh, empty OpenBao; `storage migrate --from sqlite --to vault`.
 #      The documents must match step 1 exactly, and a second migrate
 #      without --overwrite must skip all of them.
@@ -23,8 +23,8 @@ PORT="${PORT:-18090}"
 U="http://127.0.0.1:$PORT"
 export BAO_ADDR="http://127.0.0.1:${BAO_PORT:-18200}" BAO_TOKEN="root-e2e"
 cargo build -q || exit 1
-BIN="$PWD/target/debug/rustguac"
-W=$(mktemp -d /tmp/rustguac-openbao.XXXXXX)
+BIN="$PWD/target/debug/mybastion"
+W=$(mktemp -d /tmp/mybastion-openbao.XXXXXX)
 PID=
 BAO_PID=
 cleanup() {
@@ -39,7 +39,7 @@ check() {
     if [ "$1" = "$2" ]; then echo "ok   $3"; else echo "FAIL $3: got '$1' want '$2'"; FAILED=1; fi
 }
 
-# A fresh dev OpenBao with an AppRole limited to secret/rustguac/*.
+# A fresh dev OpenBao with an AppRole limited to secret/mybastion/*.
 start_bao() {
     if [ -n "$BAO_PID" ]; then kill "$BAO_PID"; wait "$BAO_PID" 2>/dev/null; fi
     bao server -dev -dev-root-token-id="$BAO_TOKEN" -dev-listen-address="${BAO_ADDR#http://}" \
@@ -50,20 +50,20 @@ start_bao() {
         'import json,sys; m=json.load(sys.stdin)["secret/"]; assert m["type"]=="kv" and m["options"]["version"]=="2"' \
         || { echo "dev OpenBao has no kv-v2 at secret/"; exit 1; }
     bao auth enable approle >/dev/null
-    bao policy write rustguac - >/dev/null <<'P'
-path "secret/data/rustguac/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "secret/metadata/rustguac/*" { capabilities = ["read", "list", "delete"] }
+    bao policy write mybastion - >/dev/null <<'P'
+path "secret/data/mybastion/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "secret/metadata/mybastion/*" { capabilities = ["read", "list", "delete"] }
 P
-    bao write auth/approle/role/rustguac token_policies=rustguac token_ttl=1h >/dev/null
-    ROLE_ID=$(bao read -field=role_id auth/approle/role/rustguac/role-id)
-    VAULT_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/rustguac/secret-id)
+    bao write auth/approle/role/mybastion token_policies=mybastion token_ttl=1h >/dev/null
+    ROLE_ID=$(bao read -field=role_id auth/approle/role/mybastion/role-id)
+    VAULT_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/mybastion/secret-id)
     export VAULT_SECRET_ID
 }
 
 write_config() {  # $1: vault | sqlite
     cat > "$W/config.toml" <<EOF
 listen_addr = "127.0.0.1:$PORT"
-db_path = "$W/rustguac.db"
+db_path = "$W/mybastion.db"
 static_path = "$PWD/static"
 recording_path = "$W/rec"
 
@@ -80,7 +80,7 @@ instance_name = "node1"
 EOF
 }
 
-# Every document under secret/rustguac as sorted JSON, read with the root token.
+# Every document under secret/mybastion as sorted JSON, read with the root token.
 dump() {
     python3 - <<'PY'
 import json, os, urllib.error, urllib.request
@@ -93,7 +93,7 @@ def call(method, path):
         if e.code == 404:
             return None
         raise
-out, dirs = {}, ["rustguac"]
+out, dirs = {}, ["mybastion"]
 while dirs:
     d = dirs.pop()
     for k in ((call("LIST", "secret/metadata/" + d) or {}).get("data") or {}).get("keys", []):
@@ -126,7 +126,7 @@ write_config vault
 KEY=$("$BIN" --config "$W/config.toml" add-admin --name e2e 2>/dev/null | sed -n 's/^API Key: //p')
 H="X-API-Key: $KEY"
 
-echo "== rustguac on OpenBao"
+echo "== mybastion on OpenBao"
 serve
 check "$(grep -c "Vault backend 'default' initialized" "$W/server.log")" 1 "server logged in to OpenBao"
 check "$(send /api/addressbook/folders '{"name":"Prod","allowed_groups":["ops"],"description":"prod"}')" 201 "create folder Prod"
@@ -140,12 +140,12 @@ check "$(send /api/addressbook/folders/instance/Lab/entries \
     '{"name":"vnc1","type":"vnc","hostname":"10.9.0.1","port":5900,"password":"vncpw"}')" 201 "create instance VNC entry"
 check "$(send /api/addressbook/folders/shared/Prod/defaults '{"ssh":{"username":"deploy","password":"defpw"}}' PUT)" 200 "set folder defaults"
 stop
-"$BIN" --config "$W/config.toml" storage put --backend vault rustguac/users/a_at_b.c corp_pw=userpw >/dev/null 2>&1
+"$BIN" --config "$W/config.toml" storage put --backend vault mybastion/users/a_at_b.c corp_pw=userpw >/dev/null 2>&1
 printf 'luks-key-material' > "$W/luks.key"
-"$BIN" --config "$W/config.toml" storage put --backend vault rustguac/luks "key=@$W/luks.key" >/dev/null 2>&1
-check "$(bao kv get -field=hostname secret/rustguac/shared/Prod/win01)" 10.0.0.5 "entry is in OpenBao"
-check "$(bao kv get -field=hostname secret/rustguac/instance/node1/Lab/vnc1)" 10.9.0.1 "instance entry is under instance/node1"
-check "$(bao kv get -field=key secret/rustguac/luks)" luks-key-material "storage put wrote the LUKS key"
+"$BIN" --config "$W/config.toml" storage put --backend vault mybastion/luks "key=@$W/luks.key" >/dev/null 2>&1
+check "$(bao kv get -field=hostname secret/mybastion/shared/Prod/win01)" 10.0.0.5 "entry is in OpenBao"
+check "$(bao kv get -field=hostname secret/mybastion/instance/node1/Lab/vnc1)" 10.9.0.1 "instance entry is under instance/node1"
+check "$(bao kv get -field=key secret/mybastion/luks)" luks-key-material "storage put wrote the LUKS key"
 dump > "$W/A.json"
 N=$(count < "$W/A.json")
 check "$N" 9 "documents in OpenBao"

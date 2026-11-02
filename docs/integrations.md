@@ -1,8 +1,9 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Integrations
 
 ## OIDC Single Sign-On
 
-rustguac supports OpenID Connect for user authentication. Any OIDC provider works: Authentik, Keycloak, Okta, Azure AD, Google, etc.
+My Bastion supports OpenID Connect for user authentication. Any OIDC provider works: Authentik, Keycloak, Okta, Azure AD, Google, etc.
 
 ### Setup
 
@@ -13,7 +14,7 @@ rustguac supports OpenID Connect for user authentication. Any OIDC provider work
 
 ```toml
 [oidc]
-issuer_url = "https://authentik.example.com/application/o/rustguac/"
+issuer_url = "https://authentik.example.com/application/o/mybastion/"
 client_id = "your-client-id"
 client_secret = "your-client-secret"
 redirect_uri = "https://your-host/auth/callback"
@@ -28,13 +29,13 @@ The `client_secret` can be provided via the `OIDC_CLIENT_SECRET` environment var
 
 ```bash
 # For systemd
-echo 'OIDC_CLIENT_SECRET=your-secret' >> /opt/rustguac/env
-chmod 600 /opt/rustguac/env
+echo 'OIDC_CLIENT_SECRET=your-secret' >> /etc/mybastion/env
+chmod 600 /etc/mybastion/env
 ```
 
 ### OIDC groups
 
-rustguac extracts group memberships from the OIDC ID token. The claim name is configurable (default: `groups`). Groups are used for:
+My Bastion extracts group memberships from the OIDC ID token. The claim name is configurable (default: `groups`). Groups are used for:
 
 - **Automatic role assignment** via group-to-role mappings (see [Roles and Access Control](roles-and-access-control.md))
 - **Connections folder access** — folders can be restricted to specific OIDC groups
@@ -50,7 +51,7 @@ extra_scopes = ["groups"]
 1. User clicks "Login" on the web UI
 2. Redirected to OIDC provider with PKCE challenge
 3. After authentication, provider redirects to `/auth/callback`
-4. rustguac validates the token (PKCE + nonce), extracts user info and groups
+4. My Bastion validates the token (PKCE + nonce), extracts user info and groups
 5. User is created or updated in the database
 6. Group-to-role mappings are evaluated (highest matching role wins)
 7. A session cookie is set and the user is redirected to the application
@@ -61,7 +62,7 @@ extra_scopes = ["groups"]
 
 ### Authentik setup guide
 
-[Authentik](https://goauthentik.io/) is a recommended open-source identity provider that works well with rustguac.
+[Authentik](https://goauthentik.io/) is a recommended open-source identity provider that works well with mybastion.
 
 **1. Create a `groups` scope mapping** in Authentik (skip if your instance already has one):
 
@@ -69,9 +70,9 @@ Authentik does not ship a `groups` scope mapping by default, so the `groups` sco
 
 - Go to **Customisation > Property Mappings > Create**
 - Type: **Scope Mapping** (under OAuth2/OpenID)
-- Name: `rustguac groups`
+- Name: `mybastion groups`
 - Scope name: `groups`
-- Description (optional): `Group memberships for rustguac`
+- Description (optional): `Group memberships for mybastion`
 - Expression:
 
   ```python
@@ -80,15 +81,15 @@ Authentik does not ship a `groups` scope mapping by default, so the `groups` sco
   }
   ```
 
-This creates a `groups` claim in the ID token containing the user's Authentik group names. Used by rustguac for group-to-role mapping (step 7).
+This creates a `groups` claim in the ID token containing the user's Authentik group names. Used by My Bastion for group-to-role mapping (step 7).
 
 **2. Create an `email` scope mapping that marks the email verified:**
 
-Authentik's default `email` mapping sends `"email_verified": False` for every user, and rustguac refuses a login whose email the provider says is unverified (see [How a login is matched to a user](roles-and-access-control.md#how-a-login-is-matched-to-a-user)). Without this step every login fails with "Your identity provider says your email address is not verified".
+Authentik's default `email` mapping sends `"email_verified": False` for every user, and My Bastion refuses a login whose email the provider says is unverified (see [How a login is matched to a user](roles-and-access-control.md#how-a-login-is-matched-to-a-user)). Without this step every login fails with "Your identity provider says your email address is not verified".
 
 - Go to **Customisation > Property Mappings > Create**
 - Type: **Scope Mapping** (under OAuth2/OpenID)
-- Name: `rustguac email (verified)`
+- Name: `mybastion email (verified)`
 - Scope name: `email`
 - Expression:
 
@@ -99,59 +100,59 @@ Authentik's default `email` mapping sends `"email_verified": False` for every us
   }
   ```
 
-This tells rustguac the address can be trusted, so only use it if your users can't change their own email in Authentik. Check **System > Settings > Allow users to change email** is off, or that every account's email is set by an admin or a trusted source such as your directory.
+This tells My Bastion the address can be trusted, so only use it if your users can't change their own email in Authentik. Check **System > Settings > Allow users to change email** is off, or that every account's email is set by an admin or a trusted source such as your directory.
 
-If you can't change the mapping, `allow_unverified_email = true` under `[oidc]` in rustguac's config accepts the logins instead, with the same caveat.
+If you can't change the mapping, `allow_unverified_email = true` under `[oidc]` in My Bastion's config accepts the logins instead, with the same caveat.
 
 **3. Create a provider** in Authentik:
 
 - Go to **Applications > Providers > Create**
 - Select **OAuth2/OpenID Connect**
-- Name: `rustguac`
+- Name: `mybastion`
 - Authorization flow: pick your default authorization flow (e.g., `default-provider-authorization-implicit-consent`)
 - Client type: **Confidential**
-- Redirect URIs: `https://your-rustguac-host/auth/callback`
+- Redirect URIs: `https://your-mybastion-host/auth/callback`
 - Under **Advanced protocol settings**:
-  - Scopes: select `openid` and `profile`, **the `rustguac email (verified)` mapping from step 2 instead of the default `email` one**, and the `rustguac groups` mapping from step 1
+  - Scopes: select `openid` and `profile`, **the `mybastion email (verified)` mapping from step 2 instead of the default `email` one**, and the `mybastion groups` mapping from step 1
 
 **4. Create an application:**
 
 - Go to **Applications > Applications > Create**
-- Name: `rustguac`
-- Slug: `rustguac`
+- Name: `mybastion`
+- Slug: `mybastion`
 - Provider: select the provider you just created
-- Launch URL: `https://your-rustguac-host/`
+- Launch URL: `https://your-mybastion-host/`
 
 **5. Note the provider details:**
 
 - Go back to the provider and note the **Client ID** and **Client Secret**
-- The **OpenID Configuration Issuer** will be: `https://authentik.example.com/application/o/rustguac/`
+- The **OpenID Configuration Issuer** will be: `https://authentik.example.com/application/o/mybastion/`
 
-**6. Configure rustguac:**
+**6. Configure mybastion:**
 
 ```toml
 [oidc]
-issuer_url = "https://authentik.example.com/application/o/rustguac/"
+issuer_url = "https://authentik.example.com/application/o/mybastion/"
 client_id = "your-client-id"
-redirect_uri = "https://your-rustguac-host/auth/callback"
+redirect_uri = "https://your-mybastion-host/auth/callback"
 default_role = "operator"
 groups_claim = "groups"
 extra_scopes = ["groups"]
 ```
 
 ```bash
-echo 'OIDC_CLIENT_SECRET=your-client-secret' >> /opt/rustguac/env
-chmod 600 /opt/rustguac/env
-sudo systemctl restart rustguac
+echo 'OIDC_CLIENT_SECRET=your-client-secret' >> /etc/mybastion/env
+chmod 600 /etc/mybastion/env
+sudo systemctl restart mybastion
 ```
 
 **7. (Optional) Set up group-to-role mappings:**
 
-Create groups in Authentik (e.g., `rustguac-admins`, `rustguac-operators`) and assign users to them. Then configure group-to-role mappings in the rustguac Admin page so that group membership automatically assigns roles on login. See [Roles and Access Control](roles-and-access-control.md) for details.
+Create groups in Authentik (e.g., `mybastion-admins`, `mybastion-operators`) and assign users to them. Then configure group-to-role mappings in the My Bastion Admin page so that group membership automatically assigns roles on login. See [Roles and Access Control](roles-and-access-control.md) for details.
 
 ### Microsoft Entra ID (Azure AD) setup guide
 
-Entra ID works with rustguac via OIDC, but the way it exposes group
+Entra ID works with My Bastion via OIDC, but the way it exposes group
 memberships is different from Authentik / Keycloak / JumpCloud and trips
 people up.
 
@@ -167,10 +168,10 @@ AADSTS650053: The application asked for scope 'groups' that doesn't exist on the
 **1. Register the application** in the Entra portal:
 
 - Go to **Microsoft Entra ID > App registrations > New registration**
-- Name: `rustguac` (or whatever you prefer)
+- Name: `mybastion` (or whatever you prefer)
 - Supported account types: **Single tenant** (or whichever fits your
   deployment)
-- Redirect URI: type **Web**, value `https://your-rustguac-host/auth/callback`
+- Redirect URI: type **Web**, value `https://your-mybastion-host/auth/callback`
 - Note the **Application (client) ID** and **Directory (tenant) ID**
 
 **2. Create a client secret:**
@@ -193,16 +194,16 @@ This is the step that replaces Authentik's `groups` scope.
   **object IDs** (recommended; stable across rename), or expand the
   optional settings and pick **sAMAccountName** if you'd prefer group
   names. If you pick names, the group-to-role mappings you configure in
-  the rustguac Admin page must reference those names.
+  the My Bastion Admin page must reference those names.
 - Save
 
-**4. Configure rustguac:**
+**4. Configure mybastion:**
 
 ```toml
 [oidc]
 issuer_url = "https://login.microsoftonline.com/{tenant-id}/v2.0"
 client_id = "{application-client-id}"
-redirect_uri = "https://your-rustguac-host/auth/callback"
+redirect_uri = "https://your-mybastion-host/auth/callback"
 default_role = "operator"
 groups_claim = "groups"
 # DO NOT set extra_scopes = ["groups"] for Entra. Groups come from the
@@ -211,21 +212,21 @@ groups_claim = "groups"
 ```
 
 ```bash
-echo 'OIDC_CLIENT_SECRET={your-client-secret}' >> /opt/rustguac/env
-chmod 600 /opt/rustguac/env
-sudo systemctl restart rustguac
+echo 'OIDC_CLIENT_SECRET={your-client-secret}' >> /etc/mybastion/env
+chmod 600 /etc/mybastion/env
+sudo systemctl restart mybastion
 ```
 
 Replace `{tenant-id}` with your Directory (tenant) ID from step 1. The
 `{tenant-id}/v2.0` issuer URL is required (the v1 endpoint won't return
-the claims rustguac expects).
+the claims My Bastion expects).
 
 **5. (Optional) Group-to-role mappings:**
 
 After your first successful login, the groups you belong to appear in the
-**seen groups** list on the rustguac Admin page. From there you can map
+**seen groups** list on the My Bastion Admin page. From there you can map
 group object IDs (or names, if you chose sAMAccountName in step 3) to
-rustguac roles. See [Roles and Access Control](roles-and-access-control.md).
+My Bastion roles. See [Roles and Access Control](roles-and-access-control.md).
 
 ### Troubleshooting
 
@@ -245,7 +246,7 @@ rustguac roles. See [Roles and Access Control](roles-and-access-control.md).
   rather than **App registrations**: Entra then signs tokens with an
   app-specific key that the standard key set does not contain. Create
   the app as in step 1. A restart also rules out a key rotation since
-  rustguac started.
+  My Bastion started.
 - **Login succeeds but `default_role` doesn't get applied**: `default_role`
   only fires when no group-to-role mapping matches. Configure mappings on
   the Admin page (or, for a single-user test, set `default_role = "admin"`
@@ -253,28 +254,28 @@ rustguac roles. See [Roles and Access Control](roles-and-access-control.md).
 
 ### Outbound HTTP proxy (egress)
 
-If rustguac has to reach your identity provider through an outbound HTTP proxy (for example Squid), no code change or config option is needed. The OIDC client honours the standard proxy environment variables, so set them in the service environment and restart.
+If My Bastion has to reach your identity provider through an outbound HTTP proxy (for example Squid), no code change or config option is needed. The OIDC client honours the standard proxy environment variables, so set them in the service environment and restart.
 
 ```bash
 # For systemd (same env file as the client secret above)
-cat >> /opt/rustguac/env <<'EOF'
+cat >> /etc/mybastion/env <<'EOF'
 HTTPS_PROXY=http://squid.example.internal:3128
 HTTP_PROXY=http://squid.example.internal:3128
 NO_PROXY=127.0.0.1,localhost,.internal
 EOF
-systemctl restart rustguac
+systemctl restart mybastion
 ```
 
-The proxy URL scheme is `http://` (that is your connection to Squid), even though the OIDC issuer is `https`. rustguac reaches an `https` issuer through the proxy with an HTTP `CONNECT` tunnel, which Squid allows by default. The variables are read once when rustguac builds its HTTP client at startup, so a restart is required after changing them.
+The proxy URL scheme is `http://` (that is your connection to Squid), even though the OIDC issuer is `https`. My Bastion reaches an `https` issuer through the proxy with an HTTP `CONNECT` tunnel, which Squid allows by default. The variables are read once when My Bastion builds its HTTP client at startup, so a restart is required after changing them.
 
 Two things to watch:
 
-- **Vault/OpenBao egress uses the same variables.** rustguac's Vault client shares the proxy configuration, so a service-wide `HTTPS_PROXY` also routes Vault traffic through Squid. If your Vault is internal, add its host to `NO_PROXY` (as with `.internal` above). Connections to guacd are local TCP and are never proxied.
-- **TLS interception (SSL bump).** If Squid re-signs TLS, rustguac must trust Squid's CA. Either add it to the system trust store (`update-ca-certificates`) or point rustguac at it directly:
+- **Vault/OpenBao egress uses the same variables.** My Bastion's Vault client shares the proxy configuration, so a service-wide `HTTPS_PROXY` also routes Vault traffic through Squid. If your Vault is internal, add its host to `NO_PROXY` (as with `.internal` above). Connections to guacd are local TCP and are never proxied.
+- **TLS interception (SSL bump).** If Squid re-signs TLS, My Bastion must trust Squid's CA. Either add it to the system trust store (`update-ca-certificates`) or point My Bastion at it directly:
 
   ```toml
   [oidc]
-  ca_cert = "/etc/rustguac/squid-ca.pem"
+  ca_cert = "/etc/mybastion/squid-ca.pem"
   ```
 
   Do not use `tls_skip_verify = true` to work around a bump: it disables certificate verification entirely and exposes your `client_secret` and tokens to man-in-the-middle. If Squid is a plain `CONNECT` tunnel with no bump, the provider's certificate passes through end to end and nothing extra is needed.
@@ -283,7 +284,7 @@ Two things to watch:
 
 ## Vault / OpenBao Connections
 
-The connections feature stores connection entries in [HashiCorp Vault](https://www.vaultproject.io/) or [OpenBao](https://openbao.org/) KV v2. Credentials are read server-side and never sent to the browser. **Either Vault or OpenBao is required for the connections feature** (entries, folders, the Connections page); without it rustguac falls back to ad-hoc connections only, through **Connect to a host** (beside the search box on every page).
+The connections feature stores connection entries in [HashiCorp Vault](https://www.vaultproject.io/) or [OpenBao](https://openbao.org/) KV v2. Credentials are read server-side and never sent to the browser. **Either Vault or OpenBao is required for the connections feature** (entries, folders, the Connections page); without it My Bastion falls back to ad-hoc connections only, through **Connect to a host** (beside the search box on every page).
 
 ### Quickstart script
 
@@ -293,7 +294,7 @@ For a fresh single-host install, `contrib/vault-quickstart.sh` automates the man
 |------|-------------|------------|
 | (default) | Provision an existing Vault using `$VAULT_ADDR` and `$VAULT_TOKEN` | Already-deployed Vault |
 | `--dev`   | Spawn an in-memory dev-mode server and provision it | Demos, throwaway development |
-| `--local` | Install Vault or OpenBao as a systemd service with file storage and on-disk auto-unseal | Single-host rustguac deployments |
+| `--local` | Install Vault or OpenBao as a systemd service with file storage and on-disk auto-unseal | Single-host My Bastion deployments |
 
 ```bash
 # Bootstrap an existing Vault:
@@ -308,9 +309,9 @@ sudo ./contrib/vault-quickstart.sh --local
 sudo ./contrib/vault-quickstart.sh --cli bao --local
 ```
 
-The script does **not** install the Vault or OpenBao binary itself — install one from your distribution or the upstream packages first. After it runs, the script prints the `[vault]` block to drop into `config.toml` and the `VAULT_SECRET_ID` line for the systemd env file.
+The script does **not** install the Vault or OpenBao binary itself — install one from your distribution or the upstream packages first. After it runs, the script prints the `[vault]` block to drop into `mybastion.toml` and the `VAULT_SECRET_ID` line for the systemd env file.
 
-> **`--local` security caveat:** the unseal key is stored on disk at `/etc/vault.d/unseal-key` (or `/etc/openbao/unseal-key`) mode 0400 root:root, and a `SECURITY.txt` file is written next to it. Anyone with root or read access to that file owns the secret store. This trade is fine for single-host rustguac boxes (where root compromise already means total compromise) but unacceptable for higher-stakes deployments. For real production use cloud-KMS auto-unseal: [Vault](https://developer.hashicorp.com/vault/docs/configuration/seal) | [OpenBao](https://openbao.org/docs/configuration/seal/).
+> **`--local` security caveat:** the unseal key is stored on disk at `/etc/vault.d/unseal-key` (or `/etc/openbao/unseal-key`) mode 0400 root:root, and a `SECURITY.txt` file is written next to it. Anyone with root or read access to that file owns the secret store. This trade is fine for single-host My Bastion boxes (where root compromise already means total compromise) but unacceptable for higher-stakes deployments. For real production use cloud-KMS auto-unseal: [Vault](https://developer.hashicorp.com/vault/docs/configuration/seal) | [OpenBao](https://openbao.org/docs/configuration/seal/).
 
 ### Vault setup
 
@@ -322,12 +323,12 @@ The manual steps below are equivalent to what `vault-quickstart.sh` automates. U
 vault secrets enable -path=secret kv-v2
 ```
 
-**2. Create a policy** for rustguac:
+**2. Create a policy** for mybastion:
 
 ```bash
-vault policy write rustguac - <<'EOF'
+vault policy write mybastion - <<'EOF'
 # Connections entries: create, read, update, soft-delete
-path "secret/data/rustguac/*" {
+path "secret/data/mybastion/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
@@ -335,7 +336,7 @@ path "secret/data/rustguac/*" {
 # - "list" + "read": browse the connections
 # - "delete": permanently remove entries and folders
 #   (KV v2 permanent deletes go through the metadata/ path, not data/)
-path "secret/metadata/rustguac/*" {
+path "secret/metadata/mybastion/*" {
   capabilities = ["list", "read", "delete"]
 }
 EOF
@@ -348,27 +349,27 @@ EOF
 ```bash
 vault auth enable approle
 
-vault write auth/approle/role/rustguac \
-    token_policies="rustguac" \
+vault write auth/approle/role/mybastion \
+    token_policies="mybastion" \
     token_ttl=1h \
     token_max_ttl=4h \
     secret_id_ttl=0
 
-# Get the role_id (put in config.toml)
-vault read auth/approle/role/rustguac/role-id
+# Get the role_id (put in mybastion.toml)
+vault read auth/approle/role/mybastion/role-id
 
 # Generate a secret_id (set as VAULT_SECRET_ID env var)
-vault write -f auth/approle/role/rustguac/secret-id
+vault write -f auth/approle/role/mybastion/secret-id
 ```
 
-**4. Configure rustguac:**
+**4. Configure mybastion:**
 
 ```toml
 [vault]
 addr = "https://vault.example.com:8200"
 role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 # mount = "secret"          # KV v2 mount (default)
-# base_path = "rustguac"    # base path (default)
+# base_path = "mybastion"    # base path (default)
 # namespace = "my-ns"       # Vault Enterprise / OpenBao
 # instance_name = "prod-1"  # instance-scoped entries
 ```
@@ -376,8 +377,8 @@ role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 Set the secret ID:
 
 ```bash
-echo 'VAULT_SECRET_ID=<secret_id>' > /opt/rustguac/env
-chmod 600 /opt/rustguac/env
+echo 'VAULT_SECRET_ID=<secret_id>' > /etc/mybastion/env
+chmod 600 /etc/mybastion/env
 ```
 
 ### mTLS (client certificate authentication)
@@ -388,9 +389,9 @@ If your Vault or OpenBao server requires mutual TLS (client certificates), add t
 [vault]
 addr = "https://openbao.example.com:8200"
 role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-ca_cert = "/opt/rustguac/certs/vault-ca.pem"
-client_cert = "/opt/rustguac/certs/vault-client.pem"
-client_key = "/opt/rustguac/certs/vault-client-key.pem"
+ca_cert = "/opt/mybastion/certs/vault-ca.pem"
+client_cert = "/opt/mybastion/certs/vault-client.pem"
+client_key = "/opt/mybastion/certs/vault-client-key.pem"
 ```
 
 | Field | Description |
@@ -399,43 +400,43 @@ client_key = "/opt/rustguac/certs/vault-client-key.pem"
 | `client_cert` | Client certificate (PEM) presented to Vault for mTLS. |
 | `client_key` | Client private key (PEM). Required when `client_cert` is set. |
 
-Ensure the certificate files are readable by the `rustguac` system user and have restrictive permissions:
+Ensure the certificate files are readable by the `mybastion` system user and have restrictive permissions:
 
 ```bash
-mkdir -p /opt/rustguac/certs
-cp ca.pem client.pem client-key.pem /opt/rustguac/certs/
-chown rustguac:rustguac /opt/rustguac/certs/*
-chmod 600 /opt/rustguac/certs/client-key.pem
-chmod 644 /opt/rustguac/certs/ca.pem /opt/rustguac/certs/client.pem
+mkdir -p /opt/mybastion/certs
+cp ca.pem client.pem client-key.pem /opt/mybastion/certs/
+chown mybastion:mybastion /opt/mybastion/certs/*
+chmod 600 /opt/mybastion/certs/client-key.pem
+chmod 644 /opt/mybastion/certs/ca.pem /opt/mybastion/certs/client.pem
 ```
 
 ### KV v2 path structure
 
 | Path | Description |
 |------|-------------|
-| `rustguac/shared/<folder>/.config` | Folder metadata: `{"allowed_groups":[...], "description":"..."}` |
-| `rustguac/shared/<folder>/<entry>` | Connection entry (shared across all instances) |
-| `rustguac/instance/<name>/<folder>/<entry>` | Instance-specific entry (requires `instance_name`) |
+| `mybastion/shared/<folder>/.config` | Folder metadata: `{"allowed_groups":[...], "description":"..."}` |
+| `mybastion/shared/<folder>/<entry>` | Connection entry (shared across all instances) |
+| `mybastion/instance/<name>/<folder>/<entry>` | Instance-specific entry (requires `instance_name`) |
 
 ### Workload JWT authentication
 
 Vault and OpenBao can verify workload JWTs, including Kubernetes projected
-service-account tokens. This authenticates the rustguac server to the secret
+service-account tokens. This authenticates the My Bastion server to the secret
 store; it does not replace OIDC authentication for browser users.
 
 Configure a JWT auth mount with the workload issuer and a role bound to the
 exact service account and a dedicated audience. For example, with the existing
-`rustguac` KV policy:
+`mybastion` KV policy:
 
 ```sh
 vault auth enable -path=workload-jwt jwt
 vault write auth/workload-jwt/config \
   oidc_discovery_url="https://issuer.example.com" \
   bound_issuer="https://issuer.example.com"
-vault write auth/workload-jwt/role/rustguac \
+vault write auth/workload-jwt/role/mybastion \
   role_type=jwt user_claim=sub \
-  bound_subject="system:serviceaccount:remote-access:rustguac" \
-  bound_audiences=vault token_policies=rustguac \
+  bound_subject="system:serviceaccount:remote-access:mybastion" \
+  bound_audiences=vault token_policies=mybastion \
   token_ttl=5m token_max_ttl=5m token_explicit_max_ttl=5m
 ```
 
@@ -445,14 +446,14 @@ credential. However, JWT verification does not check Kubernetes revocation:
 deleted pods' or service accounts' JWTs remain valid until token expiry, and
 already issued Vault/OpenBao sessions have their own lifetime. Keep both short.
 
-Mount a projected token into the rustguac container (relevant pod spec excerpt):
+Mount a projected token into the My Bastion container (relevant pod spec excerpt):
 
 ```yaml
 spec:
-  serviceAccountName: rustguac
+  serviceAccountName: mybastion
   automountServiceAccountToken: false
   containers:
-    - name: rustguac
+    - name: mybastion
       # image and other settings omitted
       volumeMounts:
         - name: vault-identity
@@ -468,17 +469,17 @@ spec:
               expirationSeconds: 600
 ```
 
-Configure rustguac without `role_id` or `VAULT_SECRET_ID`:
+Configure My Bastion without `role_id` or `VAULT_SECRET_ID`:
 
 ```toml
 [vault]
 addr = "https://vault.example.com:8200"
 mount = "secret"
-base_path = "rustguac"
+base_path = "mybastion"
 
 [vault.jwt_auth]
 mount = "workload-jwt"
-role = "rustguac"
+role = "mybastion"
 path = "/var/run/secrets/vault/token"
 ```
 
@@ -490,9 +491,9 @@ nested block under `vault_shared` or `vault_local` for additional backends.
 
 The same `[vault.jwt_auth]` block works with any issuer Vault or OpenBao can verify.
 Point the auth mount at that issuer's discovery URL or keys, bind the role to the
-workload's identity, and give rustguac the token through `path` or `token_command`.
+workload's identity, and give My Bastion the token through `path` or `token_command`.
 
-**Nomad.** Run rustguac as a Nomad job with a workload identity written to a file,
+**Nomad.** Run My Bastion as a Nomad job with a workload identity written to a file,
 and trust Nomad's JWKS (`https://<nomad>/.well-known/jwks.json`) on the auth mount.
 Nomad renews the token at roughly half its TTL.
 
@@ -506,35 +507,35 @@ identity {
 }
 ```
 
-`filepath` is relative to the task's working directory; give rustguac the path
+`filepath` is relative to the task's working directory; give My Bastion the path
 as the task sees it (with the `docker` and `exec` drivers the secrets directory
 is `/secrets`):
 
 ```toml
 [vault.jwt_auth]
 mount = "nomad-jwt"
-role = "rustguac"
+role = "mybastion"
 path = "/secrets/vault.jwt"
 ```
 
 **SPIRE.** On a machine running a SPIRE agent, `spiffe-helper` keeps a JWT-SVID
 for an audience in a file and refreshes it before it expires. Trust the SPIRE
 server's OIDC discovery provider on the auth mount and bind the role to
-rustguac's SPIFFE ID.
+My Bastion's SPIFFE ID.
 
 ```
 # spiffe-helper helper.conf
 agent_address = "/run/spire/agent/public/api.sock"
 daemon_mode = true
-jwt_svids = [{ jwt_audience = "vault", jwt_svid_file_name = "/run/rustguac/vault.jwt" }]
+jwt_svids = [{ jwt_audience = "vault", jwt_svid_file_name = "/run/mybastion/vault.jwt" }]
 jwt_svid_file_mode = 0600
 ```
 
 ```toml
 [vault.jwt_auth]
 mount = "spire-jwt"
-role = "rustguac"
-path = "/run/rustguac/vault.jwt"
+role = "mybastion"
+path = "/run/mybastion/vault.jwt"
 ```
 
 SPIRE can identify a machine without any stored secret, for example with a TPM
@@ -548,18 +549,18 @@ It must print the token and nothing else:
 ```toml
 [vault.jwt_auth]
 mount = "azure-jwt"
-role = "rustguac"
-token_command = ["/opt/rustguac/bin/fetch-vault-jwt"]
+role = "mybastion"
+token_command = ["/opt/mybastion/bin/fetch-vault-jwt"]
 ```
 
 **What JWT login does and doesn't remove.** It removes the long-lived AppRole
-secret ID from the rustguac host only when the platform itself vouches for the
+secret ID from the My Bastion host only when the platform itself vouches for the
 workload (Kubernetes, Nomad, SPIRE attestation, a cloud provider). Fetching a JWT
 with a client secret from an identity provider just moves the secret elsewhere.
 
 ### Token management
 
-rustguac manages Vault tokens automatically:
+My Bastion manages Vault tokens automatically:
 
 - Authenticates via AppRole (`role_id` + `secret_id`) or the configured workload JWT on startup
 - Renews tokens at 50% of their TTL
@@ -568,12 +569,12 @@ rustguac manages Vault tokens automatically:
 
 ### Multi-instance support
 
-When `instance_name` is set, rustguac sees both shared entries and entries scoped to its instance:
+When `instance_name` is set, My Bastion sees both shared entries and entries scoped to its instance:
 
-- `shared/` entries are visible to all rustguac instances
+- `shared/` entries are visible to all My Bastion instances
 - `instance/<name>/` entries are only visible to the named instance
 
-This allows a fleet of rustguac instances to share common entries while maintaining instance-specific ones.
+This allows a fleet of My Bastion instances to share common entries while maintaining instance-specific ones.
 
 ### Entry types
 
@@ -614,18 +615,18 @@ For web sessions, prompted credentials are used for autofill substitution (`$USE
 
 ## SSH Tunnel / Multi-Hop Jump Hosts
 
-rustguac supports routing SSH, RDP, VNC, SPICE, Proxmox VE and web browser sessions through one or more SSH bastion hosts. This is useful when the target machine is not directly reachable from the rustguac server — for example, accessing an RDP server on an isolated network segment via a bastion host chain.
+My Bastion supports routing SSH, RDP, VNC, SPICE, Proxmox VE and web browser sessions through one or more SSH bastion hosts. This is useful when the target machine is not directly reachable from the My Bastion server — for example, accessing an RDP server on an isolated network segment via a bastion host chain.
 
 ### How it works
 
 Each jump host in the chain establishes an SSH connection and creates a local TCP port forward using SSH's `direct-tcpip` channel. The hops are chained sequentially:
 
-1. **Hop 1**: rustguac SSH-connects to `bastion-1:22`, opens a `direct-tcpip` channel to `bastion-2:22`, and listens on a local TCP port
-2. **Hop 2**: rustguac SSH-connects to `bastion-2:22` (via hop 1's local port), opens a `direct-tcpip` channel to `target:3389`, and listens on another local TCP port
+1. **Hop 1**: My Bastion SSH-connects to `bastion-1:22`, opens a `direct-tcpip` channel to `bastion-2:22`, and listens on a local TCP port
+2. **Hop 2**: My Bastion SSH-connects to `bastion-2:22` (via hop 1's local port), opens a `direct-tcpip` channel to `target:3389`, and listens on another local TCP port
 3. **guacd**: connects to the final local port, which tunnels through the entire chain to the target
 
 ```
-rustguac -> [SSH] bastion-1:22 -> [SSH] bastion-2:22 -> [TCP] target:3389
+mybastion -> [SSH] bastion-1:22 -> [SSH] bastion-2:22 -> [TCP] target:3389
 ```
 
 The chain is set up sequentially (each hop must connect before the next starts) and torn down in reverse order when the session ends.
@@ -668,13 +669,13 @@ At least one of `password` or `private_key` should be provided per hop.
 | Web | Yes | Tunnel forwards to URL host:port; URL is rewritten to `127.0.0.1:{tunnel_port}` |
 | SPICE | Yes | Tunnel forwards to the SPICE host; with TLS on, to `tls_port` (or `port` if no TLS port is set), otherwise to `port` |
 | Proxmox VE | Yes | The PVE API and the SPICE proxy that Proxmox returns are each tunnelled through the chain |
-| VDI | Not applicable | The container runs on the rustguac host, so the connections editor and the Sessions page hide the jump host section for VDI |
+| VDI | Not applicable | The container runs on the My Bastion host, so the connections editor and the Sessions page hide the jump host section for VDI |
 
 **Web session URL rewriting:** When jump hosts are configured for a web browser session, the SSH tunnel forwards to the URL's host and port (inferred from the scheme: 80 for HTTP, 443 for HTTPS, or explicit port). The URL passed to Chromium is rewritten to `{scheme}://127.0.0.1:{tunnel_port}{path}`. This means HTTPS targets will show certificate warnings since the hostname no longer matches the certificate. The original URL is still displayed in the session list.
 
-**Proxmox VE through jump hosts:** rustguac opens one tunnel chain to the PVE API (`proxmox_url`, port 8006 if the URL gives none) for the console request, then a second chain to the SPICE proxy named in the console response (port 3128 if it gives none), and points guacd at that local forward. The API is reached at a loopback address that no PVE certificate matches, so certificate verification is turned off for the API call; the SSH tunnel secures that hop. The SPICE TLS connection is carried inside the proxy's `CONNECT`, so when `proxmox_verify_tls` is on, the SPICE server certificate is still verified against the cluster CA.
+**Proxmox VE through jump hosts:** My Bastion opens one tunnel chain to the PVE API (`proxmox_url`, port 8006 if the URL gives none) for the console request, then a second chain to the SPICE proxy named in the console response (port 3128 if it gives none), and points guacd at that local forward. The API is reached at a loopback address that no PVE certificate matches, so certificate verification is turned off for the API call; the SSH tunnel secures that hop. The SPICE TLS connection is carried inside the proxy's `CONNECT`, so when `proxmox_verify_tls` is on, the SPICE server certificate is still verified against the cluster CA.
 
-**Allowlists:** with jump hosts configured, the target is resolved by the bastion, not by rustguac, so the target is not checked against the local network allowlists. For ad-hoc sessions from non-admins, the first jump host is checked against `ssh_allowed_networks` instead; jump hosts in connection entries and in sessions created by admins are not checked. See [Network allowlists](security.md#network-allowlists-ssrf-protection).
+**Allowlists:** with jump hosts configured, the target is resolved by the bastion, not by My Bastion, so the target is not checked against the local network allowlists. For ad-hoc sessions from non-admins, the first jump host is checked against `ssh_allowed_networks` instead; jump hosts in connection entries and in sessions created by admins are not checked. See [Network allowlists](security.md#network-allowlists-ssrf-protection).
 
 ### Backward compatibility
 
@@ -688,7 +689,7 @@ Tunnel errors include the hop index for easier debugging. For example, if hop 2 
 
 ## RDP Kerberos NLA Authentication
 
-rustguac includes a patched guacd with Kerberos NLA (Network Level Authentication) support. This allows RDP connections to authenticate using Kerberos instead of NTLM, which is important as Microsoft is phasing out NTLM.
+My Bastion includes a patched guacd with Kerberos NLA (Network Level Authentication) support. This allows RDP connections to authenticate using Kerberos instead of NTLM, which is important as Microsoft is phasing out NTLM.
 
 ### Background
 
@@ -746,7 +747,7 @@ If using a **KDC Proxy URL** (`kdc-url`), direct access to port 88 is not needed
 
 #### Time synchronisation
 
-Kerberos has a default clock skew tolerance of **5 minutes**. Ensure NTP is configured on the rustguac server:
+Kerberos has a default clock skew tolerance of **5 minutes**. Ensure NTP is configured on the My Bastion server:
 
 ```bash
 timedatectl status   # verify time is synced
@@ -843,13 +844,13 @@ This patch is based on the upstream [GUACAMOLE-2057](https://issues.apache.org/j
 
 ### Troubleshooting
 
-**Enable Kerberos tracing** by adding to the rustguac environment file:
+**Enable Kerberos tracing** by adding to the My Bastion environment file:
 
 ```bash
-echo 'KRB5_TRACE=/dev/stderr' >> /opt/rustguac/env
-sudo systemctl restart rustguac
+echo 'KRB5_TRACE=/dev/stderr' >> /etc/mybastion/env
+sudo systemctl restart mybastion
 # View trace output:
-journalctl -u rustguac -f
+journalctl -u mybastion -f
 ```
 
 **Test Kerberos manually** from the guacd server:
@@ -882,7 +883,7 @@ xfreerdp3 /v:server.example.com /u:user@EXAMPLE.COM /d:EXAMPLE.COM \
 
 ## Drive / File Transfer / LUKS Encryption
 
-rustguac supports file transfer for RDP and SSH sessions.
+My Bastion supports file transfer for RDP and SSH sessions.
 
 ### RDP drive redirection
 
@@ -895,7 +896,7 @@ When drive is enabled, each RDP session gets a per-session directory under `driv
 ```toml
 [drive]
 enabled = true
-drive_path = "/mnt/rustguac-drives"
+drive_path = "/mnt/mybastion-drives"
 drive_name = "Shared Drive"
 allow_download = true
 allow_upload = true
@@ -914,19 +915,19 @@ Each session gets its own subdirectory under `drive_path` named with the session
 
 ### SSH SFTP
 
-For SSH sessions, SFTP file transfer happens directly between the browser and the target SSH server via guacd. No files are stored on the rustguac server.
+For SSH sessions, SFTP file transfer happens directly between the browser and the target SSH server via guacd. No files are stored on the My Bastion server.
 
 ### LUKS encryption
 
-For RDP drive storage, the `drive_path` can be backed by a LUKS-encrypted volume. The encryption key is stored in Vault and the volume is only unlocked while rustguac is running.
+For RDP drive storage, the `drive_path` can be backed by a LUKS-encrypted volume. The encryption key is stored in Vault and the volume is only unlocked while My Bastion is running.
 
 ```toml
 [drive]
 enabled = true
-drive_path = "/mnt/rustguac-drives"
-luks_device = "/opt/rustguac/drives.luks"
-luks_name = "rustguac-drives"
-luks_key_path = "rustguac/luks-key"
+drive_path = "/mnt/mybastion-drives"
+luks_device = "/var/lib/mybastion/drives.luks"
+luks_name = "mybastion-drives"
+luks_key_path = "mybastion/luks-key"
 ```
 
 #### LUKS lifecycle
@@ -935,7 +936,7 @@ On startup:
 1. Read encryption key from Vault KV
 2. Open LUKS container via `sudo cryptsetup open --type luks --key-file=-`
 3. Mount the mapped device at `drive_path`
-4. Set ownership to the rustguac user
+4. Set ownership to the My Bastion user
 
 On shutdown:
 1. Unmount the volume
@@ -948,21 +949,21 @@ The key is passed to cryptsetup via stdin — never on the command line or writt
 Run the interactive setup script:
 
 ```bash
-sudo /opt/rustguac/bin/drive-setup.sh
+sudo /opt/mybastion/bin/drive-setup.sh
 ```
 
 This creates the LUKS container file, generates a random encryption key, stores the key in Vault, and configures the necessary sudoers rules.
 
 #### Sudoers rules
 
-The rustguac user needs specific sudo permissions for LUKS operations. These are installed automatically:
+The My Bastion user needs specific sudo permissions for LUKS operations. These are installed automatically:
 
 ```
-rustguac ALL=(root) NOPASSWD: /usr/sbin/cryptsetup open --type luks --key-file=- <device> <name>
-rustguac ALL=(root) NOPASSWD: /usr/sbin/cryptsetup close <name>
-rustguac ALL=(root) NOPASSWD: /bin/mount /dev/mapper/<name> <mount_point>
-rustguac ALL=(root) NOPASSWD: /bin/umount <mount_point>
-rustguac ALL=(root) NOPASSWD: /bin/chown *:* <mount_point>
+mybastion ALL=(root) NOPASSWD: /usr/sbin/cryptsetup open --type luks --key-file=- <device> <name>
+mybastion ALL=(root) NOPASSWD: /usr/sbin/cryptsetup close <name>
+mybastion ALL=(root) NOPASSWD: /bin/mount /dev/mapper/<name> <mount_point>
+mybastion ALL=(root) NOPASSWD: /bin/umount <mount_point>
+mybastion ALL=(root) NOPASSWD: /bin/chown *:* <mount_point>
 ```
 
 ---
@@ -987,19 +988,19 @@ For nginx, Caddy, Apache, and Traefik setups, see [reverse-proxies.md](reverse-p
 
 ```
 frontend https
-    bind *:443 ssl crt /etc/ssl/private/rustguac.pem alpn h2,http/1.1
+    bind *:443 ssl crt /etc/ssl/private/mybastion.pem alpn h2,http/1.1
     bind *:80
     http-request redirect scheme https unless { ssl_fc }
     http-request del-header X-Forwarded-For
     option forwardfor
-    default_backend rustguac
+    default_backend mybastion
 
-backend rustguac
+backend mybastion
     option httpchk GET /api/health
-    server rustguac 127.0.0.1:8089 ssl verify none check inter 30s
+    server mybastion 127.0.0.1:8089 ssl verify none check inter 30s
 ```
 
-rustguac must trust HAProxy's IP:
+My Bastion must trust HAProxy's IP:
 
 ```toml
 trusted_proxies = ["127.0.0.1/32"]
@@ -1009,53 +1010,8 @@ trusted_proxies = ["127.0.0.1/32"]
 
 In the default configuration, traffic is encrypted twice on the loopback:
 1. HAProxy terminates the client's TLS connection
-2. HAProxy connects to rustguac over TLS (rustguac's own self-signed cert)
+2. HAProxy connects to My Bastion over TLS (My Bastion's own self-signed cert)
 
 This is belt-and-suspenders for environments where even loopback traffic should be encrypted.
 
 ---
-
-## Knocknoc Zero-Trust Access
-
-[Knocknoc](https://knocknoc.io) provides identity-aware network access control. The integration works at the HAProxy layer: knocknoc-agent dynamically adds and removes client IPs to HAProxy ACLs via the admin socket.
-
-### How it works
-
-1. User authenticates through Knocknoc (SSO, MFA, etc.)
-2. knocknoc-agent adds the user's IP to HAProxy ACL #600 via the admin socket
-3. HAProxy allows access to the login page (`/` path only)
-4. User logs in via OIDC (rustguac's own auth layer)
-5. When the Knocknoc session expires, the IP is removed from the ACL
-
-### What is gated
-
-Only the front page (`/`) is gated behind Knocknoc. All other paths pass through to rustguac's own authentication:
-
-- `/api/*` — API key or OIDC session auth
-- `/auth/*` — OIDC login/callback flow
-- `/ws/*` — WebSocket connections (session auth)
-- `/share/*` — Share links (share token auth)
-
-This ensures OIDC callbacks and share links work even when the user hasn't authenticated through Knocknoc, while hiding the login UI from scanners and bots.
-
-### HAProxy configuration
-
-```
-# Admin socket for knocknoc-agent
-stats socket /run/haproxy/admin.sock mode 0660 level admin
-
-# Dynamic ACL (ACL ID 600 must match Knocknoc config)
-acl knoc_rustguac src -u 600
-acl is_root path /
-
-# Gate only the front page
-use_backend rustguac if is_rustguac is_root knoc_rustguac
-use_backend denied   if is_rustguac is_root
-use_backend rustguac if is_rustguac
-```
-
-### Verifying ACL state
-
-```bash
-echo "show acl #600" | socat stdio /run/haproxy/admin.sock
-```

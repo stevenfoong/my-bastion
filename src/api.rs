@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! REST API routes.
 
 use crate::auth::{self, client_ip, role_level, AuthIdentity, TrustedProxies};
@@ -604,8 +605,8 @@ pub async fn get_vdi_container_thumbnail(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    // Ownership: container names are `rustguac-vdi-{username}` or
-    // `rustguac-vdi-{username}-{entry}`, where {username} is derived from the
+    // Ownership: container names are `mybastion-vdi-{username}` or
+    // `mybastion-vdi-{username}-{entry}`, where {username} is derived from the
     // caller's identity exactly as in list_vdi_containers. A caller may only
     // read their own container's thumbnail; admins may read any.
     let Some(Extension(id)) = identity else {
@@ -621,8 +622,8 @@ pub async fn get_vdi_container_thumbnail(
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>();
     let owns = !current_user.is_empty()
-        && (name == format!("rustguac-vdi-{}", current_user)
-            || name.starts_with(&format!("rustguac-vdi-{}-", current_user)));
+        && (name == format!("mybastion-vdi-{}", current_user)
+            || name.starts_with(&format!("mybastion-vdi-{}-", current_user)));
     if !id.has_role("admin") && !owns {
         return StatusCode::NOT_FOUND.into_response();
     }
@@ -1020,7 +1021,7 @@ pub async fn list_recordings(
 /// passwords typed at prompts or secrets printed to screen). A poweruser
 /// can see *that* a session was recorded (connection, time, size) for
 /// accountability, but retrieving the actual log requires direct access
-/// to the rustguac host or storage. There is deliberately no serve or
+/// to the mybastion host or storage. There is deliberately no serve or
 /// delete endpoint, so there is also no name parameter and no
 /// path-traversal surface.
 pub async fn list_typescripts(
@@ -2283,7 +2284,7 @@ pub async fn delete_group_mapping(
 /// One Vault backend connection cell — `None` until connected / while down.
 pub type VaultCell = Arc<tokio::sync::RwLock<Option<Arc<VaultClient>>>>;
 
-/// The set of Vault backends rustguac talks to.
+/// The set of Vault backends mybastion talks to.
 ///
 /// In the single-Vault default, `shared` and `local` both alias `default`, so
 /// behaviour is identical to a single `VaultClient`. A multi-Vault split (see
@@ -3104,7 +3105,7 @@ async fn lend_folder_defaults<S: DefaultsSource>(
 // changes and never touch this log: the tab that saved them reloads its own
 // credential status, and no other tab needs to know.
 //
-// The log is per process. A second rustguac on the same Vault, or a direct
+// The log is per process. A second mybastion on the same Vault, or a direct
 // Vault write, is not seen; those take a page reload, as they always did.
 
 /// What changed, as the Connections page needs to know it.
@@ -3818,7 +3819,7 @@ pub async fn ssh_probe_host_key(
     // The probe is a raw TCP + SSH key exchange to a caller-chosen host. For
     // a poweruser it is fenced like an SSH session and dialled at the checked
     // address; unchecked it is a port scanner and banner grabber for anything
-    // rustguac can reach (guacd, Vault, metadata services). Admins probe
+    // mybastion can reach (guacd, Vault, metadata services). Admins probe
     // freely, since they configure jump hosts outside the allowlists.
     let is_admin = matches!(&identity, Some(Extension(id)) if id.has_role("admin"));
     let dial = if is_admin {
@@ -4484,7 +4485,7 @@ const MAX_ALLOWED_USERS: usize = 500;
 
 /// Tidy a folder's `allowed_users`: trim, drop blanks and case-insensitive
 /// repeats, and refuse anything that cannot be a login identity. Usually an
-/// email, but not required to contain `@`: rustguac falls back to the OIDC
+/// email, but not required to contain `@`: mybastion falls back to the OIDC
 /// subject when a provider sends no email claim.
 fn normalize_allowed_users(users: Vec<String>) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
@@ -8237,10 +8238,13 @@ mod tests {
     fn adhoc_test_manager() -> SessionManager {
         let config = crate::config::Config {
             recording_path: std::env::temp_dir()
-                .join(format!("rustguac-adhoc-test-{}", Uuid::new_v4())),
+                .join(format!("mybastion-adhoc-test-{}", Uuid::new_v4())),
             xvnc_path: "/bin/true".into(),
             chromium_path: "/bin/true".into(),
             login_scripts_dir: "/tmp".into(),
+            // These tests are about the network fences, so every type is on.
+            web: Some(crate::config::FeatureSwitch { enabled: true }),
+            spice: Some(crate::config::FeatureSwitch { enabled: true }),
             ..Default::default()
         };
         SessionManager::new(config, None)
@@ -9742,7 +9746,7 @@ mod tests {
 
     #[test]
     fn test_safe_recording_name_valid() {
-        let dir = std::env::temp_dir().join("rustguac-test-recordings");
+        let dir = std::env::temp_dir().join("mybastion-test-recordings");
         let _ = std::fs::create_dir_all(&dir);
         let f1 = dir.join("session-abc123.guac");
         let f2 = dir.join("2024-01-01_recording.guac");
@@ -9803,7 +9807,7 @@ mod tests {
     fn recording_mp4_access_matches_recording_download() {
         // The MP4 endpoints (#241) share the download's check: poweruser or
         // admin, and a plain .guac name inside the recording directory.
-        let dir = std::env::temp_dir().join(format!("rustguac-rec-acl-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mybastion-rec-acl-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("s.guac"), "x").unwrap();
         let user = |role: &str| {
@@ -9845,7 +9849,7 @@ mod tests {
 
     #[test]
     fn test_safe_recording_name_extension_case_sensitive() {
-        // Rustguac writes lower-case .guac only; allowing .GUAC creates a
+        // My Bastion writes lower-case .guac only; allowing .GUAC creates a
         // second naming space that bypasses admin tools expecting lowercase.
         assert!(!is_safe_recording_name("session.GUAC", Path::new("/tmp")));
         assert!(!is_safe_recording_name("session.Guac", Path::new("/tmp")));

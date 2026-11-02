@@ -1,8 +1,9 @@
-//! CLI behaviour for `rustguac add-user` and `rustguac reset-oidc-subject`.
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+//! CLI behaviour for `mybastion add-user` and `mybastion reset-oidc-subject`.
 //!
 //! Integration tests because they run the built binary (see
 //! tests/cli_map_group.rs for why that has to happen here). Database
-//! assertions go through rusqlite directly, since rustguac has no lib target.
+//! assertions go through rusqlite directly, since mybastion has no lib target.
 
 use assert_cmd::Command;
 use rusqlite::Connection;
@@ -13,20 +14,20 @@ struct ScratchDir(std::path::PathBuf);
 impl ScratchDir {
     fn new(name: &str) -> Self {
         let path =
-            std::env::temp_dir().join(format!("rustguac-cli-{}-{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("mybastion-cli-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create scratch dir");
-        std::fs::write(path.join("config.toml"), "db_path = \"./rustguac.db\"\n")
+        std::fs::write(path.join("config.toml"), "db_path = \"./mybastion.db\"\n")
             .expect("write config");
         ScratchDir(path)
     }
 
     fn conn(&self) -> Connection {
-        Connection::open(self.0.join("rustguac.db")).expect("open database")
+        Connection::open(self.0.join("mybastion.db")).expect("open database")
     }
 
     fn run(&self, args: &[&str]) -> assert_cmd::assert::Assert {
-        let mut cmd = Command::cargo_bin("rustguac").unwrap();
+        let mut cmd = Command::cargo_bin("mybastion").unwrap();
         cmd.current_dir(&self.0)
             .args(["--config", "config.toml"])
             .args(args)

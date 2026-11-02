@@ -8,7 +8,7 @@
 //! Each row's AAD is its path and version, so a ciphertext copied to another
 //! path, or given another version number, fails to decrypt. This protects a
 //! stolen database file or backup. It does not protect against someone who
-//! controls the host running rustguac, which can read the KEK.
+//! controls the host running mybastion, which can read the KEK.
 
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 const KEY_LEN: usize = 32;
 
 /// AAD for the wrapped DEK, so a row ciphertext can never pass as one.
-const DEK_AAD: &[u8] = b"rustguac-dek-v1";
+const DEK_AAD: &[u8] = b"mybastion-dek-v1";
 
 /// A 256-bit key: the KEK, or the unwrapped DEK.
 pub struct Key {
@@ -191,10 +191,10 @@ mod tests {
 
     #[test]
     fn kek_load_errors_never_echo_the_value() {
-        std::env::set_var("RUSTGUAC_TEST_BAD_KEK", "not-a-key-secret-material");
-        let e = Key::load("env:RUSTGUAC_TEST_BAD_KEK").err().unwrap();
+        std::env::set_var("MYBASTION_TEST_BAD_KEK", "not-a-key-secret-material");
+        let e = Key::load("env:MYBASTION_TEST_BAD_KEK").err().unwrap();
         assert!(!e.contains("secret-material"), "{e}");
-        assert!(Key::load("env:RUSTGUAC_TEST_UNSET_KEK").is_err());
+        assert!(Key::load("env:MYBASTION_TEST_UNSET_KEK").is_err());
         assert!(Key::load("nokind").is_err());
         assert!(Key::load("aws-kms:arn:aws:kms:x").is_err());
     }
@@ -202,15 +202,15 @@ mod tests {
     #[test]
     fn seal_open_round_trip_and_aad_binding() {
         let k = Key::generate().unwrap();
-        let aad = row_aad("rustguac/shared/a/b", 3);
+        let aad = row_aad("mybastion/shared/a/b", 3);
         let (nonce, ct) = k.seal(b"{\"x\":1}", &aad).unwrap();
         assert_eq!(&k.open(&nonce, &ct, &aad).unwrap()[..], b"{\"x\":1}");
         // Another path, another version, or a flipped bit: all refused.
         assert!(k
-            .open(&nonce, &ct, &row_aad("rustguac/shared/a/c", 3))
+            .open(&nonce, &ct, &row_aad("mybastion/shared/a/c", 3))
             .is_err());
         assert!(k
-            .open(&nonce, &ct, &row_aad("rustguac/shared/a/b", 2))
+            .open(&nonce, &ct, &row_aad("mybastion/shared/a/b", 2))
             .is_err());
         let mut bad = ct.clone();
         bad[0] ^= 1;

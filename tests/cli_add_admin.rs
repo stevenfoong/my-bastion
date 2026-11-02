@@ -1,9 +1,10 @@
-//! `rustguac add-admin --if-none`, as the Docker entrypoint uses it (#240).
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+//! `mybastion add-admin --if-none`, as the Docker entrypoint uses it (#240).
 //!
 //! The entrypoint used to decide "first run" by looking for a database file
 //! at a fixed path, so a config with db_path elsewhere tried to create the
 //! admin on every start and failed on the one already there. The check now
-//! belongs to rustguac, which reads db_path from the config.
+//! belongs to mybastion, which reads db_path from the config.
 
 use assert_cmd::Command;
 use rusqlite::Connection;
@@ -13,10 +14,10 @@ struct ScratchDir(std::path::PathBuf);
 impl ScratchDir {
     fn new(name: &str) -> Self {
         let path =
-            std::env::temp_dir().join(format!("rustguac-cli-{}-{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("mybastion-cli-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(path.join("elsewhere")).expect("create scratch dir");
-        // Deliberately not ./data/rustguac.db: the path the old entrypoint
+        // Deliberately not ./data/mybastion.db: the path the old entrypoint
         // hardcoded.
         std::fs::write(
             path.join("config.toml"),
@@ -27,7 +28,7 @@ impl ScratchDir {
     }
 
     fn run(&self, args: &[&str]) -> assert_cmd::assert::Assert {
-        Command::cargo_bin("rustguac")
+        Command::cargo_bin("mybastion")
             .unwrap()
             .current_dir(&self.0)
             .args(["--config", "config.toml"])

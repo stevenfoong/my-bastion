@@ -1,5 +1,6 @@
 #!/bin/bash
-# Fail unless every guacd protocol plugin rustguac uses, and guacenc (which
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# Fail unless every guacd protocol plugin mybastion uses, and guacenc (which
 # converts recordings to video for MP4 downloads), was built.
 #
 # guacd's configure quietly leaves out a protocol whose library is missing,

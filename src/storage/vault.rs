@@ -1,10 +1,11 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! HashiVault / OpenBao KV v2 over HTTP: the `SecretStore` behind
 //! `VaultClient` in the default (upstream) configuration.
 //!
 //! Login (AppRole or workload JWT), token renewal, TLS client setup and the
 //! KV v2 requests moved here from `vault.rs` unchanged. Paths are relative
-//! to the KV mount, so `rustguac/shared/prod/web01` is read from
-//! `/v1/<mount>/data/rustguac/shared/prod/web01`.
+//! to the KV mount, so `mybastion/shared/prod/web01` is read from
+//! `/v1/<mount>/data/mybastion/shared/prod/web01`.
 
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -588,7 +589,7 @@ mod tests {
     fn jwt_file_auth(path: &std::path::Path) -> crate::config::VaultJwtAuth {
         crate::config::VaultJwtAuth {
             mount: "workload-jwt".into(),
-            role: "rustguac".into(),
+            role: "mybastion".into(),
             path: Some(path.to_str().unwrap().into()),
             token_command: None,
             token_command_timeout_secs: 10,
@@ -632,7 +633,7 @@ mod tests {
     fn jwt_command_auth(argv: &[&str], timeout: u64) -> crate::config::VaultJwtAuth {
         crate::config::VaultJwtAuth {
             mount: "workload-jwt".into(),
-            role: "rustguac".into(),
+            role: "mybastion".into(),
             path: None,
             token_command: Some(argv.iter().map(|a| a.to_string()).collect()),
             token_command_timeout_secs: timeout,
@@ -643,7 +644,7 @@ mod tests {
     async fn jwt_token_command_runs_at_every_login() {
         // A cloud metadata service or SPIRE hands out a fresh token each
         // time; the command is run again at every login, never cached.
-        let file = std::env::temp_dir().join(format!("rustguac-jwtcmd-{}", uuid::Uuid::new_v4()));
+        let file = std::env::temp_dir().join(format!("mybastion-jwtcmd-{}", uuid::Uuid::new_v4()));
         tokio::fs::write(&file, "token-one\n").await.unwrap();
         let cfg = jwt_command_auth(&["cat", file.to_str().unwrap()], 10);
         assert_eq!(fetch_workload_jwt(&cfg).await.unwrap(), "token-one");
@@ -670,7 +671,7 @@ mod tests {
         let empty = jwt_command_auth(&["true"], 10);
         assert!(fetch_workload_jwt(&empty).await.is_err());
 
-        let missing = jwt_command_auth(&["/nonexistent/rustguac-token-helper"], 10);
+        let missing = jwt_command_auth(&["/nonexistent/mybastion-token-helper"], 10);
         let e = fetch_workload_jwt(&missing).await.unwrap_err().to_string();
         assert!(e.contains("could not run"), "{e}");
     }
@@ -692,7 +693,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let path = std::env::temp_dir().join(format!("rustguac-jwt-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mybastion-jwt-{}", uuid::Uuid::new_v4()));
         tokio::fs::write(&path, "synthetic-jwt-one\n")
             .await
             .unwrap();
@@ -701,7 +702,7 @@ mod tests {
         config.jwt_auth = Some(jwt_file_auth(&path));
         assert_eq!(
             config
-                .login_secret("RUSTGUAC_TEST_ABSENT_SECRET_ID")
+                .login_secret("MYBASTION_TEST_ABSENT_SECRET_ID")
                 .unwrap(),
             ""
         );
@@ -713,8 +714,8 @@ mod tests {
         assert_eq!(
             *calls.lock().await,
             vec![
-                serde_json::json!({"role":"rustguac","jwt":"synthetic-jwt-one"}),
-                serde_json::json!({"role":"rustguac","jwt":"synthetic-jwt-two"}),
+                serde_json::json!({"role":"mybastion","jwt":"synthetic-jwt-one"}),
+                serde_json::json!({"role":"mybastion","jwt":"synthetic-jwt-two"}),
             ]
         );
         tokio::fs::write(&path, "\n").await.unwrap();
@@ -744,7 +745,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let path = std::env::temp_dir().join(format!("rustguac-jwt-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mybastion-jwt-{}", uuid::Uuid::new_v4()));
         tokio::fs::write(&path, "synthetic-jwt-do-not-log")
             .await
             .unwrap();
@@ -805,7 +806,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let path = std::env::temp_dir().join(format!("rustguac-jwt-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("mybastion-jwt-{}", uuid::Uuid::new_v4()));
         tokio::fs::write(&path, "jwt-one").await.unwrap();
         let mut config = base_config();
         config.addr = format!("http://{addr}");
@@ -820,8 +821,8 @@ mod tests {
         assert_eq!(
             *calls.lock().await,
             vec![
-                serde_json::json!({"role":"rustguac","jwt":"jwt-one"}),
-                serde_json::json!({"role":"rustguac","jwt":"jwt-two"}),
+                serde_json::json!({"role":"mybastion","jwt":"jwt-one"}),
+                serde_json::json!({"role":"mybastion","jwt":"jwt-two"}),
             ]
         );
         tokio::fs::remove_file(path).await.unwrap();
@@ -859,7 +860,7 @@ mod tests {
         VaultConfig {
             addr: "https://vault.example.com:8200".into(),
             mount: "secret".into(),
-            base_path: "rustguac".into(),
+            base_path: "mybastion".into(),
             role_id: "test-role-id".into(),
             jwt_auth: None,
             namespace: None,
@@ -900,7 +901,7 @@ mod tests {
     fn test_build_client_ca_cert_invalid_pem() {
         // reqwest::Certificate::from_pem rejects PEM with valid headers but
         // garbage DER content.
-        let dir = std::env::temp_dir().join("rustguac-test-vault-tls");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-tls");
         let _ = std::fs::create_dir_all(&dir);
         let ca_path = dir.join("bad-ca.pem");
         let bad_pem =
@@ -917,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_build_client_client_cert_without_key() {
-        let dir = std::env::temp_dir().join("rustguac-test-vault-tls-nokey");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-tls-nokey");
         let _ = std::fs::create_dir_all(&dir);
         let cert_path = dir.join("client.pem");
         std::fs::write(&cert_path, b"placeholder").unwrap();
@@ -944,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_build_client_client_key_missing_file() {
-        let dir = std::env::temp_dir().join("rustguac-test-vault-tls-keyfile");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-tls-keyfile");
         let _ = std::fs::create_dir_all(&dir);
         let cert_path = dir.join("client.pem");
         std::fs::write(&cert_path, b"placeholder cert").unwrap();
@@ -961,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_build_client_valid_ca_cert() {
-        let dir = std::env::temp_dir().join("rustguac-test-vault-tls-valid");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-tls-valid");
         let _ = std::fs::create_dir_all(&dir);
         let ca_path = dir.join("ca.pem");
 
@@ -999,7 +1000,7 @@ mod tests {
     #[test]
     fn test_build_client_mtls_pkcs8_key() {
         // This test reproduces issue #51: PKCS#8 keys from OpenBao should work.
-        let dir = std::env::temp_dir().join("rustguac-test-vault-mtls");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-mtls");
         let _ = std::fs::create_dir_all(&dir);
         let cert_path = dir.join("client.pem");
         let key_path = dir.join("client-key.pem");
@@ -1096,7 +1097,7 @@ mod tests {
     #[test]
     fn test_build_client_mtls_fullchain_cert() {
         // Test with fullchain cert (leaf + CA) — as OpenBao typically delivers.
-        let dir = std::env::temp_dir().join("rustguac-test-vault-mtls-chain");
+        let dir = std::env::temp_dir().join("mybastion-test-vault-mtls-chain");
         let _ = std::fs::create_dir_all(&dir);
         let key_path = dir.join("client-key.pem");
         let fullchain_path = dir.join("client-fullchain.pem");

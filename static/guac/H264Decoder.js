@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 /*
  * H.264 decoder for Guacamole using the WebCodecs API.
  * Decodes H.264 NAL units received via the "h264" instruction and
@@ -368,7 +369,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
         if (typeof Guacamole.Yuv444Renderer === 'undefined'
                 || !Guacamole.Yuv444Renderer.isSupported()) {
-            console.warn('[rustguac] H.264: 4:4:4 chroma unavailable'
+            console.warn('[mybastion] H.264: 4:4:4 chroma unavailable'
                     + ' (needs WebGL2 and VideoFrame.copyTo); AVC444 will'
                     + ' render at 4:2:0');
             yuv444Unavailable = true;
@@ -383,7 +384,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
             return null;
         }
 
-        console.log('[rustguac] H.264: combining AVC444 views to 4:4:4');
+        console.log('[mybastion] H.264: combining AVC444 views to 4:4:4');
         return yuv444;
 
     }
@@ -538,7 +539,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
         } catch (e) {
 
-            console.error('[rustguac] H.264: cannot size frame planes:',
+            console.error('[mybastion] H.264: cannot size frame planes:',
                     e.message);
 
             /* Whatever stopped the copy will stop the next one too, and this
@@ -614,7 +615,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
         }).catch(function(e) {
 
-            console.error('[rustguac] H.264: 4:4:4 combine failed:',
+            console.error('[mybastion] H.264: 4:4:4 combine failed:',
                     e && e.message ? e.message : e);
 
             /* One failure is usually terminal for this path -- an unsupported
@@ -680,7 +681,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
             return;
 
         if (typeof VideoDecoder === 'undefined') {
-            console.warn('[rustguac] WebCodecs VideoDecoder not available');
+            console.warn('[mybastion] WebCodecs VideoDecoder not available');
             return;
         }
 
@@ -772,7 +773,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
                 } catch (e) {
 
-                    console.error('[rustguac] H.264 snapshot failed:',
+                    console.error('[mybastion] H.264 snapshot failed:',
                             e.message);
 
                     releaseCanvas(canvas);
@@ -820,7 +821,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
             error: function(e) {
 
-                console.error('[rustguac] H.264 decode error:', e.message);
+                console.error('[mybastion] H.264 decode error:', e.message);
 
                 /* A configuration refused for want of a hardware decoder,
                  * which is the one error that is worth answering by trying
@@ -830,7 +831,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
                 if (!hardwareRefused && /nsupported configuration/.test(
                         e.message || '')) {
                     hardwareRefused = true;
-                    console.warn('[rustguac] H.264: no hardware decoder for'
+                    console.warn('[mybastion] H.264: no hardware decoder for'
                             + ' this stream; falling back to whatever the'
                             + ' browser will give us. Expect the decode to'
                             + ' cost considerably more.');
@@ -946,7 +947,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
                 return null;
             }
             needsKeyFrame = false;
-            console.warn('[rustguac] H.264: decoder rebuilt, resuming at'
+            console.warn('[mybastion] H.264: decoder rebuilt, resuming at'
                     + ' keyframe');
         }
 
@@ -986,7 +987,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
 
         } catch (e) {
 
-            console.error('[rustguac] H.264 chunk error:', e.message);
+            console.error('[mybastion] H.264 chunk error:', e.message);
 
             /* The frame may already have been registered and counted before
              * the throw. Returning null means drawDecoded() will never be
@@ -1107,7 +1108,7 @@ Guacamole.H264Decoder = function H264Decoder(display) {
                 var now = performance.now();
                 if (now - lastTimeoutWarn > 1000) {
                     lastTimeoutWarn = now;
-                    console.warn('[rustguac] H.264: sync wait timeout ('
+                    console.warn('[mybastion] H.264: sync wait timeout ('
                             + waitingOn + ' frames pending), forcing flush');
                 }
                 callback();

@@ -1,4 +1,5 @@
-// Demo data for the screenshots, loaded through the rustguac API.
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+// Demo data for the screenshots, loaded through the mybastion API.
 //
 // Every name, host and address is reserved example data: users are
 // @example.com, hosts are *.example.com, *.example.net or
@@ -14,7 +15,7 @@ import { BASE, api, log, signIn, sleep } from './lib.mjs';
 // full path when it has none.
 const DEMO_SSH = { username: 'deploy', password: 'demo-password', enable_drive: true };
 
-// Added by the rustguac-init service in compose.yaml; keep the two in step.
+// Added by the mybastion-init service in compose.yaml; keep the two in step.
 export const ADMIN = {
   email: 'alex@example.com', name: 'Alex Rivera', role: 'admin', groups: ['platform-admins', 'sre'],
 };
@@ -55,7 +56,7 @@ export const FOLDERS = [
       { name: 'lab-vnc', type: 'vnc', hostname: '192.0.2.60', port: 5901, password: 'lab-vnc-demo', display_name: 'Lab Linux (VNC)' },
       { name: 'qemu-test', type: 'spice', hostname: '192.0.2.61', port: 5900, password: 'spice-demo', display_name: 'QEMU test VM (SPICE)' },
       { name: 'app-03', type: 'ssh', hostname: 'app-03.example.internal', port: 22, username: '$corp_username', password: '$corp_password', display_name: 'app-03 (Proxmox guest)' },
-      { name: 'ubuntu-120', type: 'proxmox', proxmox_url: 'https://pve.example.internal:8006', proxmox_vmid: 120, proxmox_token_id: 'rustguac@pve!console', proxmox_token_secret: '00000000-0000-4000-8000-000000000000', display_name: 'Ubuntu 120 (Proxmox VE)' },
+      { name: 'ubuntu-120', type: 'proxmox', proxmox_url: 'https://pve.example.internal:8006', proxmox_vmid: 120, proxmox_token_id: 'mybastion@pve!console', proxmox_token_secret: '00000000-0000-4000-8000-000000000000', display_name: 'Ubuntu 120 (Proxmox VE)' },
       { name: 'xfce-desktop', type: 'vdi', container_image: 'registry.example.com/vdi/xfce-desktop:latest', container_cpu_limit: 2, container_memory_limit: 4096, container_env: { LANG: 'en_US.UTF-8', TZ: 'UTC' }, container_idle_timeout_mins: 120, display_name: 'Disposable XFCE desktop (VDI)' },
     ],
   },
