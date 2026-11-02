@@ -128,8 +128,10 @@ mod tests {
 
     #[test]
     fn sqlite_is_the_default_store() {
+        let parse = |toml_str: &str| -> Config { toml::from_str(toml_str).unwrap() };
+
         // Nothing configured: SQLite at the default paths.
-        let none: Config = toml::from_str("").unwrap();
+        let none = parse("");
         let sc = none.sqlite_storage().unwrap();
         assert_eq!(
             sc.path,
@@ -140,44 +142,25 @@ mod tests {
         assert!(none.secrets_configured());
 
         // Only [vault]: an existing Vault setup keeps using Vault.
-        let vault_only: Config = toml::from_str(
-            "[vault]
-addr = \"https://v:8200\"
-role_id = \"r\"
-",
-        )
-        .unwrap();
+        let vault = r#"
+            [vault]
+            addr = "https://v:8200"
+            role_id = "r"
+        "#;
+        let vault_only = parse(vault);
         assert!(vault_only.sqlite_storage().is_none());
         assert!(vault_only.secrets_configured());
 
         // An explicit [storage] decides, and its backend defaults to sqlite.
-        let both: Config = toml::from_str(
-            "[storage]
-instance_name = \"n1\"
-[vault]
-addr = \"https://v:8200\"
-role_id = \"r\"
-",
-        )
-        .unwrap();
-        assert_eq!(
-            both.sqlite_storage().unwrap().instance_name.as_deref(),
-            Some("n1")
-        );
-        let explicit_vault: Config = toml::from_str(
-            "[storage]
-backend = \"vault\"
-",
-        )
-        .unwrap();
-        assert!(explicit_vault.sqlite_storage().is_none());
+        let both = parse(&format!("[storage]\ninstance_name = \"n1\"\n{vault}"));
+        let sc = both.sqlite_storage().unwrap();
+        assert_eq!(sc.instance_name.as_deref(), Some("n1"));
+        assert!(parse("[storage]\nbackend = \"vault\"")
+            .sqlite_storage()
+            .is_none());
 
-        let typo: Config = toml::from_str(
-            "[storage]
-backend = \"sqlit\"
-",
-        )
-        .unwrap();
-        assert!(typo.validate_storage().is_err());
+        assert!(parse("[storage]\nbackend = \"sqlit\"")
+            .validate_storage()
+            .is_err());
     }
 }

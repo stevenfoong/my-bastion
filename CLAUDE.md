@@ -12,11 +12,10 @@ The plan and its phases are in `docs/fork-design.md`; read it before starting
 a phase. Status:
 
 - Phase 0 (rename, NOTICE, CI, inherited features off by default): done
-- Phase 1 (SQLite secret store): `SecretStore` trait, Vault and SQLite
-  backends, migration CLI done; still to do is splitting `vault.rs` into
-  `src/connections/` (renaming `VaultClient` to `ConnectionStore`),
-  `src/storage/` to `src/store/`, SQLite as default, dropping the multi-Vault
-  DR split
+- Phase 1 (SQLite secret store): code done (`src/store/`,
+  `src/connections/`, SQLite default, DR split dropped, migration CLI). Left
+  from its done-when: connecting to a real RDP target from the UI on a
+  fresh install with no Vault
 - Phases 2–4 (policy/approval engine, MCP, DB proxy): not started
 
 ## Architecture
@@ -39,9 +38,12 @@ a phase. Status:
 - `src/config.rs` — TOML config with defaults
 - `src/auth.rs` — API key auth (SHA-256, IP allowlists, expiry), roles
 - `src/oidc.rs` — OIDC login, callback, logout, group extraction
-- `src/vault.rs` — connections logic (folders, ACL walk, folder defaults,
-  credential variables) as `VaultClient`, over a `SecretStore`
-- `src/storage/` — `SecretStore` trait (`mod.rs`), `vault.rs` (Vault/OpenBao
+- `src/connections/` — `ConnectionStore` over a `SecretStore`: `model.rs`
+  (entries, folder config), `folders.rs` (listing, ACL walk, folder delete),
+  `entries.rs`, `defaults.rs` (folder default credentials), `credentials.rs`
+  (per-user credential variables), `names.rs` (path validation). In
+  `api.rs`, `Connections` wraps the one store cell the handlers use
+- `src/store/` — `SecretStore` trait (`mod.rs`), `vault.rs` (Vault/OpenBao
   KV v2 over HTTP: AppRole/JWT login, renewal, TLS), `sqlite.rs`, `crypto.rs`
   (AES-256-GCM envelope: KEK wraps a data key; row AAD = path + version),
   `cli.rs` (`mybastion storage migrate`, `rotate-kek`, `secret put`)
@@ -69,8 +71,10 @@ Config is found via `--config`, else `/etc/mybastion/mybastion.toml`;
 
 ## Configuration notes
 
-- **Secret store:** `[storage] backend = "sqlite"` (`path`, `kek_source` =
-  `file:`/`env:`/`systemd-creds:`, `base_path`, `instance_name`) or `[vault]`
+- **Secret store:** SQLite by default (`[storage]`: `path`, `kek_source` =
+  `file:`/`env:`/`systemd-creds:`, `base_path`, `instance_name`; installers
+  create `/etc/mybastion/kek`). Vault with `[storage] backend = "vault"`, or
+  `[vault]` and no `[storage]`: `[vault]`
   (`addr`, `role_id` or `[vault.jwt_auth]`, `mount`, `base_path` default
   `mybastion`, `namespace`, `instance_name`; secret via `VAULT_SECRET_ID`).
   Existing rustguac Vault data lives under `base_path = "rustguac"`.
