@@ -15,4 +15,12 @@ ignore = [
     # input. Replacement during a future dependency sweep (rustls-pki-types
     # now has an integrated PEM reader).
     "RUSTSEC-2025-0134",
+
+    # crypto-bigint 0.5.5 — timing variability in constant-time operations.
+    # Only in Cargo.lock as part of ssh-key 0.6's optional ECDSA feature
+    # (p256/p384 0.13), which is not enabled: `cargo tree -i
+    # crypto-bigint@0.5.5` prints nothing, so it is never compiled. The
+    # crypto-bigint the binary does use (via russh) is 0.7.10, which is fixed.
+    # Remove once ssh-key moves to 0.7.
+    "RUSTSEC-2026-0387",
 ]
