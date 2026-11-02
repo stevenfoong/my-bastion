@@ -398,6 +398,30 @@ impl SecretStore for VaultStore {
         }
     }
 
+    async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError> {
+        // KV v2 has no subtree delete: walk it and delete each document.
+        let mut dirs = vec![prefix.to_string()];
+        while let Some(dir) = dirs.pop() {
+            let names = match self.list(&dir).await {
+                Ok(names) => names,
+                Err(StoreError::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            for name in names {
+                let path = format!("{}/{}", dir, name.trim_end_matches('/'));
+                if name.ends_with('/') {
+                    dirs.push(path);
+                } else {
+                    match self.delete(&path).await {
+                        Ok(()) | Err(StoreError::NotFound) => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn spawn_maintenance(self: Arc<Self>) {
         self.spawn_renewal_task();
     }

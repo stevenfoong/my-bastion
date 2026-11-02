@@ -299,7 +299,7 @@ async fn copy_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::sqlite::SqliteStore;
+    use crate::store::sqlite::SqliteStore;
     use serde_json::json;
 
     fn temp_store(dir: &std::path::Path, name: &str) -> SqliteStore {

@@ -240,6 +240,16 @@ impl SecretStore for SqliteStore {
             _ => Ok(()),
         }
     }
+
+    async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError> {
+        // The same range as `list`: every path under "p/".
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM secrets WHERE path >= ?1 AND path < ?2",
+            [format!("{}/", prefix), format!("{}0", prefix)],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +322,21 @@ mod tests {
         s.put("f%/z", &json!({}), None).await.unwrap();
         assert_eq!(s.list("f_1").await.unwrap(), vec!["x"]);
         assert_eq!(s.list("f%").await.unwrap(), vec!["z"]);
+    }
+
+    #[tokio::test]
+    async fn delete_prefix_removes_the_subtree_only() {
+        let db = TempDb::new();
+        let s = SqliteStore::open(&db.path(), &kek()).unwrap();
+        for p in ["a/b", "a/c/d", "a/c/.config", "ab", "a0", "a"] {
+            s.put(p, &json!({}), None).await.unwrap();
+        }
+        s.delete_prefix("a").await.unwrap();
+        assert!(matches!(s.list("a").await, Err(StoreError::NotFound)));
+        for p in ["ab", "a0", "a"] {
+            assert!(s.get(p).await.unwrap().is_some(), "{p} must survive");
+        }
+        s.delete_prefix("nothing/here").await.unwrap();
     }
 
     #[tokio::test]
@@ -548,7 +573,8 @@ mod tests {
             .await
             .unwrap());
 
-        assert_eq!(c.delete_folder("shared", "Prod").await.unwrap().0, 1);
+        // One subfolder (Web) and two entries; sentinels are not entries.
+        assert_eq!(c.delete_folder("shared", "Prod").await.unwrap(), (1, 2));
         assert!(matches!(c.list_folders_in_scope("shared").await, Ok(v) if v.is_empty()));
         assert!(c.get_entry("shared", "Prod/Web", "web02").await.is_err());
     }

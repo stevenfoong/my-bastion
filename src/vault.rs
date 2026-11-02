@@ -10,15 +10,15 @@
 //! (allowed_groups, description) that controls OIDC group-based access.
 //!
 //! The mybastion logic lives here; reads and writes go through a
-//! `storage::SecretStore` (`storage::vault` holds the HTTP, login and TLS code).
+//! `store::SecretStore` (`store::vault` holds the HTTP, login and TLS code).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::VaultConfig;
-use crate::storage::vault::VaultStore;
-use crate::storage::{SecretStore, StoreError};
+use crate::store::vault::VaultStore;
+use crate::store::{SecretStore, StoreError};
 use crate::tunnel;
 
 // ── Error type ──
@@ -1279,53 +1279,46 @@ impl VaultClient {
         resolve_effective_defaults(self, scope, folder).await
     }
 
-    /// Delete an entire folder and its subtree (all entries + .config at every
-    /// level). Pre-v1.6.0 this only cleared the top folder, which silently
-    /// left subfolder keys in Vault; post-subfolders the UI would then refresh
-    /// and show the folder still populated with its subtree, so delete
-    /// appeared to silently fail. This now walks the whole subtree iteratively.
+    /// Delete a folder and everything under it: entries, subfolders and the
+    /// `.config` / `.defaults` sentinels at every level.
     ///
-    /// Returns (subfolder_count, entry_count) for audit/UI feedback. Subfolder
-    /// count excludes the folder itself (i.e. 0 for a leaf).
+    /// Returns (subfolder_count, entry_count) for audit/UI feedback, counted
+    /// before the delete. Subfolder count excludes the folder itself (0 for a
+    /// leaf); sentinels are not entries.
     pub async fn delete_folder(
         &self,
         scope: &str,
         folder: &str,
     ) -> Result<(usize, usize), VaultError> {
         validate_path(folder)?;
+        let scope_prefix = self.resolve_scope_prefix(scope)?;
+        let root = self.kv_path(&scope_prefix, folder);
 
-        // BFS-collect every folder path in the subtree (including the root).
-        let mut queue: Vec<String> = vec![folder.to_string()];
-        let mut i = 0;
-        while i < queue.len() {
-            let current = queue[i].clone();
-            if let Ok(subs) = self.list_subfolders(scope, &current).await {
-                for sub in subs {
-                    let sub_path = sub
-                        .path
-                        .unwrap_or_else(|| format!("{}/{}", current, sub.name));
-                    queue.push(sub_path);
+        let (mut subfolders, mut entries) = (0usize, 0usize);
+        let mut dirs = vec![root.clone()];
+        while let Some(dir) = dirs.pop() {
+            let names = match self.store.list(&dir).await {
+                Ok(names) => names,
+                Err(StoreError::NotFound) => continue,
+                Err(e) => return Err(failed("list")(e)),
+            };
+            for name in names {
+                match name.strip_suffix('/') {
+                    Some(sub) => {
+                        subfolders += 1;
+                        dirs.push(format!("{}/{}", dir, sub));
+                    }
+                    None if name == ".config" || name == ".defaults" => {}
+                    None => entries += 1,
                 }
             }
-            i += 1;
         }
 
-        let scope_prefix = self.resolve_scope_prefix(scope)?;
-        let mut entry_count = 0usize;
-        for path in &queue {
-            let entries = self.list_entries(scope, path).await.unwrap_or_default();
-            for entry in entries {
-                let _ = self.delete_entry(scope, path, &entry).await;
-                entry_count += 1;
-            }
-            for sentinel in [".config", ".defaults"] {
-                let sentinel_path = self.kv_path(&scope_prefix, &format!("{}/{}", path, sentinel));
-                let _ = self.store.delete(&sentinel_path).await;
-            }
-        }
-
-        let subfolder_count = queue.len().saturating_sub(1);
-        Ok((subfolder_count, entry_count))
+        self.store
+            .delete_prefix(&root)
+            .await
+            .map_err(failed("delete folder"))?;
+        Ok((subfolders, entries))
     }
 
     // ── Generic KV v2 read ──

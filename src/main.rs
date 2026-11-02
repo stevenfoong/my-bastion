@@ -14,7 +14,7 @@ mod pve;
 mod recording;
 mod recording_mp4;
 mod session;
-mod storage;
+mod store;
 mod tunnel;
 mod vault;
 mod vdi;
@@ -237,7 +237,7 @@ enum Command {
     /// SQLite KEK, write a secret (e.g. the LUKS key).
     Storage {
         #[command(subcommand)]
-        command: storage::cli::StorageCommand,
+        command: store::cli::StorageCommand,
     },
 }
 
@@ -343,7 +343,7 @@ async fn main() {
             migrate::cmd_vault_migrate(&config, &scope, &from, &to, users, overwrite, dry_run)
                 .await;
         }
-        Some(Command::Storage { command }) => storage::cli::run(&config, command).await,
+        Some(Command::Storage { command }) => store::cli::run(&config, command).await,
     }
 }
 
@@ -941,7 +941,7 @@ async fn run_server(config: Config, database: Db) {
     // the unscoped secrets, and the `[vault*]` sections are not used.
     let sqlite_storage = config.sqlite_storage();
     if let Some(sc) = sqlite_storage {
-        match storage::sqlite_client(sc) {
+        match store::sqlite_client(sc) {
             Ok(client) => {
                 tracing::info!("Secret store: SQLite {}", sc.path.display());
                 *default_cell.write().await = Some(Arc::new(client));

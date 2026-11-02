@@ -107,6 +107,10 @@ pub trait SecretStore: Send + Sync {
     /// there.
     async fn delete(&self, path: &str) -> Result<(), StoreError>;
 
+    /// Remove every document under `prefix` (paths starting `prefix/`).
+    /// Nothing there is not an error.
+    async fn delete_prefix(&self, prefix: &str) -> Result<(), StoreError>;
+
     /// Start whatever the backend needs kept up in the background (Vault:
     /// token renewal). Nothing by default.
     fn spawn_maintenance(self: Arc<Self>) {}
