@@ -13,6 +13,7 @@ mod pve;
 mod recording;
 mod recording_mp4;
 mod session;
+mod storage;
 mod tunnel;
 mod vault;
 mod vdi;

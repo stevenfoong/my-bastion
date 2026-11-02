@@ -75,6 +75,9 @@ base64 = "0.23"
 reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots"], default-features = false }
 webpki-roots = "1"
 
+# Object-safe async traits (storage::SecretStore)
+async-trait = "0.1.92"
+
 # SSH tunneling (jump host / bastion)
 russh = "0.64"
 
