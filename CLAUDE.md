@@ -153,3 +153,5 @@ Ephemeral per-user Docker desktop containers. `VdiDriver` trait in `src/vdi/mod.
 ## Testing
 
 - `tests/test_browser_session.sh` — spawns Xvnc + Chromium, screenshots with xwd/ImageMagick, asserts non-black pixels
+- `tests/test_storage_sqlite.sh` — rustguac on the SQLite secret store with no Vault: API create/read across restarts, `storage put`, `rotate-kek`
+- `tests/test_storage_openbao.sh` — Vault → SQLite → Vault migration against a dev-mode OpenBao (`bao` on PATH); documents must match
