@@ -76,6 +76,16 @@ an existing single-Vault deployment with `rustguac vault-migrate` (copy subtree 
 .config, then add the block + restart — routing is single-source, no read
 fallback). Implemented on branch `feature/multi-vault-dr` (see project memory).
 
+#### SQLite secret store (fork, Phase 1 of `docs/fork-design.md`)
+
+`[storage] backend = "sqlite"` replaces Vault with an encrypted SQLite file
+(`path`, `kek_source`, `base_path`, `instance_name`). `VaultClient` keeps the
+address-book logic and does its I/O through `storage::SecretStore`
+(`src/storage/`: `vault.rs` = the moved HTTP code, `sqlite.rs`, `crypto.rs` =
+AES-256-GCM envelope with the KEK wrapping a data key, `cli.rs` =
+`rustguac storage migrate|rotate-kek|put`). In SQLite mode one store serves
+every scope, so `creds_split` is false. Docs: `docs/configuration.md`.
+
 ### OIDC
 
 Optional `[oidc]` section enables OpenID Connect authentication. Key settings: `issuer_url`, `client_id`, `client_secret`, `redirect_uri`. `OIDC_CLIENT_SECRET` env var can override the config value. `groups_claim` (default: "groups") specifies the JWT claim for group memberships. `extra_scopes` requests additional scopes.

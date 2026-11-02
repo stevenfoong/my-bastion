@@ -3334,6 +3334,7 @@ dependencies = [
  "rand 0.10.3",
  "rcgen",
  "reqwest",
+ "ring",
  "rusqlite",
  "russh",
  "rustls",
@@ -3360,6 +3361,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webpki-roots",
+ "zeroize",
 ]
 
 [[package]]

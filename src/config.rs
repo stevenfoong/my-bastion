@@ -132,6 +132,42 @@ impl std::fmt::Debug for VaultConfig {
     }
 }
 
+/// `[storage]`: where connections, folder configs and credential variables
+/// are kept. Without it (or with `backend = "vault"`) they live in `[vault]`
+/// as before; `backend = "sqlite"` keeps them in an encrypted SQLite file and
+/// ignores the `[vault*]` sections at runtime (`storage migrate` still reads
+/// them).
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageConfig {
+    /// "vault" (default) or "sqlite".
+    #[serde(default = "default_storage_backend")]
+    pub backend: String,
+    /// The SQLite secrets file, kept apart from `db_path`.
+    #[serde(default = "default_secrets_path")]
+    pub path: PathBuf,
+    /// Key-encryption key: `file:<path>`, `env:<VAR>` or
+    /// `systemd-creds:<name>`. 32 bytes as hex or base64.
+    #[serde(default = "default_kek_source")]
+    pub kek_source: String,
+    /// Prefix of the address-book paths, as `[vault] base_path`.
+    #[serde(default = "default_vault_base_path")]
+    pub base_path: String,
+    /// Enables the instance scope, as `[vault] instance_name`.
+    pub instance_name: Option<String>,
+}
+
+fn default_storage_backend() -> String {
+    "vault".into()
+}
+
+fn default_secrets_path() -> PathBuf {
+    PathBuf::from("/var/lib/rustguac/secrets.db")
+}
+
+fn default_kek_source() -> String {
+    "file:/etc/rustguac/kek".into()
+}
+
 /// `[vault.jwt_auth]` (or under `[vault_shared]` / `[vault_local]`): log in
 /// with a workload identity JWT instead of AppRole. The JWT is fetched again
 /// at every login, so a rotated token is always the one used. Exactly one of
@@ -610,6 +646,8 @@ pub struct Config {
     /// instance-scope folders/entries route here. Secret ID via
     /// `VAULT_LOCAL_SECRET_ID`.
     pub vault_local: Option<VaultConfig>,
+    /// `[storage]`: SQLite instead of Vault (see `StorageConfig`).
+    pub storage: Option<StorageConfig>,
     pub drive: Option<DriveConfig>,
     pub theme: Option<ThemeConfig>,
     pub recording: Option<RecordingConfig>,
@@ -1339,6 +1377,7 @@ impl Default for Config {
             vault: None,
             vault_shared: None,
             vault_local: None,
+            storage: None,
             drive: None,
             theme: None,
             recording: None,
@@ -1409,7 +1448,33 @@ impl Config {
             }
         }
 
+        if let Err(msg) = config.validate_storage() {
+            eprintln!("[config] ERROR: {}", msg);
+            std::process::exit(1);
+        }
+
         config
+    }
+
+    /// `[storage]` when it selects the SQLite backend.
+    pub fn sqlite_storage(&self) -> Option<&StorageConfig> {
+        self.storage.as_ref().filter(|s| s.backend == "sqlite")
+    }
+
+    /// Whether any secret store is configured: Vault or SQLite.
+    pub fn secrets_configured(&self) -> bool {
+        self.vault.is_some() || self.sqlite_storage().is_some()
+    }
+
+    /// Check that `[storage] backend` names a known store.
+    pub fn validate_storage(&self) -> Result<(), String> {
+        match self.storage.as_ref().map(|s| s.backend.as_str()) {
+            None | Some("vault") | Some("sqlite") => Ok(()),
+            Some(other) => Err(format!(
+                "[storage] backend must be \"vault\" or \"sqlite\", not \"{}\"",
+                other
+            )),
+        }
     }
 
     /// Check that `[oidc]`, when present, has a usable client secret from

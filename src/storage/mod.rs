@@ -3,10 +3,33 @@
 //! credential variables) and does its I/O through a `SecretStore`: one JSON
 //! document per path, KV v2 style.
 
+pub mod cli;
+pub mod crypto;
+pub mod sqlite;
 pub mod vault;
 
 use async_trait::async_trait;
 use std::sync::Arc;
+
+use crate::config::StorageConfig;
+use crate::vault::VaultClient;
+
+/// Open the SQLite store `[storage]` describes, as the address-book client.
+pub fn open_sqlite(sc: &StorageConfig) -> Result<Arc<sqlite::SqliteStore>, String> {
+    let kek = crypto::Key::load(&sc.kek_source)?;
+    sqlite::SqliteStore::open(&sc.path, &kek)
+        .map(Arc::new)
+        .map_err(|e| format!("{}: {}", sc.path.display(), e))
+}
+
+/// `open_sqlite`, wrapped as the address-book client.
+pub fn sqlite_client(sc: &StorageConfig) -> Result<VaultClient, String> {
+    Ok(VaultClient::with_store(
+        open_sqlite(sc)?,
+        sc.base_path.clone(),
+        sc.instance_name.clone(),
+    ))
+}
 
 /// A stored document and the version it was read at.
 #[derive(Debug, Clone)]
@@ -35,6 +58,8 @@ pub enum StoreError {
         status: u16,
         body: String,
     },
+    /// A local store failed: database, file or decryption error.
+    Backend(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -46,6 +71,7 @@ impl std::fmt::Display for StoreError {
             Self::NotFound => write!(f, "not found"),
             Self::CasConflict => write!(f, "check-and-set conflict"),
             Self::Rejected { status, .. } => write!(f, "unexpected status {}", status),
+            Self::Backend(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -84,4 +110,31 @@ pub trait SecretStore: Send + Sync {
     /// Start whatever the backend needs kept up in the background (Vault:
     /// token renewal). Nothing by default.
     fn spawn_maintenance(self: Arc<Self>) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    #[test]
+    fn storage_section_selects_sqlite_only_when_asked() {
+        let none: Config = toml::from_str("").unwrap();
+        assert!(none.sqlite_storage().is_none() && !none.secrets_configured());
+
+        let vault: Config = toml::from_str("[storage]\nbackend = \"vault\"\n").unwrap();
+        assert!(vault.sqlite_storage().is_none());
+
+        let sqlite: Config = toml::from_str(
+            "[storage]\nbackend = \"sqlite\"\npath = \"/tmp/s.db\"\ninstance_name = \"n1\"\n",
+        )
+        .unwrap();
+        let sc = sqlite.sqlite_storage().unwrap();
+        assert_eq!(sc.kek_source, "file:/etc/rustguac/kek");
+        assert_eq!(sc.base_path, "rustguac");
+        assert_eq!(sc.instance_name.as_deref(), Some("n1"));
+        assert!(sqlite.secrets_configured());
+
+        let typo: Config = toml::from_str("[storage]\nbackend = \"sqlit\"\n").unwrap();
+        assert!(typo.validate_storage().is_err());
+    }
 }

@@ -78,6 +78,10 @@ webpki-roots = "1"
 # Object-safe async traits (storage::SecretStore)
 async-trait = "0.1.92"
 
+# Secret store encryption (storage::crypto); ring is already in via rustls
+ring = "0.17"
+zeroize = "1"
+
 # SSH tunneling (jump host / bastion)
 russh = "0.64"
 

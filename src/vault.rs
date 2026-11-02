@@ -34,6 +34,8 @@ pub enum VaultError {
     /// connected (initial connect pending or the Vault is down). Distinct from
     /// a Vault that returns an error: the request never left rustguac.
     Unavailable,
+    /// A local secret store (SQLite) failed.
+    Storage(String),
 }
 
 impl std::fmt::Display for VaultError {
@@ -46,6 +48,7 @@ impl std::fmt::Display for VaultError {
             Self::Parse(msg) => write!(f, "vault response parse error: {}", msg),
             Self::BadName(msg) => write!(f, "invalid name: {}", msg),
             Self::Unavailable => write!(f, "vault backend not available"),
+            Self::Storage(msg) => write!(f, "secret store error: {}", msg),
         }
     }
 }
@@ -67,6 +70,7 @@ impl From<StoreError> for VaultError {
             StoreError::Rejected { status, .. } => {
                 VaultError::Parse(format!("unexpected status {}", status))
             }
+            StoreError::Backend(msg) => VaultError::Storage(msg),
         }
     }
 }
@@ -909,11 +913,26 @@ impl VaultClient {
     /// Create a new Vault client and perform initial login.
     pub async fn new(config: &VaultConfig, secret_id: &str) -> Result<Self, VaultError> {
         let store = VaultStore::new(config, secret_id).await?;
-        Ok(Self {
-            store: Arc::new(store),
-            base_path: config.base_path.clone(),
-            instance_name: config.instance_name.clone(),
-        })
+        Ok(Self::with_store(
+            Arc::new(store),
+            config.base_path.clone(),
+            config.instance_name.clone(),
+        ))
+    }
+
+    /// A client over any store, e.g. SQLite. `base_path` prefixes the
+    /// address-book paths as in `[vault]`; `instance_name` enables the
+    /// instance scope.
+    pub fn with_store(
+        store: Arc<dyn SecretStore>,
+        base_path: String,
+        instance_name: Option<String>,
+    ) -> Self {
+        Self {
+            store,
+            base_path,
+            instance_name,
+        }
     }
 
     /// Spawn the store's background upkeep (for Vault, token renewal at 50%

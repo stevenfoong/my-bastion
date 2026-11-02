@@ -216,6 +216,62 @@ Related top-level setting:
 |-----|---------|-------------|
 | `user_credentials_default_scope` | `local` | Where a new per-user credential variable is stored when more than one backend is configured: `local` (stays on this instance, survives a central outage) or `shared` (propagates fleet-wide). Ignored with a single Vault. |
 
+## `[storage]` section
+
+Keeps connections, folder configs and credential variables in an encrypted
+SQLite file instead of Vault. Without this section, or with
+`backend = "vault"`, they live in `[vault]` as before. With
+`backend = "sqlite"`, the `[vault*]` sections are not used at runtime, and
+one store serves both the shared and instance scopes.
+
+```toml
+[storage]
+backend = "sqlite"
+path = "/var/lib/rustguac/secrets.db"
+kek_source = "file:/etc/rustguac/kek"
+# instance_name = "prod-1"   # enables the instance scope
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `vault` | `vault` or `sqlite` |
+| `path` | `/var/lib/rustguac/secrets.db` | The secrets file, kept apart from `db_path`. Created with mode 0600. |
+| `kek_source` | `file:/etc/rustguac/kek` | Where the key-encryption key is: `file:<path>`, `env:<VAR>`, or `systemd-creds:<name>` (read from `$CREDENTIALS_DIRECTORY`, for `LoadCredentialEncrypted=`). 32 bytes as 64 hex digits or base64. |
+| `base_path` | `rustguac` | Prefix of the address-book paths, as `[vault] base_path` |
+| `instance_name` | — | Enables the instance scope, as `[vault] instance_name` |
+
+Create a KEK before the first start:
+
+```bash
+sudo sh -c 'umask 277; openssl rand -hex 32 > /etc/rustguac/kek'
+sudo chown rustguac /etc/rustguac/kek
+```
+
+**Encryption.** A random data key encrypts every row with AES-256-GCM. The
+KEK wraps the data key, and only the wrapped key is stored in the file. Each
+row is bound to its path and version, so a row copied to another path or
+renumbered fails to decrypt instead of returning someone else's secret.
+
+**What this protects.** A copied `secrets.db` or a backup of it is unreadable
+without the KEK. It does **not** protect against someone who controls the
+host running rustguac: that host has to read the KEK to start. This is the
+same limit as Vault with an auto-unseal key on the same host. Keep the KEK
+out of the backups of `secrets.db`. Replacing the whole file with an older
+copy (rolling back every secret together) is not detected.
+
+**Tools:**
+
+- `rustguac storage migrate --from vault --to sqlite --dry-run`: copy
+  everything under `base_path` between backends (either direction; existing
+  secrets are kept unless `--overwrite`). Add `--path <kv path>` for secrets
+  outside it, such as the drive's `luks_key_path`. Both `[vault]` and
+  `[storage]` must be in the config; switch `backend` and restart afterwards.
+- `rustguac storage rotate-kek --new-kek-source file:/etc/rustguac/kek.new`:
+  re-wrap the data key under a new KEK (rows are not re-encrypted, and a
+  running server keeps working), then point `kek_source` at the new one.
+- `rustguac storage put rustguac/luks key=@/root/luks.key`: write one secret,
+  e.g. the LUKS key that `[drive] luks_key_path` names.
+
 ## `[drive]` section
 
 Enables file transfer for RDP (drive redirection) and SSH (SFTP).

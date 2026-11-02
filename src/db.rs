@@ -100,7 +100,7 @@ pub struct AddressbookAuditEntry {
 /// otherwise create a root-owned db that the systemd service (running as the
 /// unprivileged `rustguac` user) can't write to — surfacing later as
 /// "attempt to write a readonly database" on the first OIDC login.
-fn repair_db_ownership(path: &Path) {
+pub(crate) fn repair_db_ownership(path: &Path) {
     use std::os::unix::fs::MetadataExt;
 
     // Only act when running as root — otherwise chown(2) would fail anyway.

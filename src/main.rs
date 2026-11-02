@@ -228,6 +228,13 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Secret store tools: copy between Vault and SQLite, rotate the
+    /// SQLite KEK, write a secret (e.g. the LUKS key).
+    Storage {
+        #[command(subcommand)]
+        command: storage::cli::StorageCommand,
+    },
 }
 
 #[tokio::main]
@@ -332,6 +339,7 @@ async fn main() {
             migrate::cmd_vault_migrate(&config, &scope, &from, &to, users, overwrite, dry_run)
                 .await;
         }
+        Some(Command::Storage { command }) => storage::cli::run(&config, command).await,
     }
 }
 
@@ -925,7 +933,24 @@ async fn run_server(config: Config, database: Db) {
     let mut shared_cell = default_cell.clone();
     let mut local_cell = default_cell.clone();
 
-    if let Some(ref vault_config) = config.vault {
+    // `[storage] backend = "sqlite"`: one local store serves every scope and
+    // the unscoped secrets, and the `[vault*]` sections are not used.
+    let sqlite_storage = config.sqlite_storage();
+    if let Some(sc) = sqlite_storage {
+        match storage::sqlite_client(sc) {
+            Ok(client) => {
+                tracing::info!("Secret store: SQLite {}", sc.path.display());
+                *default_cell.write().await = Some(Arc::new(client));
+            }
+            Err(e) => {
+                tracing::error!("[storage]: {e}");
+                tracing::error!("Address book and drive features will be unavailable");
+            }
+        }
+    }
+    let use_vault = sqlite_storage.is_none();
+
+    if let Some(vault_config) = config.vault.as_ref().filter(|_| use_vault) {
         match vault_config.login_secret("VAULT_SECRET_ID") {
             Ok(sid) => {
                 connect_vault_backend(
@@ -944,7 +969,7 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
-    if let Some(ref vc) = config.vault_shared {
+    if let Some(vc) = config.vault_shared.as_ref().filter(|_| use_vault) {
         match vc.login_secret("VAULT_SHARED_SECRET_ID") {
             Ok(sid) => {
                 let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
@@ -955,7 +980,7 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
-    if let Some(ref vc) = config.vault_local {
+    if let Some(vc) = config.vault_local.as_ref().filter(|_| use_vault) {
         match vc.login_secret("VAULT_LOCAL_SECRET_ID") {
             Ok(sid) => {
                 let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
@@ -999,7 +1024,7 @@ async fn run_server(config: Config, database: Db) {
     });
 
     let oidc_enabled = OidcEnabled(oidc_state.is_some());
-    let vault_configured = VaultConfigured(config.vault.is_some());
+    let vault_configured = VaultConfigured(config.secrets_configured());
     let ab_changes = api::AddressBookChanges::default();
     let credential_default_scope =
         CredentialDefaultScope(config.user_credentials_default_scope.clone());

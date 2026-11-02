@@ -766,7 +766,7 @@ pub async fn system_status(
 
     // Vault status
     let vault_ok = if vault_configured.0 {
-        manager.config().vault.is_some()
+        manager.config().secrets_configured()
     } else {
         false
     };
