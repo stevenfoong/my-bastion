@@ -1,4 +1,4 @@
-# rustguac — Ultimate Bastion fork
+# My Bastion
 
 **One gateway for every privileged access: people and AI agents, desktops, servers and databases. Every action is recorded, controlled and, when it matters, approved.**
 

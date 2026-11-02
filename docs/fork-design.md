@@ -1,4 +1,4 @@
-# my-bastion: design
+# My Bastion: design
 
 Origin: hard fork of `sol1/rustguac` v1.13.4 (Apache-2.0). This repo does **not** track upstream any more.
 Status: draft. Phases are built in order, and each phase has to be shippable on its own.
@@ -42,7 +42,9 @@ Status: draft. Phases are built in order, and each phase has to be shippable on 
                       guacd (C) ---> RDP / VNC / SSH / SPICE targets
 ```
 
-Proxies talk to the core over an **internal API** (HTTP + mTLS or gRPC, on a private port only):
+Proxies talk to the core over an **internal API**: **HTTP/JSON**, on a Unix socket when the proxy runs on the same host, or over **mTLS** on a private port when it runs elsewhere. Reasons: the core already runs axum, it's easy to debug with `curl`, there's no protobuf toolchain to maintain, and call volume is low. The API is described in an OpenAPI file so the Go proxy's client can be generated from it. gRPC can be revisited if the DB proxy ever needs streaming at high volume.
+
+Endpoints:
 
 - `authorize(subject, target, action)`, which returns allow, deny or pending (with an approval id)
 - `await_approval(approval_id)`
@@ -53,10 +55,15 @@ Proxies talk to the core over an **internal API** (HTTP + mTLS or gRPC, on a pri
 
 ## Phase 0: hard-fork housekeeping
 
-- Rename the project: binary, crate name, systemd units, `/opt/...` and `/etc/...` paths, config file name, UI branding and page titles.
+- Rename the project to **My Bastion**:
+  - display name: `My Bastion`
+  - binary / crate / systemd unit: `mybastion`
+  - paths: `/opt/mybastion`, `/etc/mybastion`, `/var/lib/mybastion`
+  - config: `mybastion.toml`
+  - plus UI branding and page titles
 - Add `NOTICE`, update `LICENSE` headers on changed files, rewrite `CLAUDE.md` for the new project.
 - Point CI and release builds at this repo. Remove sol1-specific bits (commercial-support text, Docker Hub image name, NetBox/Knocknoc docs if not needed).
-- Remove or isolate features you don't plan to keep (e.g. VDI, web-browser sessions) so the codebase stays small.
+- **Keep the inherited features** (VDI, web-browser sessions, SPICE/Proxmox, NetBox sync), but make each one **off by default** behind its own config section. The decision on dropping them is deferred. Every policy and approval check must still cover them while they exist, and VDI in particular must stay off unless needed, because Docker socket access is root-equivalent.
 
 **Done when:** the renamed binary builds, installs and passes the existing test suite.
 
@@ -178,7 +185,13 @@ Policy  = subject (user | group | role | api key | ai agent)
 - Policies are stored in SQLite and edited in the admin UI. The most specific matching rule wins, and an explicit deny always wins.
 - **Approval requests** record who, what, target, the reason the user typed, the time, the decision, the approver and the approver's comment.
 - **Approvers:** by role or group. The requester can never approve their own request.
-- **Notifications:** web UI first. Webhooks (Telegram / Slack / email) come later.
+- **Notifications:** web UI and **Telegram** in v1. Slack and email come later.
+  - **Telegram bot:** sends each approval request to the approvers with **Approve / Deny** inline buttons (who, target, action, command or query, reason).
+  - **Long polling**, so no inbound webhook endpoint is exposed.
+  - **Account linking:** each approver links their Telegram account to their bastion user with a one-time code from the web UI. Only callbacks from linked accounts with approver rights count, and a requester can never approve their own request from Telegram either.
+  - **High-risk requests** (e.g. prod DDL, break-glass) can be marked "web-only". Telegram then only notifies, and approval needs a fresh sign-in on the web UI.
+  - **Updates:** the message is edited to show the final decision and approver, so the group chat doubles as a log.
+  - Bot token is kept in the secret store.
 - **Break-glass:** an admin can override with a mandatory reason. It's always alerted.
 
 ### Where it applies
@@ -341,12 +354,12 @@ It never touches guacd, it speaks completely different protocols, and Go has the
 
 ## Open questions
 
-1. Project name (needed for Phase 0).
-2. Which upstream features to drop (VDI? web sessions? SPICE/Proxmox? NetBox sync?).
-3. Internal API: HTTP + mTLS or gRPC?
-4. Approval notification channels for v1.
+1. ~~Project name~~ **Decided:** My Bastion (`mybastion`).
+2. ~~Which upstream features to drop~~ **Deferred:** keep them, off by default (see Phase 0).
+3. ~~Internal API~~ **Decided:** HTTP/JSON with OpenAPI; Unix socket locally, mTLS remotely.
+4. ~~Approval notification channels for v1~~ **Decided:** web UI + Telegram.
 5. ~~MCP auth: API key only, or also OAuth?~~ **Decided:** both. API key first, then OAuth 2.1 (see Phase 3 "Authentication").
 
 ## Suggested first prompt for Claude Code
 
-> Read `CLAUDE.md` and `docs/fork-design.md`. This is a hard fork; refactoring is allowed. Do Phase 0 first, using the project name `<name>`. Then start Phase 1: introduce the `SecretStore` trait and move the existing Vault I/O behind it with no behaviour change, and run the full test suite. Stop and show me the plan for splitting `vault.rs` before writing the SQLite backend.
+> Read `CLAUDE.md` and `docs/fork-design.md`. This is a hard fork; refactoring is allowed. Do Phase 0 first, using the project name **My Bastion** (`mybastion`). Then start Phase 1: introduce the `SecretStore` trait and move the existing Vault I/O behind it with no behaviour change, and run the full test suite. Stop and show me the plan for splitting `vault.rs` before writing the SQLite backend.
