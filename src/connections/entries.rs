@@ -3,10 +3,14 @@
 
 use super::*;
 
-impl VaultClient {
+impl ConnectionStore {
     /// List entry names in a folder (excludes the `.config` and `.defaults`
     /// sentinels).
-    pub async fn list_entries(&self, scope: &str, folder: &str) -> Result<Vec<String>, VaultError> {
+    pub async fn list_entries(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<Vec<String>, ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let keys = self.kv_list(&self.kv_path(&scope_prefix, folder)).await?;
@@ -22,14 +26,17 @@ impl VaultClient {
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<AddressBookEntry, VaultError> {
+    ) -> Result<AddressBookEntry, ConnectionError> {
         validate_path(folder)?;
         validate_name(entry)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, entry));
-        let data = self.read_doc(&path).await?.ok_or(VaultError::NotFound)?;
+        let data = self
+            .read_doc(&path)
+            .await?
+            .ok_or(ConnectionError::NotFound)?;
         let mut entry: AddressBookEntry = serde_json::from_value(data)
-            .map_err(|e| VaultError::Parse(format!("invalid entry: {}", e)))?;
+            .map_err(|e| ConnectionError::Parse(format!("invalid entry: {}", e)))?;
         entry.normalize_jump_hosts();
         Ok(entry)
     }
@@ -41,7 +48,7 @@ impl VaultClient {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.write_entry(scope, folder, entry, data, false)
             .await
             .map(|_| ())
@@ -57,7 +64,7 @@ impl VaultClient {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         self.write_entry(scope, folder, entry, data, true).await
     }
 
@@ -68,7 +75,7 @@ impl VaultClient {
         entry: &str,
         data: &AddressBookEntry,
         only_if_absent: bool,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         validate_path(folder)?;
         validate_name(entry)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
@@ -87,7 +94,7 @@ impl VaultClient {
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         validate_name(entry)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, entry));

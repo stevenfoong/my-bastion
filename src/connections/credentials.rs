@@ -91,7 +91,7 @@ pub fn resolve_credential_variables(
     }
 }
 
-impl VaultClient {
+impl ConnectionStore {
     // ── User credential variables ──
 
     /// Read a user's stored credential variables from Vault.
@@ -99,7 +99,7 @@ impl VaultClient {
     pub async fn get_user_credentials(
         &self,
         email: &str,
-    ) -> Result<HashMap<String, String>, VaultError> {
+    ) -> Result<HashMap<String, String>, ConnectionError> {
         self.get_user_credentials_by_key(&sanitize_email_key(email))
             .await
     }
@@ -110,7 +110,7 @@ impl VaultClient {
         &self,
         email: &str,
         creds: &HashMap<String, String>,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.put_user_credentials_by_key(&sanitize_email_key(email), creds)
             .await
     }
@@ -120,7 +120,7 @@ impl VaultClient {
     pub async fn get_user_credentials_by_key(
         &self,
         key: &str,
-    ) -> Result<HashMap<String, String>, VaultError> {
+    ) -> Result<HashMap<String, String>, ConnectionError> {
         let path = format!("{}/users/{}", self.base_path, key);
         let doc = self
             .store
@@ -146,7 +146,7 @@ impl VaultClient {
         &self,
         key: &str,
         creds: &HashMap<String, String>,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         let path = format!("{}/users/{}", self.base_path, key);
         self.store
             .put(&path, &to_doc(creds)?, None)
@@ -157,18 +157,18 @@ impl VaultClient {
 
     /// List the raw key names under `<base_path>/users/` (each a sanitised
     /// email). Empty when no credentials have been stored yet.
-    pub async fn list_user_keys(&self) -> Result<Vec<String>, VaultError> {
+    pub async fn list_user_keys(&self) -> Result<Vec<String>, ConnectionError> {
         let path = format!("{}/users", self.base_path);
         match self.kv_list(&path).await {
             Ok(keys) => Ok(keys.into_iter().filter(|k| !k.ends_with('/')).collect()),
-            Err(VaultError::NotFound) => Ok(Vec::new()),
+            Err(ConnectionError::NotFound) => Ok(Vec::new()),
             Err(e) => Err(e),
         }
     }
 
     /// Delete a user's credential variables from Vault.
     #[allow(dead_code)] // Will be used by admin endpoint
-    pub async fn delete_user_credentials(&self, email: &str) -> Result<(), VaultError> {
+    pub async fn delete_user_credentials(&self, email: &str) -> Result<(), ConnectionError> {
         let key = sanitize_email_key(email);
         let path = format!("{}/users/{}", self.base_path, key);
         match self.store.delete(&path).await {

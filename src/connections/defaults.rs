@@ -79,7 +79,7 @@ pub fn apply_folder_defaults(entry: &mut AddressBookEntry, defaults: &FolderDefa
 /// What the defaults walk reads per folder: its own `.defaults`, and whether
 /// its `.config` lets it inherit from the parent. A trait so the walk in
 /// `resolve_effective_defaults` is unit-testable without a Vault; both
-/// `VaultClient` and the multi-backend router implement it.
+/// `ConnectionStore` and the multi-backend router implement it.
 #[allow(async_fn_in_trait)]
 pub trait DefaultsSource {
     /// The folder's own `.defaults`; `None` when it has none.
@@ -87,12 +87,16 @@ pub trait DefaultsSource {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<FolderDefaults>, VaultError>;
+    ) -> Result<Option<FolderDefaults>, ConnectionError>;
 
     /// Whether the folder's parent may lend it defaults: see
     /// `FolderConfig::shares_parent_audience`. A folder with no `.config`
     /// does not inherit, which is how `resolve_folder_access` treats it too.
-    async fn takes_parent_defaults(&self, scope: &str, folder: &str) -> Result<bool, VaultError>;
+    async fn takes_parent_defaults(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<bool, ConnectionError>;
 }
 
 /// The defaults that apply to entries in `folder`: its own `.defaults`, then
@@ -111,7 +115,7 @@ pub async fn resolve_effective_defaults<S: DefaultsSource>(
     src: &S,
     scope: &str,
     folder: &str,
-) -> Result<Option<FolderDefaults>, VaultError> {
+) -> Result<Option<FolderDefaults>, ConnectionError> {
     let mut merged = FolderDefaults::new();
     let mut path = folder.to_string();
     loop {
@@ -135,41 +139,48 @@ pub async fn resolve_effective_defaults<S: DefaultsSource>(
     })
 }
 
-impl DefaultsSource for VaultClient {
+impl DefaultsSource for ConnectionStore {
     async fn folder_defaults(
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<FolderDefaults>, VaultError> {
+    ) -> Result<Option<FolderDefaults>, ConnectionError> {
         match self.get_folder_defaults(scope, folder).await {
             Ok(d) => Ok(Some(d)),
-            Err(VaultError::NotFound) => Ok(None),
+            Err(ConnectionError::NotFound) => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    async fn takes_parent_defaults(&self, scope: &str, folder: &str) -> Result<bool, VaultError> {
+    async fn takes_parent_defaults(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<bool, ConnectionError> {
         match self.get_folder_config(scope, folder).await {
             Ok(c) => Ok(c.shares_parent_audience()),
-            Err(VaultError::NotFound) => Ok(false),
+            Err(ConnectionError::NotFound) => Ok(false),
             Err(e) => Err(e),
         }
     }
 }
 
-impl VaultClient {
+impl ConnectionStore {
     /// Read a folder's `.defaults` (see `FolderDefaults`).
     pub async fn get_folder_defaults(
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<FolderDefaults, VaultError> {
+    ) -> Result<FolderDefaults, ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, ".defaults"));
-        let data = self.read_doc(&path).await?.ok_or(VaultError::NotFound)?;
+        let data = self
+            .read_doc(&path)
+            .await?
+            .ok_or(ConnectionError::NotFound)?;
         serde_json::from_value(data)
-            .map_err(|e| VaultError::Parse(format!("invalid .defaults: {}", e)))
+            .map_err(|e| ConnectionError::Parse(format!("invalid .defaults: {}", e)))
     }
 
     /// Write a folder's `.defaults`. An empty map removes the key instead,
@@ -179,7 +190,7 @@ impl VaultClient {
         scope: &str,
         folder: &str,
         defaults: &FolderDefaults,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         if defaults.is_empty() {
             return self.delete_folder_defaults(scope, folder).await;
         }
@@ -198,7 +209,7 @@ impl VaultClient {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, ".defaults"));
@@ -214,7 +225,7 @@ impl VaultClient {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<FolderDefaults>, VaultError> {
+    ) -> Result<Option<FolderDefaults>, ConnectionError> {
         validate_path(folder)?;
         resolve_effective_defaults(self, scope, folder).await
     }
@@ -319,14 +330,14 @@ mod tests {
             &self,
             _scope: &str,
             folder: &str,
-        ) -> Result<Option<FolderDefaults>, VaultError> {
+        ) -> Result<Option<FolderDefaults>, ConnectionError> {
             Ok(self.defaults.get(folder).cloned())
         }
         async fn takes_parent_defaults(
             &self,
             _scope: &str,
             folder: &str,
-        ) -> Result<bool, VaultError> {
+        ) -> Result<bool, ConnectionError> {
             Ok(self.inherit.contains(folder))
         }
     }
@@ -460,11 +471,15 @@ mod tests {
                 &self,
                 _s: &str,
                 _f: &str,
-            ) -> Result<Option<FolderDefaults>, VaultError> {
+            ) -> Result<Option<FolderDefaults>, ConnectionError> {
                 Ok(Some(ssh_key("k")))
             }
-            async fn takes_parent_defaults(&self, _s: &str, _f: &str) -> Result<bool, VaultError> {
-                Err(VaultError::Forbidden)
+            async fn takes_parent_defaults(
+                &self,
+                _s: &str,
+                _f: &str,
+            ) -> Result<bool, ConnectionError> {
+                Err(ConnectionError::Forbidden)
             }
         }
         // a .config that cannot be read must not be mistaken for "inherits"

@@ -32,94 +32,97 @@ use names::{validate_name, validate_path};
 // ── Error type ──
 
 #[derive(Debug)]
-pub enum VaultError {
+pub enum ConnectionError {
     Auth(String),
     NotFound,
     Forbidden,
     Http(reqwest::Error),
     Parse(String),
     BadName(String),
-    /// The backend serving this scope is configured but not currently
-    /// connected (initial connect pending or the Vault is down). Distinct from
-    /// a Vault that returns an error: the request never left mybastion.
+    /// The store serving this scope is configured but not currently
+    /// reachable (initial connect pending, or Vault is down). Distinct from a
+    /// store that returns an error: the request never left mybastion.
     Unavailable,
     /// A local secret store (SQLite) failed.
     Storage(String),
 }
 
-impl std::fmt::Display for VaultError {
+impl std::fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(msg) => write!(f, "vault auth error: {}", msg),
-            Self::NotFound => write!(f, "not found in vault"),
-            Self::Forbidden => write!(f, "vault access denied"),
-            Self::Http(e) => write!(f, "vault HTTP error: {}", e),
-            Self::Parse(msg) => write!(f, "vault response parse error: {}", msg),
+            Self::Auth(msg) => write!(f, "secret store login failed: {}", msg),
+            Self::NotFound => write!(f, "not found"),
+            Self::Forbidden => write!(f, "secret store denied access"),
+            Self::Http(e) => write!(f, "secret store HTTP error: {}", e),
+            Self::Parse(msg) => write!(f, "secret store error: {}", msg),
             Self::BadName(msg) => write!(f, "invalid name: {}", msg),
-            Self::Unavailable => write!(f, "vault backend not available"),
+            Self::Unavailable => write!(f, "secret store not available"),
             Self::Storage(msg) => write!(f, "secret store error: {}", msg),
         }
     }
 }
 
-impl From<reqwest::Error> for VaultError {
+impl From<reqwest::Error> for ConnectionError {
     fn from(e: reqwest::Error) -> Self {
-        VaultError::Http(e)
+        ConnectionError::Http(e)
     }
 }
 
-impl From<StoreError> for VaultError {
+impl From<StoreError> for ConnectionError {
     fn from(e: StoreError) -> Self {
         match e {
-            StoreError::Auth(msg) => VaultError::Auth(msg),
-            StoreError::Http(e) => VaultError::Http(e),
-            StoreError::Forbidden => VaultError::Forbidden,
-            StoreError::NotFound => VaultError::NotFound,
-            StoreError::CasConflict => VaultError::Parse("check-and-set conflict".into()),
+            StoreError::Auth(msg) => ConnectionError::Auth(msg),
+            StoreError::Http(e) => ConnectionError::Http(e),
+            StoreError::Forbidden => ConnectionError::Forbidden,
+            StoreError::NotFound => ConnectionError::NotFound,
+            StoreError::CasConflict => ConnectionError::Parse("check-and-set conflict".into()),
             StoreError::Rejected { status, .. } => {
-                VaultError::Parse(format!("unexpected status {}", status))
+                ConnectionError::Parse(format!("unexpected status {}", status))
             }
-            StoreError::Backend(msg) => VaultError::Storage(msg),
+            StoreError::Backend(msg) => ConnectionError::Storage(msg),
         }
     }
 }
 
 /// For `map_err`: a status the store rejected reads `"<op> failed (<status>)"`.
-fn failed(op: &'static str) -> impl Fn(StoreError) -> VaultError {
+fn failed(op: &'static str) -> impl Fn(StoreError) -> ConnectionError {
     move |e| match e {
         StoreError::Rejected { status, .. } => {
-            VaultError::Parse(format!("{} failed ({})", op, status))
+            ConnectionError::Parse(format!("{} failed ({})", op, status))
         }
         e => e.into(),
     }
 }
 
 /// `failed`, with the store's response body after it, as writes report.
-fn write_failed(op: &'static str) -> impl Fn(StoreError) -> VaultError {
+fn write_failed(op: &'static str) -> impl Fn(StoreError) -> ConnectionError {
     move |e| match e {
         StoreError::Rejected { status, body } => {
-            VaultError::Parse(format!("{} failed ({}): {}", op, status, body))
+            ConnectionError::Parse(format!("{} failed ({}): {}", op, status, body))
         }
         e => e.into(),
     }
 }
 
 /// A typed value as the JSON document the store keeps.
-fn to_doc<T: Serialize>(v: &T) -> Result<serde_json::Value, VaultError> {
-    serde_json::to_value(v).map_err(|e| VaultError::Parse(e.to_string()))
+fn to_doc<T: Serialize>(v: &T) -> Result<serde_json::Value, ConnectionError> {
+    serde_json::to_value(v).map_err(|e| ConnectionError::Parse(e.to_string()))
 }
 
-// ── Vault client ──
+// ── Connection store ──
 
-pub struct VaultClient {
+pub struct ConnectionStore {
     store: Arc<dyn SecretStore>,
     base_path: String,
     instance_name: Option<String>,
 }
 
-impl VaultClient {
-    /// Create a new Vault client and perform initial login.
-    pub async fn new(config: &VaultConfig, secret_id: &str) -> Result<Self, VaultError> {
+impl ConnectionStore {
+    /// Connections kept in Vault/OpenBao: logs in before returning.
+    pub async fn open_vault(
+        config: &VaultConfig,
+        secret_id: &str,
+    ) -> Result<Self, ConnectionError> {
         let store = VaultStore::new(config, secret_id).await?;
         Ok(Self::with_store(
             Arc::new(store),
@@ -145,7 +148,7 @@ impl VaultClient {
 
     /// Spawn the store's background upkeep (for Vault, token renewal at 50%
     /// of TTL).
-    pub fn spawn_renewal_task(self: &Arc<Self>) {
+    pub fn spawn_maintenance(self: &Arc<Self>) {
         Arc::clone(&self.store).spawn_maintenance();
     }
 
@@ -157,7 +160,7 @@ impl VaultClient {
     }
 
     /// The document at `path`, or `None` when there is none.
-    async fn read_doc(&self, path: &str) -> Result<Option<serde_json::Value>, VaultError> {
+    async fn read_doc(&self, path: &str) -> Result<Option<serde_json::Value>, ConnectionError> {
         Ok(self.store.get(path).await?.map(|d| d.data))
     }
 
@@ -165,30 +168,42 @@ impl VaultClient {
 
     /// Read a single field from an arbitrary KV v2 path (relative to base_path).
     /// Used for reading non-address-book secrets like the LUKS encryption key.
-    pub async fn read_kv_field(&self, kv_path: &str, field: &str) -> Result<String, VaultError> {
-        let data = self.read_doc(kv_path).await?.ok_or(VaultError::NotFound)?;
+    pub async fn read_kv_field(
+        &self,
+        kv_path: &str,
+        field: &str,
+    ) -> Result<String, ConnectionError> {
+        let data = self
+            .read_doc(kv_path)
+            .await?
+            .ok_or(ConnectionError::NotFound)?;
         data[field]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| VaultError::Parse(format!("field '{}' not found in secret", field)))
+            .ok_or_else(|| ConnectionError::Parse(format!("field '{}' not found in secret", field)))
     }
 
     // ── Internal helpers ──
 
     /// Resolve "shared" or "instance" scope label to the actual Vault path prefix.
-    fn resolve_scope_prefix(&self, scope: &str) -> Result<String, VaultError> {
+    fn resolve_scope_prefix(&self, scope: &str) -> Result<String, ConnectionError> {
         match scope {
             "shared" => Ok("shared".to_string()),
             "instance" => match &self.instance_name {
                 Some(name) => Ok(format!("instance/{}", name)),
-                None => Err(VaultError::BadName("no instance_name configured".into())),
+                None => Err(ConnectionError::BadName(
+                    "no instance_name configured".into(),
+                )),
             },
-            _ => Err(VaultError::BadName(format!("invalid scope: {}", scope))),
+            _ => Err(ConnectionError::BadName(format!(
+                "invalid scope: {}",
+                scope
+            ))),
         }
     }
 
     /// The keys directly under `dir`; subfolder names end with `/`.
-    async fn kv_list(&self, dir: &str) -> Result<Vec<String>, VaultError> {
+    async fn kv_list(&self, dir: &str) -> Result<Vec<String>, ConnectionError> {
         self.store.list(dir).await.map_err(failed("list"))
     }
 }

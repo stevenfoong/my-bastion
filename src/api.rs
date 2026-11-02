@@ -2,7 +2,9 @@
 //! REST API routes.
 
 use crate::auth::{self, client_ip, role_level, AuthIdentity, TrustedProxies};
-use crate::connections::{AddressBookEntry, DefaultsSource, FolderConfig, VaultClient, VaultError};
+use crate::connections::{
+    AddressBookEntry, ConnectionError, ConnectionStore, DefaultsSource, FolderConfig,
+};
 use crate::db::{self, Db};
 use crate::session::{CreateSessionRequest, SessionManager, SessionType};
 use axum::{
@@ -2282,12 +2284,12 @@ pub async fn delete_group_mapping(
 // ── Address Book endpoints (Vault-backed) ──
 
 /// One Vault backend connection cell — `None` until connected / while down.
-pub type VaultCell = Arc<tokio::sync::RwLock<Option<Arc<VaultClient>>>>;
+pub type VaultCell = Arc<tokio::sync::RwLock<Option<Arc<ConnectionStore>>>>;
 
 /// The set of Vault backends mybastion talks to.
 ///
 /// In the single-Vault default, `shared` and `local` both alias `default`, so
-/// behaviour is identical to a single `VaultClient`. A multi-Vault split (see
+/// behaviour is identical to a single `ConnectionStore`. A multi-Vault split (see
 /// `[vault_shared]` / `[vault_local]`) routes the `shared` and `instance`
 /// address-book scopes to dedicated backends, each with its own connection and
 /// retry lifecycle, so one backend being down cannot take the others with it.
@@ -2315,12 +2317,12 @@ impl VaultBackends {
 
     /// Resolve the connected client for `scope`, or `Unavailable` if that
     /// backend is down / not yet connected.
-    async fn scoped(&self, scope: &str) -> Result<Arc<VaultClient>, VaultError> {
+    async fn scoped(&self, scope: &str) -> Result<Arc<ConnectionStore>, ConnectionError> {
         self.cell_for_scope(scope)
             .read()
             .await
             .clone()
-            .ok_or(VaultError::Unavailable)
+            .ok_or(ConnectionError::Unavailable)
     }
 
     /// True if at least one configured backend is currently connected.
@@ -2336,14 +2338,18 @@ impl VaultBackends {
         &self,
         scope: &str,
         parent: &str,
-    ) -> Result<Vec<crate::connections::FolderInfo>, VaultError> {
+    ) -> Result<Vec<crate::connections::FolderInfo>, ConnectionError> {
         self.scoped(scope)
             .await?
             .list_subfolders(scope, parent)
             .await
     }
 
-    pub async fn list_entries(&self, scope: &str, folder: &str) -> Result<Vec<String>, VaultError> {
+    pub async fn list_entries(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<Vec<String>, ConnectionError> {
         self.scoped(scope).await?.list_entries(scope, folder).await
     }
 
@@ -2352,7 +2358,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<AddressBookEntry, VaultError> {
+    ) -> Result<AddressBookEntry, ConnectionError> {
         self.scoped(scope)
             .await?
             .get_entry(scope, folder, entry)
@@ -2365,7 +2371,7 @@ impl VaultBackends {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.scoped(scope)
             .await?
             .put_entry(scope, folder, entry, data)
@@ -2378,7 +2384,7 @@ impl VaultBackends {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         self.scoped(scope)
             .await?
             .put_entry_if_absent(scope, folder, entry, data)
@@ -2390,7 +2396,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.scoped(scope)
             .await?
             .delete_entry(scope, folder, entry)
@@ -2401,7 +2407,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<FolderConfig, VaultError> {
+    ) -> Result<FolderConfig, ConnectionError> {
         self.scoped(scope)
             .await?
             .get_folder_config(scope, folder)
@@ -2413,7 +2419,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
         config: &FolderConfig,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.scoped(scope)
             .await?
             .put_folder_config(scope, folder, config)
@@ -2424,7 +2430,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<crate::connections::FolderDefaults, VaultError> {
+    ) -> Result<crate::connections::FolderDefaults, ConnectionError> {
         self.scoped(scope)
             .await?
             .get_folder_defaults(scope, folder)
@@ -2436,7 +2442,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
         defaults: &crate::connections::FolderDefaults,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.scoped(scope)
             .await?
             .put_folder_defaults(scope, folder, defaults)
@@ -2447,7 +2453,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.scoped(scope)
             .await?
             .delete_folder_defaults(scope, folder)
@@ -2458,7 +2464,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
+    ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
         self.scoped(scope)
             .await?
             .effective_folder_defaults(scope, folder)
@@ -2469,7 +2475,7 @@ impl VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<(usize, usize), VaultError> {
+    ) -> Result<(usize, usize), ConnectionError> {
         self.scoped(scope).await?.delete_folder(scope, folder).await
     }
 
@@ -2478,7 +2484,7 @@ impl VaultBackends {
         scope: &str,
         folder: &str,
         who: crate::connections::FolderSubject<'_>,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         self.scoped(scope)
             .await?
             .resolve_folder_access(scope, folder, who)
@@ -2500,16 +2506,19 @@ impl VaultBackends {
         !Arc::ptr_eq(&self.shared, &self.local)
     }
 
-    async fn cred_client(&self, shared: bool) -> Result<Arc<VaultClient>, VaultError> {
+    async fn cred_client(&self, shared: bool) -> Result<Arc<ConnectionStore>, ConnectionError> {
         let cell = if shared { &self.shared } else { &self.local };
-        cell.read().await.clone().ok_or(VaultError::Unavailable)
+        cell.read()
+            .await
+            .clone()
+            .ok_or(ConnectionError::Unavailable)
     }
 
     pub async fn get_user_credentials_scoped(
         &self,
         email: &str,
         shared: bool,
-    ) -> Result<std::collections::HashMap<String, String>, VaultError> {
+    ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
         self.cred_client(shared)
             .await?
             .get_user_credentials(email)
@@ -2521,7 +2530,7 @@ impl VaultBackends {
         email: &str,
         shared: bool,
         creds: &std::collections::HashMap<String, String>,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         self.cred_client(shared)
             .await?
             .put_user_credentials(email, creds)
@@ -2535,7 +2544,7 @@ impl VaultBackends {
     pub async fn get_user_credentials(
         &self,
         email: &str,
-    ) -> Result<std::collections::HashMap<String, String>, VaultError> {
+    ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
         let local = self
             .get_user_credentials_scoped(email, false)
             .await
@@ -2568,7 +2577,7 @@ impl VaultBackends {
     /// the one backend, so `unavailable_scopes` is empty whenever it is up.
     pub async fn list_all_folders(
         &self,
-    ) -> Result<(Vec<crate::connections::FolderInfo>, Vec<String>), VaultError> {
+    ) -> Result<(Vec<crate::connections::FolderInfo>, Vec<String>), ConnectionError> {
         let mut folders = Vec::new();
         let mut unavailable = Vec::new();
         let mut any = false;
@@ -2578,7 +2587,7 @@ impl VaultBackends {
                     any = true;
                     match client.list_folders_in_scope(scope).await {
                         Ok(fs) => folders.extend(fs),
-                        Err(VaultError::NotFound) => {}
+                        Err(ConnectionError::NotFound) => {}
                         Err(e) => {
                             tracing::warn!(scope, error = %e, "listing folders for scope failed");
                             unavailable.push(scope.to_string());
@@ -2589,7 +2598,7 @@ impl VaultBackends {
             }
         }
         if !any {
-            return Err(VaultError::Unavailable);
+            return Err(ConnectionError::Unavailable);
         }
         Ok((folders, unavailable))
     }
@@ -2602,14 +2611,18 @@ impl DefaultsSource for VaultBackends {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
+    ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
         self.scoped(scope)
             .await?
             .folder_defaults(scope, folder)
             .await
     }
 
-    async fn takes_parent_defaults(&self, scope: &str, folder: &str) -> Result<bool, VaultError> {
+    async fn takes_parent_defaults(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<bool, ConnectionError> {
         self.scoped(scope)
             .await?
             .takes_parent_defaults(scope, folder)
@@ -2657,7 +2670,7 @@ async fn check_folder_access(
             Json(json!({"error": "no access to this folder"})),
         )
             .into_response()),
-        Err(VaultError::NotFound) => Err((
+        Err(ConnectionError::NotFound) => Err((
             StatusCode::NOT_FOUND,
             Json(json!({"error": "folder not found"})),
         )
@@ -2802,7 +2815,7 @@ pub async fn ab_list_subfolders(
             }
             Json(json!(visible)).into_response()
         }
-        Err(crate::connections::VaultError::NotFound) => Json(json!([])).into_response(),
+        Err(crate::connections::ConnectionError::NotFound) => Json(json!([])).into_response(),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": e.to_string()})),
@@ -2846,7 +2859,7 @@ pub async fn ab_get_folder_defaults(
     }
     match vault.get_folder_defaults(&scope, &folder).await {
         Ok(d) => Json(json!({ "defaults": folder_defaults_summary(&d) })).into_response(),
-        Err(VaultError::NotFound) => Json(json!({ "defaults": {} })).into_response(),
+        Err(ConnectionError::NotFound) => Json(json!({ "defaults": {} })).into_response(),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({"error": e.to_string()})),
@@ -2918,7 +2931,7 @@ pub async fn ab_put_folder_defaults(
     // make a folder with no .config, which nobody but an admin can see.
     match vault.get_folder_config(&scope, &folder).await {
         Ok(_) => {}
-        Err(VaultError::NotFound) => {
+        Err(ConnectionError::NotFound) => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": "folder not found"})),
@@ -2936,7 +2949,7 @@ pub async fn ab_put_folder_defaults(
 
     let mut current = match vault.get_folder_defaults(&scope, &folder).await {
         Ok(d) => d,
-        Err(VaultError::NotFound) => crate::connections::FolderDefaults::new(),
+        Err(ConnectionError::NotFound) => crate::connections::FolderDefaults::new(),
         Err(e) => {
             return (
                 StatusCode::BAD_GATEWAY,
@@ -3430,7 +3443,7 @@ const AB_VERSION_MAX_CHECKED_ROWS: usize = 32;
 async fn ab_changes_visible_to<F, Fut>(changes: Vec<AbChange>, can_access: F) -> Vec<AbChange>
 where
     F: Fn(String, String) -> Fut,
-    Fut: std::future::Future<Output = Result<bool, VaultError>>,
+    Fut: std::future::Future<Output = Result<bool, ConnectionError>>,
 {
     if changes.iter().any(|c| c.kind == AbChangeKind::All) {
         return vec![AbChange::all()];
@@ -3446,7 +3459,7 @@ where
             AbChangeKind::Entries => match can_access(c.scope.clone(), c.folder.clone()).await {
                 Ok(true) => out.push(c),
                 // No access, or the folder has gone: nothing to say.
-                Ok(false) | Err(VaultError::NotFound) => {}
+                Ok(false) | Err(ConnectionError::NotFound) => {}
                 // Can't tell: have the page refresh rather than miss it,
                 // without naming the folder.
                 Err(_) => tree = true,
@@ -3739,7 +3752,7 @@ pub async fn ab_list_entries(
 
     let entry_names = match vault.list_entries(&scope, &folder).await {
         Ok(e) => e,
-        Err(VaultError::NotFound) => Vec::new(),
+        Err(ConnectionError::NotFound) => Vec::new(),
         Err(e) => {
             return (
                 StatusCode::BAD_GATEWAY,
@@ -4147,7 +4160,7 @@ pub async fn ab_connect_entry(
     // Read full entry (with credentials) from Vault
     let ab_entry = match vault.get_entry(&scope, &folder, &entry).await {
         Ok(e) => e,
-        Err(VaultError::NotFound) => {
+        Err(ConnectionError::NotFound) => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": "entry not found"})),
@@ -4268,14 +4281,14 @@ pub trait UserCredentialSource {
     async fn user_credentials(
         &self,
         email: &str,
-    ) -> Result<std::collections::HashMap<String, String>, VaultError>;
+    ) -> Result<std::collections::HashMap<String, String>, ConnectionError>;
 }
 
 impl UserCredentialSource for VaultBackends {
     async fn user_credentials(
         &self,
         email: &str,
-    ) -> Result<std::collections::HashMap<String, String>, VaultError> {
+    ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
         self.get_user_credentials(email).await
     }
 }
@@ -4675,7 +4688,7 @@ pub async fn ab_update_folder(
     let existing = if req.allowed_users.is_none() || req.display_name.is_none() {
         match vault.get_folder_config(&scope, &folder).await {
             Ok(existing) => Some(existing),
-            Err(VaultError::NotFound) => None,
+            Err(ConnectionError::NotFound) => None,
             Err(e) => return ab_error(StatusCode::BAD_GATEWAY, e.to_string()),
         }
     } else {
@@ -4765,7 +4778,7 @@ pub async fn ab_get_folder_config(
             "inherit_from_parent": cfg.inherit_from_parent,
         }))
         .into_response(),
-        Err(crate::connections::VaultError::NotFound) => Json(json!({
+        Err(crate::connections::ConnectionError::NotFound) => Json(json!({
             "allowed_groups": Vec::<String>::new(),
             "allowed_users": Vec::<String>::new(),
             "description": "",
@@ -4912,23 +4925,23 @@ pub struct EntryPutQuery {
 #[allow(async_fn_in_trait)]
 trait EntryStore {
     /// Every folder path in `scope`, top level and below.
-    async fn folder_paths(&self, scope: &str) -> Result<Vec<String>, VaultError>;
+    async fn folder_paths(&self, scope: &str) -> Result<Vec<String>, ConnectionError>;
     /// Entry names in one folder, subfolders excluded.
-    async fn entry_names(&self, scope: &str, folder: &str) -> Result<Vec<String>, VaultError>;
+    async fn entry_names(&self, scope: &str, folder: &str) -> Result<Vec<String>, ConnectionError>;
     /// The full entry, secrets included.
     async fn get_entry(
         &self,
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<AddressBookEntry, VaultError>;
+    ) -> Result<AddressBookEntry, ConnectionError>;
     async fn put_entry(
         &self,
         scope: &str,
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<(), VaultError>;
+    ) -> Result<(), ConnectionError>;
     /// Write only if nothing is stored there; `Ok(false)` when something is.
     async fn put_entry_if_absent(
         &self,
@@ -4936,12 +4949,17 @@ trait EntryStore {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<bool, VaultError>;
-    async fn delete_entry(&self, scope: &str, folder: &str, entry: &str) -> Result<(), VaultError>;
+    ) -> Result<bool, ConnectionError>;
+    async fn delete_entry(
+        &self,
+        scope: &str,
+        folder: &str,
+        entry: &str,
+    ) -> Result<(), ConnectionError>;
 }
 
 impl EntryStore for VaultBackends {
-    async fn folder_paths(&self, scope: &str) -> Result<Vec<String>, VaultError> {
+    async fn folder_paths(&self, scope: &str) -> Result<Vec<String>, ConnectionError> {
         let client = self.scoped(scope).await?;
         let mut queue: Vec<String> = client
             .list_folders_in_scope(scope)
@@ -4958,7 +4976,7 @@ impl EntryStore for VaultBackends {
                     }
                 }
                 // Emptied since it was listed.
-                Err(VaultError::NotFound) => {}
+                Err(ConnectionError::NotFound) => {}
                 Err(e) => return Err(e),
             }
             out.push(path);
@@ -4966,11 +4984,11 @@ impl EntryStore for VaultBackends {
         Ok(out)
     }
 
-    async fn entry_names(&self, scope: &str, folder: &str) -> Result<Vec<String>, VaultError> {
+    async fn entry_names(&self, scope: &str, folder: &str) -> Result<Vec<String>, ConnectionError> {
         // The KV listing also returns subfolders, as `name/`.
         match VaultBackends::list_entries(self, scope, folder).await {
             Ok(names) => Ok(names.into_iter().filter(|n| !n.ends_with('/')).collect()),
-            Err(VaultError::NotFound) => Ok(Vec::new()),
+            Err(ConnectionError::NotFound) => Ok(Vec::new()),
             Err(e) => Err(e),
         }
     }
@@ -4980,7 +4998,7 @@ impl EntryStore for VaultBackends {
         scope: &str,
         folder: &str,
         entry: &str,
-    ) -> Result<AddressBookEntry, VaultError> {
+    ) -> Result<AddressBookEntry, ConnectionError> {
         VaultBackends::get_entry(self, scope, folder, entry).await
     }
 
@@ -4990,7 +5008,7 @@ impl EntryStore for VaultBackends {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         VaultBackends::put_entry(self, scope, folder, entry, data).await
     }
 
@@ -5000,11 +5018,16 @@ impl EntryStore for VaultBackends {
         folder: &str,
         entry: &str,
         data: &AddressBookEntry,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         VaultBackends::put_entry_if_absent(self, scope, folder, entry, data).await
     }
 
-    async fn delete_entry(&self, scope: &str, folder: &str, entry: &str) -> Result<(), VaultError> {
+    async fn delete_entry(
+        &self,
+        scope: &str,
+        folder: &str,
+        entry: &str,
+    ) -> Result<(), ConnectionError> {
         VaultBackends::delete_entry(self, scope, folder, entry).await
     }
 }
@@ -5076,11 +5099,14 @@ enum UpsertError {
     Rejected(StatusCode, String),
     /// The entry was copied to the requested folder but the original could
     /// not be removed, so it now exists in both; the update was not applied.
-    MoveIncomplete { from: MovedFrom, error: VaultError },
+    MoveIncomplete {
+        from: MovedFrom,
+        error: ConnectionError,
+    },
     /// The write of the update failed, after the move if there was one.
     UpdateFailed {
         moved_from: Option<MovedFrom>,
-        error: VaultError,
+        error: ConnectionError,
     },
 }
 
@@ -5099,7 +5125,7 @@ async fn relocate_by_external_id<S: EntryStore>(
     entry: &str,
     external_id: &str,
 ) -> Result<Option<MovedFrom>, UpsertError> {
-    let reject = |e: VaultError| {
+    let reject = |e: ConnectionError| {
         let (status, msg) = ab_vault_error(e);
         UpsertError::Rejected(status, msg)
     };
@@ -5120,7 +5146,7 @@ async fn relocate_by_external_id<S: EntryStore>(
             // other entry already carries it, or the id would end up on two.
             None => true,
         },
-        Err(VaultError::NotFound) => false,
+        Err(ConnectionError::NotFound) => false,
         Err(e) => return Err(reject(e)),
     };
 
@@ -5136,7 +5162,7 @@ async fn relocate_by_external_id<S: EntryStore>(
             }
             let stored = match store.get_entry(scope, &other_folder, &name).await {
                 Ok(e) => e,
-                Err(VaultError::NotFound) => continue, // deleted since it was listed
+                Err(ConnectionError::NotFound) => continue, // deleted since it was listed
                 Err(e) => return Err(reject(e)),
             };
             if stored.external_id.as_deref() == Some(external_id) {
@@ -5225,7 +5251,7 @@ async fn upsert_entry<S: EntryStore>(
 
     let merged = match store.get_entry(scope, folder, entry).await {
         Ok(existing) => merge_entry_update(data, existing),
-        Err(VaultError::NotFound) => data,
+        Err(ConnectionError::NotFound) => data,
         // Writing the request as-is here would replace a stored entry with
         // one that has no secrets, so a failed read is an error, not a create.
         Err(error) => return Err(UpsertError::UpdateFailed { moved_from, error }),
@@ -5434,7 +5460,7 @@ enum MoveError {
     Copy(StatusCode, String),
     /// The copy is in place but the original could not be removed, so the
     /// entry now exists in both folders.
-    Incomplete(VaultError),
+    Incomplete(ConnectionError),
 }
 
 /// Move an entry with everything stored in it: the full entry is copied to
@@ -5471,10 +5497,10 @@ async fn move_stored_entry<S: EntryStore>(
 
 /// Status for a Vault error on the move/copy path: a rejected name or
 /// scope is the caller's mistake, not the backend's.
-fn ab_vault_error(e: VaultError) -> (StatusCode, String) {
+fn ab_vault_error(e: ConnectionError) -> (StatusCode, String) {
     match e {
-        VaultError::NotFound => (StatusCode::NOT_FOUND, "entry not found".into()),
-        VaultError::BadName(msg) => (StatusCode::BAD_REQUEST, msg),
+        ConnectionError::NotFound => (StatusCode::NOT_FOUND, "entry not found".into()),
+        ConnectionError::BadName(msg) => (StatusCode::BAD_REQUEST, msg),
         other => (StatusCode::BAD_GATEWAY, other.to_string()),
     }
 }
@@ -6062,7 +6088,7 @@ pub async fn ab_delete_entry(
     // look first rather than answer (and audit) a delete of nothing.
     match vault.get_entry(&scope, &folder, &entry).await {
         Ok(_) => {}
-        Err(VaultError::NotFound) => {
+        Err(ConnectionError::NotFound) => {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": "entry not found"})),
@@ -6094,7 +6120,7 @@ pub async fn ab_delete_entry(
             .await;
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(VaultError::NotFound) => (
+        Err(ConnectionError::NotFound) => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "entry not found"})),
         )
@@ -7233,7 +7259,7 @@ pub async fn quick_connect(
 
         let ab_entry = match vault.get_entry(scope, folder, entry).await {
             Ok(e) => e,
-            Err(VaultError::NotFound) => {
+            Err(ConnectionError::NotFound) => {
                 return quick_connect_error(
                     StatusCode::NOT_FOUND,
                     &format!("Entry '{}' not found in {}/{}.", entry, scope, folder),
@@ -8102,7 +8128,7 @@ mod tests {
         async fn user_credentials(
             &self,
             email: &str,
-        ) -> Result<std::collections::HashMap<String, String>, VaultError> {
+        ) -> Result<std::collections::HashMap<String, String>, ConnectionError> {
             self.cred_reads.lock().unwrap().push(email.to_string());
             Ok(self.creds.clone())
         }
@@ -8113,7 +8139,7 @@ mod tests {
             &self,
             _scope: &str,
             _folder: &str,
-        ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
+        ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
             self.defaults_reads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Some(
@@ -8123,7 +8149,7 @@ mod tests {
                 .unwrap(),
             ))
         }
-        async fn takes_parent_defaults(&self, _s: &str, _f: &str) -> Result<bool, VaultError> {
+        async fn takes_parent_defaults(&self, _s: &str, _f: &str) -> Result<bool, ConnectionError> {
             self.defaults_reads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(true)
@@ -8699,7 +8725,7 @@ mod tests {
         // teamA's entries changed and that the tree changed somewhere, and
         // nothing else: no secretco path, not even in a tree row.
         let can_open = |scope: String, folder: String| async move {
-            Ok::<_, VaultError>(scope == "shared" && folder == "teamA")
+            Ok::<_, ConnectionError>(scope == "shared" && folder == "teamA")
         };
         let rows = vec![
             AbChange::entries("shared", "teamA"),
@@ -8736,9 +8762,9 @@ mod tests {
             ],
             |_scope: String, folder: String| async move {
                 if folder == "gone" {
-                    Err(VaultError::NotFound)
+                    Err(ConnectionError::NotFound)
                 } else {
-                    Err(VaultError::Parse("vault down".into()))
+                    Err(ConnectionError::Parse("vault down".into()))
                 }
             },
         )
@@ -8761,7 +8787,7 @@ mod tests {
             .collect();
         let out = ab_changes_visible_to(many, |_s: String, _f: String| {
             checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            async { Ok::<_, VaultError>(true) }
+            async { Ok::<_, ConnectionError>(true) }
         })
         .await;
         assert_eq!(out, vec![AbChange::tree_anywhere()]);
@@ -8829,7 +8855,7 @@ mod tests {
     }
 
     impl EntryStore for FakeStore {
-        async fn folder_paths(&self, _scope: &str) -> Result<Vec<String>, VaultError> {
+        async fn folder_paths(&self, _scope: &str) -> Result<Vec<String>, ConnectionError> {
             let mut folders: Vec<String> = self
                 .entries
                 .lock()
@@ -8840,7 +8866,11 @@ mod tests {
             folders.dedup();
             Ok(folders)
         }
-        async fn entry_names(&self, _scope: &str, folder: &str) -> Result<Vec<String>, VaultError> {
+        async fn entry_names(
+            &self,
+            _scope: &str,
+            folder: &str,
+        ) -> Result<Vec<String>, ConnectionError> {
             Ok(self
                 .entries
                 .lock()
@@ -8855,8 +8885,8 @@ mod tests {
             _scope: &str,
             folder: &str,
             entry: &str,
-        ) -> Result<AddressBookEntry, VaultError> {
-            self.stored(folder, entry).ok_or(VaultError::NotFound)
+        ) -> Result<AddressBookEntry, ConnectionError> {
+            self.stored(folder, entry).ok_or(ConnectionError::NotFound)
         }
         async fn put_entry(
             &self,
@@ -8864,7 +8894,7 @@ mod tests {
             folder: &str,
             entry: &str,
             data: &AddressBookEntry,
-        ) -> Result<(), VaultError> {
+        ) -> Result<(), ConnectionError> {
             self.entries
                 .lock()
                 .unwrap()
@@ -8877,7 +8907,7 @@ mod tests {
             folder: &str,
             entry: &str,
             data: &AddressBookEntry,
-        ) -> Result<bool, VaultError> {
+        ) -> Result<bool, ConnectionError> {
             let mut entries = self.entries.lock().unwrap();
             let key = (folder.to_string(), entry.to_string());
             if entries.contains_key(&key) {
@@ -8891,16 +8921,16 @@ mod tests {
             _scope: &str,
             folder: &str,
             entry: &str,
-        ) -> Result<(), VaultError> {
+        ) -> Result<(), ConnectionError> {
             if self.fail_delete {
-                return Err(VaultError::Parse("delete refused".into()));
+                return Err(ConnectionError::Parse("delete refused".into()));
             }
             self.entries
                 .lock()
                 .unwrap()
                 .remove(&(folder.to_string(), entry.to_string()))
                 .map(|_| ())
-                .ok_or(VaultError::NotFound)
+                .ok_or(ConnectionError::NotFound)
         }
     }
 
@@ -9490,14 +9520,14 @@ mod tests {
             &self,
             _scope: &str,
             folder: &str,
-        ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
+        ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
             Ok(self.defaults.get(folder).cloned())
         }
         async fn takes_parent_defaults(
             &self,
             _scope: &str,
             folder: &str,
-        ) -> Result<bool, VaultError> {
+        ) -> Result<bool, ConnectionError> {
             Ok(self.inherit.contains(folder))
         }
     }
@@ -9566,11 +9596,15 @@ mod tests {
                 &self,
                 _s: &str,
                 _f: &str,
-            ) -> Result<Option<crate::connections::FolderDefaults>, VaultError> {
-                Err(VaultError::Forbidden)
+            ) -> Result<Option<crate::connections::FolderDefaults>, ConnectionError> {
+                Err(ConnectionError::Forbidden)
             }
-            async fn takes_parent_defaults(&self, _s: &str, _f: &str) -> Result<bool, VaultError> {
-                Err(VaultError::Forbidden)
+            async fn takes_parent_defaults(
+                &self,
+                _s: &str,
+                _f: &str,
+            ) -> Result<bool, ConnectionError> {
+                Err(ConnectionError::Forbidden)
             }
         }
         let e = AddressBookEntry {
@@ -9929,9 +9963,9 @@ mod tests {
 
     #[test]
     fn vault_name_errors_are_client_errors() {
-        let (status, _) = super::ab_vault_error(VaultError::BadName("reserved name".into()));
+        let (status, _) = super::ab_vault_error(ConnectionError::BadName("reserved name".into()));
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        let (status, _) = super::ab_vault_error(VaultError::NotFound);
+        let (status, _) = super::ab_vault_error(ConnectionError::NotFound);
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 

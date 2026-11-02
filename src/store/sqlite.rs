@@ -255,7 +255,7 @@ impl SecretStore for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connections::{AddressBookEntry, FolderConfig, VaultClient, VaultError};
+    use crate::connections::{AddressBookEntry, ConnectionError, ConnectionStore, FolderConfig};
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -485,11 +485,11 @@ mod tests {
         }
     }
 
-    // ── VaultClient over SQLite: the address-book operations end to end ──
+    // ── ConnectionStore over SQLite: the address-book operations end to end ──
 
-    fn client(db: &TempDb) -> VaultClient {
+    fn client(db: &TempDb) -> ConnectionStore {
         let store = SqliteStore::open(&db.path(), &kek()).unwrap();
-        VaultClient::with_store(Arc::new(store), "mybastion".into(), Some("node1".into()))
+        ConnectionStore::with_store(Arc::new(store), "mybastion".into(), Some("node1".into()))
     }
 
     fn rdp(host: &str) -> AddressBookEntry {
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(e.hostname.as_deref(), Some("10.0.0.1"));
         assert!(matches!(
             c.get_entry("shared", "Prod", "nope").await,
-            Err(VaultError::NotFound)
+            Err(ConnectionError::NotFound)
         ));
 
         let top = c.list_folders_in_scope("shared").await.unwrap();
@@ -629,7 +629,7 @@ mod tests {
         c.delete_folder_defaults("shared", "F").await.unwrap();
         assert!(matches!(
             c.get_folder_defaults("shared", "F").await,
-            Err(VaultError::NotFound)
+            Err(ConnectionError::NotFound)
         ));
         assert!(c.list_entries("shared", "F").await.unwrap().is_empty());
     }
@@ -652,7 +652,7 @@ mod tests {
         // The LUKS key path is relative to the mount, outside base_path.
         assert!(matches!(
             c.read_kv_field("luks/drive", "key").await,
-            Err(VaultError::NotFound)
+            Err(ConnectionError::NotFound)
         ));
         let store = SqliteStore::open(&db.path(), &kek()).unwrap();
         store

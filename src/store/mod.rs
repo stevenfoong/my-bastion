@@ -1,5 +1,5 @@
 //! Where connection entries, folder configs and credential variables are
-//! kept. `VaultClient` holds the mybastion logic (ACLs, folder defaults,
+//! kept. `ConnectionStore` holds the mybastion logic (ACLs, folder defaults,
 //! credential variables) and does its I/O through a `SecretStore`: one JSON
 //! document per path, KV v2 style.
 
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::config::StorageConfig;
-use crate::connections::VaultClient;
+use crate::connections::ConnectionStore;
 
 /// Open the SQLite store `[storage]` describes, as the address-book client.
 pub fn open_sqlite(sc: &StorageConfig) -> Result<Arc<sqlite::SqliteStore>, String> {
@@ -23,8 +23,8 @@ pub fn open_sqlite(sc: &StorageConfig) -> Result<Arc<sqlite::SqliteStore>, Strin
 }
 
 /// `open_sqlite`, wrapped as the address-book client.
-pub fn sqlite_client(sc: &StorageConfig) -> Result<VaultClient, String> {
-    Ok(VaultClient::with_store(
+pub fn sqlite_client(sc: &StorageConfig) -> Result<ConnectionStore, String> {
+    Ok(ConnectionStore::with_store(
         open_sqlite(sc)?,
         sc.base_path.clone(),
         sc.instance_name.clone(),
@@ -53,7 +53,7 @@ pub enum StoreError {
     /// A check-and-set write found a different version in place.
     CasConflict,
     /// The backend answered with a status the operation doesn't expect.
-    /// `VaultClient` turns it into the message for that operation.
+    /// `ConnectionStore` turns it into the message for that operation.
     Rejected {
         status: u16,
         body: String,
@@ -82,7 +82,7 @@ impl From<reqwest::Error> for StoreError {
     }
 }
 
-/// Paths are `/`-separated with no leading or trailing slash. `VaultClient`
+/// Paths are `/`-separated with no leading or trailing slash. `ConnectionStore`
 /// validates the names in them before they reach the store.
 #[async_trait]
 pub trait SecretStore: Send + Sync {

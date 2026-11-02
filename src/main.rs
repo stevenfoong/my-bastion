@@ -831,10 +831,10 @@ async fn connect_vault_backend(
     secret_id: String,
     luks_drive: Option<crate::config::DriveConfig>,
 ) {
-    match connections::VaultClient::new(&config, &secret_id).await {
+    match connections::ConnectionStore::open_vault(&config, &secret_id).await {
         Ok(client) => {
             let client = Arc::new(client);
-            client.spawn_renewal_task();
+            client.spawn_maintenance();
             tracing::info!("Vault backend '{}' initialized: {}", label, config.addr);
             *cell.write().await = Some(client);
         }
@@ -856,10 +856,10 @@ async fn connect_vault_backend(
                         label,
                         config.addr
                     );
-                    match connections::VaultClient::new(&config, &secret_id).await {
+                    match connections::ConnectionStore::open_vault(&config, &secret_id).await {
                         Ok(client) => {
                             let client = Arc::new(client);
-                            client.spawn_renewal_task();
+                            client.spawn_maintenance();
                             tracing::info!(
                                 "Vault backend '{}' connected (retry succeeded): {}",
                                 label,

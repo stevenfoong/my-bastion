@@ -4,7 +4,7 @@
 
 use super::*;
 
-impl VaultClient {
+impl ConnectionStore {
     // ── KV v2 operations ──
 
     /// List top-level folders for a single scope (`"shared"` or `"instance"`).
@@ -12,14 +12,22 @@ impl VaultClient {
     /// Returns an empty vec (not an error) when the scope isn't applicable to
     /// this client — e.g. `"instance"` with no `instance_name` configured — so
     /// the multi-backend fan-out can call it unconditionally.
-    pub async fn list_folders_in_scope(&self, scope: &str) -> Result<Vec<FolderInfo>, VaultError> {
+    pub async fn list_folders_in_scope(
+        &self,
+        scope: &str,
+    ) -> Result<Vec<FolderInfo>, ConnectionError> {
         let prefix = match scope {
             "shared" => "shared".to_string(),
             "instance" => match &self.instance_name {
                 Some(name) => format!("instance/{}", name),
                 None => return Ok(Vec::new()),
             },
-            _ => return Err(VaultError::BadName(format!("invalid scope: {}", scope))),
+            _ => {
+                return Err(ConnectionError::BadName(format!(
+                    "invalid scope: {}",
+                    scope
+                )))
+            }
         };
 
         let mut folders = Vec::new();
@@ -37,7 +45,7 @@ impl VaultClient {
                     });
                 }
             }
-            Err(VaultError::NotFound) => {
+            Err(ConnectionError::NotFound) => {
                 // No folders in this scope — that's fine
             }
             Err(e) => return Err(e),
@@ -64,7 +72,7 @@ impl VaultClient {
         &self,
         scope: &str,
         folder_path: &str,
-    ) -> Result<Vec<String>, VaultError> {
+    ) -> Result<Vec<String>, ConnectionError> {
         validate_path(folder_path)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         self.kv_list(&self.kv_path(&scope_prefix, folder_path))
@@ -77,7 +85,7 @@ impl VaultClient {
         &self,
         scope: &str,
         parent_path: &str,
-    ) -> Result<Vec<FolderInfo>, VaultError> {
+    ) -> Result<Vec<FolderInfo>, ConnectionError> {
         let children = self.list_children(scope, parent_path).await?;
         let mut folders = Vec::new();
 
@@ -114,13 +122,16 @@ impl VaultClient {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<FolderConfig, VaultError> {
+    ) -> Result<FolderConfig, ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, ".config"));
-        let data = self.read_doc(&path).await?.ok_or(VaultError::NotFound)?;
+        let data = self
+            .read_doc(&path)
+            .await?
+            .ok_or(ConnectionError::NotFound)?;
         serde_json::from_value(data)
-            .map_err(|e| VaultError::Parse(format!("invalid .config: {}", e)))
+            .map_err(|e| ConnectionError::Parse(format!("invalid .config: {}", e)))
     }
 
     /// Resolve whether `who` may access `folder` under `scope`.
@@ -137,12 +148,12 @@ impl VaultClient {
         scope: &str,
         folder: &str,
         who: FolderSubject<'_>,
-    ) -> Result<bool, VaultError> {
+    ) -> Result<bool, ConnectionError> {
         let mut current = folder.to_string();
         loop {
             let config = match self.get_folder_config(scope, &current).await {
                 Ok(c) => c,
-                Err(VaultError::NotFound) => return Ok(false),
+                Err(ConnectionError::NotFound) => return Ok(false),
                 Err(e) => return Err(e),
             };
             if config.grants(who) {
@@ -165,7 +176,7 @@ impl VaultClient {
         scope: &str,
         folder: &str,
         config: &FolderConfig,
-    ) -> Result<(), VaultError> {
+    ) -> Result<(), ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let path = self.kv_path(&scope_prefix, &format!("{}/{}", folder, ".config"));
@@ -186,7 +197,7 @@ impl VaultClient {
         &self,
         scope: &str,
         folder: &str,
-    ) -> Result<(usize, usize), VaultError> {
+    ) -> Result<(usize, usize), ConnectionError> {
         validate_path(folder)?;
         let scope_prefix = self.resolve_scope_prefix(scope)?;
         let root = self.kv_path(&scope_prefix, folder);

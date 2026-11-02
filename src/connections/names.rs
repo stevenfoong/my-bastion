@@ -4,15 +4,17 @@
 use super::*;
 
 /// Validate that a folder or entry name is safe (alphanumeric, hyphens, underscores, dots — no path traversal).
-pub(super) fn validate_name(name: &str) -> Result<(), VaultError> {
+pub(super) fn validate_name(name: &str) -> Result<(), ConnectionError> {
     if name.is_empty() || name.len() > 64 {
-        return Err(VaultError::BadName("name must be 1-64 characters".into()));
+        return Err(ConnectionError::BadName(
+            "name must be 1-64 characters".into(),
+        ));
     }
     if name == ".config" || name == ".defaults" || name == "." || name == ".." {
-        return Err(VaultError::BadName("reserved name".into()));
+        return Err(ConnectionError::BadName("reserved name".into()));
     }
     if name.contains('/') || name.contains('\\') {
-        return Err(VaultError::BadName(
+        return Err(ConnectionError::BadName(
             "name cannot contain path separators".into(),
         ));
     }
@@ -20,7 +22,7 @@ pub(super) fn validate_name(name: &str) -> Result<(), VaultError> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     {
-        return Err(VaultError::BadName(
+        return Err(ConnectionError::BadName(
             "name must be alphanumeric, hyphens, underscores, or dots".into(),
         ));
     }
@@ -30,20 +32,22 @@ pub(super) fn validate_name(name: &str) -> Result<(), VaultError> {
 /// Validate a folder path that may contain subfolders (e.g. "Clients/Acme/Servers").
 /// Each segment is validated with the same rules as `validate_name`.
 /// Empty segments, trailing slashes, and leading slashes are rejected.
-pub(super) fn validate_path(path: &str) -> Result<(), VaultError> {
+pub(super) fn validate_path(path: &str) -> Result<(), ConnectionError> {
     if path.is_empty() {
-        return Err(VaultError::BadName("path cannot be empty".into()));
+        return Err(ConnectionError::BadName("path cannot be empty".into()));
     }
     if path.len() > 256 {
-        return Err(VaultError::BadName("path too long (max 256 chars)".into()));
+        return Err(ConnectionError::BadName(
+            "path too long (max 256 chars)".into(),
+        ));
     }
     if path.starts_with('/') || path.ends_with('/') {
-        return Err(VaultError::BadName(
+        return Err(ConnectionError::BadName(
             "path cannot start or end with /".into(),
         ));
     }
     if path.contains("//") {
-        return Err(VaultError::BadName(
+        return Err(ConnectionError::BadName(
             "path cannot contain empty segments".into(),
         ));
     }

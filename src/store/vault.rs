@@ -1,6 +1,6 @@
 // Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! HashiVault / OpenBao KV v2 over HTTP: the `SecretStore` behind
-//! `VaultClient` in the default (upstream) configuration.
+//! `ConnectionStore` in the default (upstream) configuration.
 //!
 //! Login (AppRole or workload JWT), token renewal, TLS client setup and the
 //! KV v2 requests moved here from `vault.rs` unchanged. Paths are relative

@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::connections::{VaultClient, VaultError};
+use crate::connections::{ConnectionError, ConnectionStore};
 
 /// Run the `vault-migrate` subcommand.
 #[allow(clippy::too_many_arguments)]
@@ -92,7 +92,7 @@ pub async fn cmd_vault_migrate(
                     failures += 1;
                 }
             }
-            Err(VaultError::NotFound) => {}
+            Err(ConnectionError::NotFound) => {}
             Err(e) => eprintln!("  Warning: read .config for '{}' failed: {}", path, e),
         }
 
@@ -108,7 +108,7 @@ pub async fn cmd_vault_migrate(
                     failures += 1;
                 }
             }
-            Err(VaultError::NotFound) => {}
+            Err(ConnectionError::NotFound) => {}
             Err(e) => eprintln!("  Warning: read .defaults for '{}' failed: {}", path, e),
         }
 
@@ -124,7 +124,7 @@ pub async fn cmd_vault_migrate(
                         entries_skipped += 1;
                         continue;
                     }
-                    Err(VaultError::NotFound) => {}
+                    Err(ConnectionError::NotFound) => {}
                     Err(_) => {} // fall through and try the copy
                 }
             }
@@ -217,7 +217,7 @@ pub async fn cmd_vault_migrate(
 /// Resolve a named backend (`vault` / `vault_shared` / `vault_local`) from
 /// config, read its secret ID from the matching env var, and connect. Exits
 /// the process with a clear message on any misconfiguration.
-async fn connect_named(config: &Config, name: &str) -> Arc<VaultClient> {
+async fn connect_named(config: &Config, name: &str) -> Arc<ConnectionStore> {
     let (vault_config, env_var) = match name {
         "vault" => (config.vault.as_ref(), "VAULT_SECRET_ID"),
         "vault_shared" => (config.vault_shared.as_ref(), "VAULT_SHARED_SECRET_ID"),
@@ -250,7 +250,7 @@ async fn connect_named(config: &Config, name: &str) -> Arc<VaultClient> {
         }
     };
 
-    match VaultClient::new(vault_config, &secret_id).await {
+    match ConnectionStore::open_vault(vault_config, &secret_id).await {
         Ok(c) => Arc::new(c),
         Err(e) => {
             eprintln!(

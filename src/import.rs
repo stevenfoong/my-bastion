@@ -3,12 +3,12 @@
 //!
 //! Parses `INSERT INTO` statements for `guacamole_connection`,
 //! `guacamole_connection_parameter`, and `guacamole_connection_group` tables,
-//! then writes entries via the existing VaultClient API.
+//! then writes entries via the existing ConnectionStore API.
 
 use std::collections::HashMap;
 
 use crate::config::Config;
-use crate::connections::{AddressBookEntry, FolderConfig, VaultClient};
+use crate::connections::{AddressBookEntry, ConnectionStore, FolderConfig};
 
 /// Parse `--map FROM=TO` pairs into (from, to) tuples. Splits on the first
 /// `=`, so the replacement may itself contain `=`. Rejects entries with no
@@ -298,7 +298,7 @@ pub async fn cmd_import_guacamole(
         }
     };
 
-    let client = match VaultClient::new(vault_config, &secret_id).await {
+    let client = match ConnectionStore::open_vault(vault_config, &secret_id).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error connecting to Vault: {}", e);
