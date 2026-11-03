@@ -21,6 +21,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             timeout_minutes INTEGER NOT NULL DEFAULT 30,
             enabled         INTEGER NOT NULL DEFAULT 1,
             commands        TEXT NOT NULL DEFAULT '[]',
+            web_only        INTEGER NOT NULL DEFAULT 0,
             created_by      TEXT NOT NULL DEFAULT '',
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -47,7 +48,8 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             comment           TEXT,
             grant_until       INTEGER,
             client_ip         TEXT,
-            command           TEXT
+            command           TEXT,
+            web_only          INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS approval_requests_lookup
             ON approval_requests (requester, action, resource_key, status);
@@ -67,25 +69,33 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             ip          TEXT
         );",
     )?;
-    add_command_column(conn)
+    for (table, column, decl) in [
+        ("policies", "commands", "TEXT NOT NULL DEFAULT '[]'"),
+        ("approval_requests", "command", "TEXT"),
+        ("policies", "web_only", "INTEGER NOT NULL DEFAULT 0"),
+        (
+            "approval_requests",
+            "web_only",
+            "INTEGER NOT NULL DEFAULT 0",
+        ),
+    ] {
+        add_column(conn, table, column, decl)?;
+    }
+    Ok(())
 }
 
-/// Add `command` to an `approval_requests` table made before it existed.
-fn add_command_column(conn: &Connection) -> rusqlite::Result<()> {
-    let has_rule_patterns = conn
-        .prepare("SELECT 1 FROM pragma_table_info('policies') WHERE name = 'commands'")?
-        .exists([])?;
-    if !has_rule_patterns {
-        conn.execute(
-            "ALTER TABLE policies ADD COLUMN commands TEXT NOT NULL DEFAULT '[]'",
-            [],
-        )?;
-    }
+/// Add a column to a table made before it existed.
+fn add_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
     let has = conn
-        .prepare("SELECT 1 FROM pragma_table_info('approval_requests') WHERE name = 'command'")?
+        .prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}'"
+        ))?
         .exists([])?;
     if !has {
-        conn.execute("ALTER TABLE approval_requests ADD COLUMN command TEXT", [])?;
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            [],
+        )?;
     }
     Ok(())
 }
@@ -118,7 +128,7 @@ fn bad_value(col: usize, what: &str) -> rusqlite::Error {
 // ── Policies ──
 
 const RULE_COLS: &str = "id, name, subject, target, action, effect, approvers, grant_minutes,
-    timeout_minutes, enabled, commands";
+    timeout_minutes, enabled, commands, web_only";
 
 fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
     let action: String = r.get(4)?;
@@ -135,6 +145,7 @@ fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
         timeout_minutes: r.get(8)?,
         enabled: r.get::<_, i64>(9)? != 0,
         commands: from_json::<Vec<String>>(10, r.get(10)?)?,
+        web_only: r.get::<_, i64>(11)? != 0,
     })
 }
 
@@ -156,8 +167,8 @@ pub fn get_rule(conn: &Connection, id: i64) -> rusqlite::Result<Option<Rule>> {
 pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO policies (name, subject, target, action, effect, approvers,
-             grant_minutes, timeout_minutes, enabled, created_by, commands)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             grant_minutes, timeout_minutes, enabled, created_by, commands, web_only)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             rule.name,
             serde_json::to_string(&rule.subject).map_err(json_err)?,
@@ -170,6 +181,7 @@ pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result
             rule.enabled as i64,
             by,
             serde_json::to_string(&rule.commands).map_err(json_err)?,
+            rule.web_only as i64,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -180,7 +192,7 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
     let n = conn.execute(
         "UPDATE policies SET name = ?1, subject = ?2, target = ?3, action = ?4, effect = ?5,
              approvers = ?6, grant_minutes = ?7, timeout_minutes = ?8, enabled = ?9,
-             commands = ?11, updated_at = datetime('now')
+             commands = ?11, web_only = ?12, updated_at = datetime('now')
          WHERE id = ?10",
         params![
             rule.name,
@@ -194,6 +206,7 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
             rule.enabled as i64,
             rule.id,
             serde_json::to_string(&rule.commands).map_err(json_err)?,
+            rule.web_only as i64,
         ],
     )?;
     Ok(n > 0)
@@ -230,11 +243,14 @@ pub struct ApprovalRequest {
     pub client_ip: Option<String>,
     /// For `ssh_command`: the command waiting for approval.
     pub command: Option<String>,
+    /// From the policy: decided on the web UI after a fresh sign-in only;
+    /// Telegram just notifies.
+    pub web_only: bool,
 }
 
 const REQ_COLS: &str = "id, requester, requester_display, action, resource, target_label,
     policy_id, policy_name, approvers, grant_minutes, reason, status, created_at, expires_at,
-    decided_at, decided_by, comment, grant_until, client_ip, command";
+    decided_at, decided_by, comment, grant_until, client_ip, command, web_only";
 
 fn request_from_row(r: &Row) -> rusqlite::Result<ApprovalRequest> {
     Ok(ApprovalRequest {
@@ -258,6 +274,7 @@ fn request_from_row(r: &Row) -> rusqlite::Result<ApprovalRequest> {
         grant_until: r.get(17)?,
         client_ip: r.get(18)?,
         command: r.get(19)?,
+        web_only: r.get::<_, i64>(20)? != 0,
     })
 }
 
@@ -265,8 +282,8 @@ pub fn create_request(conn: &Connection, req: &ApprovalRequest) -> rusqlite::Res
     conn.execute(
         "INSERT INTO approval_requests (id, requester, requester_display, action, resource,
              resource_key, target_label, policy_id, policy_name, approvers, grant_minutes,
-             reason, status, created_at, expires_at, client_ip, command)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             reason, status, created_at, expires_at, client_ip, command, web_only)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             req.id,
             req.requester,
@@ -285,6 +302,7 @@ pub fn create_request(conn: &Connection, req: &ApprovalRequest) -> rusqlite::Res
             req.expires_at,
             req.client_ip,
             req.command,
+            req.web_only as i64,
         ],
     )?;
     Ok(())
@@ -547,6 +565,7 @@ mod tests {
             timeout_minutes: 30,
             enabled: true,
             commands: vec![],
+            web_only: false,
         }
     }
 
@@ -576,6 +595,7 @@ mod tests {
             grant_until: None,
             client_ip: Some("192.0.2.1".into()),
             command: None,
+            web_only: false,
         }
     }
 
@@ -665,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn older_tables_gain_the_command_columns() {
+    fn older_tables_gain_the_new_columns() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
             "CREATE TABLE policies (id INTEGER PRIMARY KEY, name TEXT, subject TEXT, target TEXT,
@@ -683,13 +703,16 @@ mod tests {
         migrate(&c).unwrap();
         migrate(&c).unwrap();
         insert_rule(&c, &sample_rule(), "a").unwrap();
-        assert!(list_rules(&c).unwrap()[0].commands.is_empty());
+        let rule = &list_rules(&c).unwrap()[0];
+        assert!(rule.commands.is_empty() && !rule.web_only);
         let mut req = sample_request("r1", 10);
         req.command = Some("uptime".into());
+        req.web_only = true;
         create_request(&c, &req).unwrap();
+        let got = get_request(&c, "r1").unwrap().unwrap();
         assert_eq!(
-            get_request(&c, "r1").unwrap().unwrap().command.as_deref(),
-            Some("uptime")
+            (got.command.as_deref(), got.web_only),
+            (Some("uptime"), true)
         );
     }
 

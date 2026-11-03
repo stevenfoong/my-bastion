@@ -17,6 +17,7 @@ mod recording_mp4;
 mod session;
 mod ssh_exec;
 mod store;
+mod telegram;
 mod tunnel;
 mod vdi;
 mod websocket;
@@ -969,6 +970,10 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
+    if let Some(tc) = config.telegram.clone() {
+        telegram::spawn(tc, database.clone(), default_cell.clone());
+    }
+
     let vault_client: ConnectionsState = Arc::new(Connections { cell: default_cell });
 
     let oidc_enabled = OidcEnabled(oidc_state.is_some());
@@ -1404,6 +1409,11 @@ async fn run_server(config: Config, database: Db) {
         .route("/api/approvals/{id}/approve", post(policy::api::approve))
         .route("/api/approvals/{id}/deny", post(policy::api::deny))
         .route("/api/approvals/{id}/cancel", post(policy::api::cancel))
+        .route("/api/telegram", get(telegram::status))
+        .route(
+            "/api/telegram/link",
+            post(telegram::create_link_code).delete(telegram::delete_link),
+        )
         // Login scripts listing
         .route("/api/login-scripts", get(api::list_login_scripts))
         .route("/api/ws-ticket", post(api::create_ws_ticket))

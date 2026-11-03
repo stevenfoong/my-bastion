@@ -223,6 +223,10 @@ pub struct Rule {
     /// that any of them matches. Empty: every command.
     #[serde(default)]
     pub commands: Vec<String>,
+    /// For `require_approval` on high-risk targets: Telegram only notifies,
+    /// and the decision needs a fresh sign-in on the web UI.
+    #[serde(default)]
+    pub web_only: bool,
 }
 
 const MAX_COMMAND_PATTERNS: usize = 50;
@@ -314,6 +318,9 @@ impl Rule {
             if self.grant_minutes == 0 || self.timeout_minutes == 0 {
                 return Err("grant_minutes and timeout_minutes must be at least 1".into());
             }
+        }
+        if self.web_only && self.effect != Effect::RequireApproval {
+            return Err("web only applies to require_approval rules".into());
         }
         if !self.commands.is_empty() && self.action != Action::SshCommand {
             return Err("command patterns only apply to ssh_command rules".into());
@@ -519,6 +526,92 @@ pub fn may_decide(
     }
 }
 
+/// How recent a web sign-in must be to decide a web-only request.
+pub const FRESH_SIGNIN_SECS: i64 = 15 * 60;
+
+/// Where a decision comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// The web UI or API; `fresh` when the caller signed in on the web UI
+    /// within `FRESH_SIGNIN_SECS`.
+    Web {
+        fresh: bool,
+    },
+    Telegram,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum DecideError {
+    NotFound,
+    /// Not an approver, their own request, or web only from Telegram.
+    Forbidden(String),
+    /// A web-only request, and the caller's sign-in is not fresh.
+    NeedsFreshSignIn,
+    /// Already decided, or expired.
+    Conflict(String),
+    Db(String),
+}
+
+/// Approve or deny request `req_id` as `who`, with an audit row, and update
+/// the Telegram messages for it. `by` is who the audit log names.
+#[allow(clippy::too_many_arguments)]
+pub fn decide_request(
+    conn: &rusqlite::Connection,
+    req_id: &str,
+    who: &Requester,
+    by: &str,
+    comment: &str,
+    approve: bool,
+    via: Via,
+    now: i64,
+) -> Result<store::ApprovalRequest, DecideError> {
+    let req = store::get_request(conn, req_id)
+        .map_err(|e| DecideError::Db(e.to_string()))?
+        .ok_or(DecideError::NotFound)?;
+    may_decide(&req.approvers, who, &req.requester).map_err(DecideError::Forbidden)?;
+    if req.web_only {
+        match via {
+            Via::Telegram => {
+                return Err(DecideError::Forbidden(
+                    "this request can only be decided on the web UI".into(),
+                ))
+            }
+            Via::Web { fresh: false } => return Err(DecideError::NeedsFreshSignIn),
+            Via::Web { fresh: true } => {}
+        }
+    }
+    let done =
+        store::decide(conn, req_id, approve, by, comment, now).map_err(DecideError::Conflict)?;
+    let detail = match (via, comment.is_empty()) {
+        (Via::Telegram, true) => Some("via Telegram".to_string()),
+        (Via::Telegram, false) => Some(format!("via Telegram: {}", comment)),
+        (Via::Web { .. }, false) => Some(comment.to_string()),
+        (Via::Web { .. }, true) => None,
+    };
+    store::audit(
+        conn,
+        &store::AuditEvent {
+            event: if approve {
+                "approved"
+            } else {
+                "approval_denied"
+            },
+            actor: by,
+            requester: &done.requester,
+            action: &done.action,
+            target: &done.target_label,
+            policy: Some(&done.policy_name),
+            approval_id: Some(&done.id),
+            detail: detail.as_deref(),
+            ..Default::default()
+        },
+        now,
+    )
+    .map_err(|e| DecideError::Db(e.to_string()))?;
+    crate::telegram::notify(&done.id);
+    Ok(done)
+}
+
 /// The outcome of a policy check for a request, after grants and pending
 /// requests are taken into account.
 pub enum Gate {
@@ -615,8 +708,10 @@ pub async fn gate(
                     comment: None,
                     grant_until: None,
                     client_ip: Some(ip.clone()),
+                    web_only: rule.web_only,
                 };
                 store::create_request(&conn, &req).map_err(|e| e.to_string())?;
+                crate::telegram::notify(&req.id);
                 audit(store::AuditEvent {
                     approval_id: Some(&req.id),
                     ..decision_event("requested", &display, &rid, action, &target, rule, &ip)
@@ -722,6 +817,7 @@ pub fn spawn_expiry(db: crate::db::Db) {
                 let now = store::now_secs();
                 let due = store::expire_due(&conn, now)?;
                 for r in &due {
+                    crate::telegram::notify(&r.id);
                     store::audit(
                         &conn,
                         &store::AuditEvent {
@@ -776,6 +872,7 @@ mod tests {
             timeout_minutes: 30,
             enabled: true,
             commands: vec![],
+            web_only: false,
         }
     }
 

@@ -18,8 +18,9 @@ a phase. Status:
   fresh install with no Vault
 - Phase 2 (policy/approval engine): 2a (rules, connect approvals, approvals
   page, admin policies, audit) and 2b (`run_ssh` command mode, `ssh_command`
-  rules with regex patterns) done. Next: 2c Telegram, 2d clipboard/file
-  transfer + break-glass, 2e interactive SSH logging
+  rules with regex patterns) and 2c (Telegram approvals, web-only policies
+  with fresh sign-in) done. Next: 2d clipboard/file transfer + break-glass,
+  2e interactive SSH logging
 - Phases 3–4 (MCP, DB proxy): not started
 
 ## Architecture
@@ -57,6 +58,9 @@ a phase. Status:
   `docs/policies.md`
 - `src/ssh_exec.rs` — run one command over SSH (through `tunnel::start_chain`
   for jump hosts); the `/run` handler is `ab_run_command` in `api.rs`
+- `src/telegram.rs` — Telegram bot (long polling, link codes, Approve/Deny
+  buttons, message edits); `telegram::notify(request_id)` after any request
+  change. Decisions from the web and the bot share `policy::decide_request`
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
 - `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
   wire format, WebSocket <-> guacd bridge with recording tee
@@ -141,6 +145,8 @@ image in `contrib/vdi-test-image/`).
   self-approval refused, deny wins, expiry, audit
 - `tests/test_policy_run_ssh.sh` — live: commands through the bastion against
   the machine's own sshd (temporary key): deny/approval patterns, jump host
+- `tests/test_telegram_approval.sh` — live: Telegram linking and decisions
+  against a fake Bot API (`tests/fake_telegram.py`), web-only + fresh sign-in
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

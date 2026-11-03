@@ -260,8 +260,12 @@ fn parse_forwarded_ip(raw: &[u8]) -> Option<IpAddr> {
 
 /// Extract session cookie value from the Cookie header.
 fn extract_cookie(request: &Request, name: &str) -> Option<String> {
-    request
-        .headers()
+    cookie_value(request.headers(), name)
+}
+
+/// The value of cookie `name` in these headers.
+pub fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
         .get("cookie")
         .and_then(|v| v.to_str().ok())
         .and_then(|cookies| {

@@ -295,6 +295,7 @@ pub fn init_db(path: &Path) -> rusqlite::Result<Db> {
 
     // Policies, approval requests and their audit log.
     crate::policy::store::migrate(&conn)?;
+    crate::telegram::migrate(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -784,6 +785,41 @@ pub fn get_user_by_email(db: &Db, email: &str) -> rusqlite::Result<User> {
             })
         },
     )
+}
+
+/// When the web sign-in behind session `token` started (Unix seconds), if
+/// it is still valid. Takes a held connection, for callers inside `with_db`.
+pub fn auth_session_started(conn: &Connection, token: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT CAST(strftime('%s', created_at) AS INTEGER) FROM auth_sessions
+         WHERE token_hash = ?1 AND expires_at > datetime('now')",
+        params![hash_key(token)],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// A user by email, from a held connection. `None` if unknown.
+pub fn user_by_email(conn: &Connection, email: &str) -> Option<User> {
+    conn.query_row(
+        "SELECT id, email, name, oidc_subject, role, disabled, created_at, last_login_at, oidc_groups
+         FROM users WHERE email = ?1 COLLATE NOCASE",
+        params![email],
+        |row| {
+            Ok(User {
+                id: row.get(0)?,
+                email: row.get(1)?,
+                name: row.get(2)?,
+                oidc_subject: row.get(3)?,
+                role: row.get(4)?,
+                disabled: row.get::<_, i32>(5)? != 0,
+                created_at: row.get(6)?,
+                last_login_at: row.get(7)?,
+                oidc_groups: row.get(8)?,
+            })
+        },
+    )
+    .ok()
 }
 
 /// Validate an auth session token. Returns the user if valid and not expired/disabled.

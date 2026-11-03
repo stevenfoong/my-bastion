@@ -21,6 +21,7 @@ A rule has:
 | **Effect** | `allow`, `deny`, `require_approval`, or `allow_and_alert` |
 | **Approvers** | for `require_approval`: `role:<role>` (that role or higher) and/or `group:<group>` |
 | **Grant / timeout** | minutes an approval lets the requester in (default 60), and minutes a request waits before it expires (default 30) |
+| **Web only** | for `require_approval` on high-risk targets: Telegram only notifies, and approvers decide on the Approvals page after a **fresh sign-in** (within the last 15 minutes; a token or API key never counts) |
 
 How a connect is decided:
 
@@ -87,12 +88,57 @@ reason, and approve or deny it with an optional comment.
 - Connecting again while a request waits reuses it rather than opening
   another. The requester can withdraw it.
 
+## Telegram
+
+With `[telegram]` enabled, a bot posts each approval request (who, the
+target, the command if any, the policy and the reason) with **Approve** and
+**Deny** buttons:
+
+- to every chat in `chat_ids`, such as an approvers' group, where the edited
+  messages double as a log;
+- and, with `notify_approvers` (the default), to each linked approver who may
+  decide that request.
+
+The messages are edited as the request changes: the reason when the
+requester adds one, then who approved or denied it, or that it expired or
+was withdrawn. The bot long-polls Telegram, so no port is opened for it.
+
+**Linking.** On the Approvals page an approver presses **Link Telegram** and
+sends the one-time code to the bot (`/link CODE`, or the `t.me` link the page
+shows) in a private chat. Codes last 10 minutes and work once. `/unlink` in
+Telegram, or **Unlink** on the page, removes the link.
+
+**Who can decide from Telegram.** A button press counts only from a linked
+account, and only if that user may decide the request by the same rules as
+the web UI: an approver, not disabled, and never for their own request.
+Requests from a **web-only** policy are sent without buttons and a forged
+press is refused. Decisions are in the audit log `via Telegram`.
+
+**Setup.** Create a bot with @BotFather, store its token, and enable it:
+
+```
+mybastion secret put mybastion/telegram token=@/root/bot-token
+```
+
+```toml
+[telegram]
+enabled = true
+bot_token_path = "mybastion/telegram"   # secret-store path, field "token"
+chat_ids = [-1001234567890]             # optional group chats
+notify_approvers = true
+```
+
+To find a group's chat id, add the bot to the group and read `chat.id` from
+`https://api.telegram.org/bot<token>/getUpdates` before enabling My Bastion
+(both read the same updates).
+
 ## Audit log
 
 The **Policy Audit Log** on the Admin page records every decision with the
 requester and, where there is one, the approver: denials, new requests,
-approvals and denials by an approver, expiry, withdrawal, use of an approval,
-`allow_and_alert` connects, and every policy change.
+approvals and denials by an approver (with `via Telegram` for button
+presses), expiry, withdrawal, use of an approval, `allow_and_alert` connects,
+Telegram links and unlinks, and every policy change.
 
 ## API
 
@@ -107,6 +153,8 @@ approvals and denials by an approver, expiry, withdrawal, use of an approval,
 | POST | `/api/approvals/{id}/approve`, `/deny` | approvers | `{"comment": "..."}` |
 | POST | `/api/approvals/{id}/cancel` | requester | withdraw |
 | POST | `/api/addressbook/folders/{scope}/{folder}/entries/{entry}/run` | operator+ | run one command (see Command mode) |
+| GET | `/api/telegram` | signed-in users | `enabled`, `bot_username`, and the caller's `linked` account |
+| POST, DELETE | `/api/telegram/link` | signed-in users | a new one-time link code (with a `t.me` `url`); unlink |
 
 A connect held for approval answers **202** with
 `{"approval_required": true, "approval": {...}}`; a denied one answers
