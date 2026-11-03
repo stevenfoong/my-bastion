@@ -114,6 +114,7 @@
     <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
         Who may connect where. A deny on any matching rule wins; otherwise the most specific rule decides (entry, then deeper folder, then user over group over role). With no matching rule a connect is allowed.
         Approvers are a comma-separated list such as <code>role:admin, group:secops</code>.
+        Web only (for require approval): Telegram just notifies, and approvers decide here after a fresh sign-in.
         SSH command rules check commands run through the bastion; their patterns are regular expressions, one per line, matched anywhere in the command (empty: every command).
     </div>
     <table id="policies-table">
@@ -157,6 +158,7 @@
         <input type="text" id="pol-approvers" placeholder="role:admin" style="width:10em">
         <input type="number" id="pol-grant" value="60" min="1" style="width:5em" title="Minutes an approval lets the requester in">
         <input type="number" id="pol-timeout" value="30" min="1" style="width:5em" title="Minutes a request waits for a decision">
+        <label title="Telegram only notifies; approvers decide on the Approvals page after a fresh sign-in"><input type="checkbox" id="pol-web-only"> web only</label>
         <button class="btn-primary" id="pol-add-btn">Add policy</button>
     </div>
 
@@ -266,7 +268,7 @@
                         ? 'SSH command' + ((p.commands || []).length ? ': ' + p.commands.join(' | ') : '')
                         : 'connect';
                     [p.name, polWho(p.subject), polTarget(p.target), act, p.effect.replace(/_/g, ' '),
-                     p.effect === 'require_approval' ? polApprovers(p.approvers) : '',
+                     p.effect === 'require_approval' ? polApprovers(p.approvers) + (p.web_only ? ' (web only)' : '') : '',
                      p.effect === 'require_approval' ? p.grant_minutes + ' min / ' + p.timeout_minutes + ' min' : ''
                     ].forEach(function(v) {
                         var td = document.createElement('td');
@@ -322,6 +324,8 @@
                 approvers: parseApprovers(document.getElementById('pol-approvers').value),
                 grant_minutes: parseInt(document.getElementById('pol-grant').value, 10) || 60,
                 timeout_minutes: parseInt(document.getElementById('pol-timeout').value, 10) || 30,
+                web_only: document.getElementById('pol-effect').value === 'require_approval'
+                    && document.getElementById('pol-web-only').checked,
                 enabled: true
             };
             fetch('/api/admin/policies', {

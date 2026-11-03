@@ -655,6 +655,39 @@ pub struct Config {
     /// `[spice]`: SPICE and Proxmox VE console sessions.
     pub spice: Option<FeatureSwitch>,
     pub rdp: Option<RdpConfig>,
+    /// `[telegram]`: approval requests to Telegram, with Approve / Deny
+    /// buttons for linked approvers.
+    pub telegram: Option<TelegramConfig>,
+}
+
+/// `[telegram]`: a bot that posts approval requests and takes decisions
+/// from linked approvers. It long-polls, so nothing listens for Telegram.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TelegramConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Secret-store path of the bot token (field `token`), e.g. written with
+    /// `mybastion secret put mybastion/telegram token=@/root/bot-token`.
+    #[serde(default = "default_telegram_token_path")]
+    pub bot_token_path: String,
+    /// Chats (e.g. an approvers' group) that get every request; the edited
+    /// messages there double as a log.
+    #[serde(default)]
+    pub chat_ids: Vec<i64>,
+    /// Also message each linked approver who may decide a request.
+    #[serde(default = "default_true")]
+    pub notify_approvers: bool,
+    /// The Bot API base URL; change it only for a local Bot API server.
+    #[serde(default = "default_telegram_api_url")]
+    pub api_url: String,
+}
+
+fn default_telegram_token_path() -> String {
+    "mybastion/telegram".into()
+}
+
+fn default_telegram_api_url() -> String {
+    "https://api.telegram.org".into()
 }
 
 /// RDP-wide defaults applied when an address book entry (or ad-hoc
@@ -1384,6 +1417,7 @@ impl Default for Config {
             web: None,
             spice: None,
             rdp: None,
+            telegram: None,
         }
     }
 }

@@ -316,3 +316,21 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # enabled = true    # headless-Chromium web sessions
 # [spice]
 # enabled = true    # SPICE and Proxmox VE consoles
+
+# ──────────────────────────────────────────────────────────────────
+# Telegram approvals
+# ──────────────────────────────────────────────────────────────────
+#
+# A bot posts each approval request with Approve / Deny buttons. Only
+# approvers who linked their Telegram account (Approvals page -> Link
+# Telegram) can decide, never their own request, and never a request from
+# a web-only policy. The bot long-polls Telegram: no inbound port.
+# Create the bot with @BotFather and keep its token in the secret store:
+#   mybastion secret put mybastion/telegram token=@/root/bot-token
+# See docs/policies.md.
+
+# [telegram]
+# enabled = true
+# bot_token_path = "mybastion/telegram"   # secret-store path, field "token"
+# chat_ids = [-1001234567890]             # chats that get every request
+# notify_approvers = true                 # also message linked approvers

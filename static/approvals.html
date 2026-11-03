@@ -65,6 +65,18 @@
         </table>
     </div>
 
+    <div id="telegram-section" style="display:none">
+        <h2>Telegram</h2>
+        <p id="tg-state" style="color:var(--text-muted)"></p>
+        <button id="tg-link-btn" class="btn-small btn-action">Link Telegram</button>
+        <button id="tg-unlink-btn" class="btn-small" style="display:none">Unlink</button>
+        <div id="tg-code" style="display:none;margin-top:0.5em;">
+            Send <code id="tg-code-text"></code> to the bot within 10 minutes:
+            <code id="tg-code-cmd"></code>
+            <a id="tg-code-link" target="_blank" rel="noopener" style="display:none">Open the bot</a>
+        </div>
+    </div>
+
     <div id="error"></div>
 
     <script>
@@ -89,7 +101,7 @@
         }
 
         var errorEl = document.getElementById('error');
-        function showError(msg) { errorEl.textContent = msg; setTimeout(function(){ errorEl.textContent = ''; }, 5000); }
+        function showError(msg, ms) { errorEl.textContent = msg; setTimeout(function(){ errorEl.textContent = ''; }, ms || 5000); }
 
         document.getElementById('logout-item').addEventListener('click', function() {
             sessionStorage.removeItem('mybastion_api_key');
@@ -128,10 +140,14 @@
             })
             .then(function(r) {
                 if (r.ok) return loadApprovals();
-                return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
+                return r.json().then(function(j) {
+                    var e = new Error(j.error || 'Failed');
+                    e.long = !!j.fresh_signin_required;
+                    throw e;
+                });
             })
             .catch(function(e) {
-                showError(e.message);
+                showError(e.message, e.long ? 15000 : 5000);
                 btns.forEach(function(b) { b.disabled = false; });
             });
         }
@@ -143,7 +159,7 @@
             list.forEach(function(r) {
                 var tr = document.createElement('tr');
                 tr.setAttribute('data-approval-id', r.id);
-                [r.requester_display, what(r), r.policy_name, r.reason || '—',
+                [r.requester_display, what(r), r.policy_name + (r.web_only ? ' (web only, fresh sign-in)' : ''), r.reason || '—',
                  fmtTime(r.created_at), fmtTime(r.expires_at)].forEach(function(v) { tr.appendChild(cell(v)); });
                 var ctd = document.createElement('td');
                 var comment = document.createElement('input');
@@ -222,6 +238,43 @@
                 .catch(function() {});
         }
 
+        // ── Telegram ──
+        // Link this account to Telegram with a one-time code, so requests
+        // you may decide come there with Approve / Deny buttons.
+        function loadTelegram() {
+            if (apiKey) return;
+            fetch('/api/telegram', { credentials: 'same-origin' })
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(d) {
+                    if (!d || !d.enabled) return;
+                    document.getElementById('telegram-section').style.display = '';
+                    var linked = d.linked;
+                    document.getElementById('tg-state').textContent = linked
+                        ? 'Linked' + (linked.telegram_username ? ' to ' + linked.telegram_username : '') + ' since ' + fmtTime(linked.linked_at) + '.'
+                        : 'Not linked. Link your Telegram account to get the requests you may decide there.';
+                    document.getElementById('tg-link-btn').textContent = linked ? 'Link another account' : 'Link Telegram';
+                    document.getElementById('tg-unlink-btn').style.display = linked ? '' : 'none';
+                })
+                .catch(function() {});
+        }
+        document.getElementById('tg-link-btn').addEventListener('click', function() {
+            fetch('/api/telegram/link', { method: 'POST', credentials: 'same-origin' })
+                .then(function(r) { return r.json().then(function(j) { if (!r.ok) throw new Error(j.error || 'Failed'); return j; }); })
+                .then(function(j) {
+                    document.getElementById('tg-code').style.display = '';
+                    document.getElementById('tg-code-text').textContent = j.code;
+                    document.getElementById('tg-code-cmd').textContent = '/link ' + j.code;
+                    var a = document.getElementById('tg-code-link');
+                    if (j.url) { a.href = j.url; a.style.display = ''; } else { a.style.display = 'none'; }
+                })
+                .catch(function(e) { showError(e.message); });
+        });
+        document.getElementById('tg-unlink-btn').addEventListener('click', function() {
+            fetch('/api/telegram/link', { method: 'DELETE', credentials: 'same-origin' })
+                .then(function() { document.getElementById('tg-code').style.display = 'none'; loadTelegram(); })
+                .catch(function(e) { showError(e.message); });
+        });
+
         function initPage() {
             fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
                 .then(function(res) {
@@ -232,6 +285,7 @@
                     var level = apiKey ? 4 : (data ? (roleLevel[data.role] || 0) : 0);
                     document.documentElement.setAttribute('data-role-level', String(level));
                     loadApprovals();
+                    loadTelegram();
                     // Keep the list current while someone waits on a decision.
                     setInterval(function() {
                         var active = document.activeElement;

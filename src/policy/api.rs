@@ -11,14 +11,17 @@
 #![allow(clippy::result_large_err)]
 
 use axum::extract::{Path, Query};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::Deserialize;
 use serde_json::json;
 
 use super::store::{self, ApprovalRequest, AuditEvent};
-use super::{gate, may_decide, Action, Gate, Requester, Resource, Rule};
+use super::{
+    decide_request, gate, may_decide, Action, DecideError, Gate, Requester, Resource, Rule, Via,
+    FRESH_SIGNIN_SECS,
+};
 use crate::auth::AuthIdentity;
 use crate::db::Db;
 
@@ -391,12 +394,16 @@ pub async fn set_reason(
     };
     let reason: String = body.reason.trim().chars().take(500).collect();
     let rid = Requester::from_identity(&id).id();
+    let rq = req_id.clone();
     match with_db(&db, move |c| {
-        store::set_reason(c, &req_id, &rid, &reason).map_err(|e| e.to_string())
+        store::set_reason(c, &rq, &rid, &reason).map_err(|e| e.to_string())
     })
     .await
     {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            crate::telegram::notify(&req_id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => error(
             StatusCode::NOT_FOUND,
             "no pending request of yours with that id",
@@ -413,6 +420,7 @@ pub struct DecisionBody {
 
 async fn decide(
     identity: Option<Extension<AuthIdentity>>,
+    headers: HeaderMap,
     db: Db,
     req_id: String,
     body: DecisionBody,
@@ -425,43 +433,39 @@ async fn decide(
     let who = Requester::from_identity(&id);
     let by = id.display_name().to_string();
     let comment: String = body.comment.trim().chars().take(500).collect();
+    // A fresh sign-in is a web session cookie from the last few minutes; a
+    // token or API key never counts.
+    let session = crate::auth::cookie_value(&headers, "mybastion_session");
     let result = with_db(&db, move |c| {
-        let Some(req) = store::get_request(c, &req_id).map_err(|e| e.to_string())? else {
-            return Ok(Err((StatusCode::NOT_FOUND, "no such request".to_string())));
-        };
-        if let Err(e) = may_decide(&req.approvers, &who, &req.requester) {
-            return Ok(Err((StatusCode::FORBIDDEN, e)));
-        }
         let now = store::now_secs();
-        match store::decide(c, &req_id, approve, &by, &comment, now) {
-            Ok(done) => {
-                store::audit(
-                    c,
-                    &AuditEvent {
-                        event: if approve {
-                            "approved"
-                        } else {
-                            "approval_denied"
-                        },
-                        actor: &by,
-                        requester: &done.requester,
-                        action: &done.action,
-                        target: &done.target_label,
-                        policy: Some(&done.policy_name),
-                        approval_id: Some(&done.id),
-                        detail: (!comment.is_empty()).then_some(comment.as_str()),
-                        ..Default::default()
-                    },
-                    now,
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(Ok(done))
-            }
-            Err(e) => Ok(Err((StatusCode::CONFLICT, e))),
-        }
+        let fresh = session
+            .and_then(|t| crate::db::auth_session_started(c, &t))
+            .is_some_and(|at| now - at <= FRESH_SIGNIN_SECS);
+        Ok(decide_request(
+            c,
+            &req_id,
+            &who,
+            &by,
+            &comment,
+            approve,
+            Via::Web { fresh },
+            now,
+        ))
     })
     .await;
     match result {
+        Ok(Err(DecideError::NotFound)) => error(StatusCode::NOT_FOUND, "no such request"),
+        Ok(Err(DecideError::Forbidden(e))) => error(StatusCode::FORBIDDEN, e),
+        Ok(Err(DecideError::NeedsFreshSignIn)) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this request needs a fresh sign-in: sign out, sign in again and decide within 15 minutes",
+                "fresh_signin_required": true,
+            })),
+        )
+            .into_response(),
+        Ok(Err(DecideError::Conflict(e))) => error(StatusCode::CONFLICT, e),
+        Ok(Err(DecideError::Db(e))) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
         Ok(Ok(done)) => {
             tracing::info!(
                 approver = %done.decided_by.as_deref().unwrap_or(""),
@@ -472,19 +476,20 @@ async fn decide(
             );
             Json(json!(done)).into_response()
         }
-        Ok(Err((status, msg))) => error(status, msg),
         Err(r) => r,
     }
 }
 
 pub async fn approve(
     identity: Option<Extension<AuthIdentity>>,
+    headers: HeaderMap,
     Extension(db): Extension<Db>,
     Path(req_id): Path<String>,
     body: Option<Json<DecisionBody>>,
 ) -> Response {
     decide(
         identity,
+        headers,
         db,
         req_id,
         body.map(|Json(b)| b).unwrap_or_default(),
@@ -495,12 +500,14 @@ pub async fn approve(
 
 pub async fn deny(
     identity: Option<Extension<AuthIdentity>>,
+    headers: HeaderMap,
     Extension(db): Extension<Db>,
     Path(req_id): Path<String>,
     body: Option<Json<DecisionBody>>,
 ) -> Response {
     decide(
         identity,
+        headers,
         db,
         req_id,
         body.map(|Json(b)| b).unwrap_or_default(),
@@ -542,6 +549,7 @@ pub async fn cancel(
                 now,
             )
             .map_err(|e| e.to_string())?;
+            crate::telegram::notify(&r.id);
         }
         Ok(true)
     })
