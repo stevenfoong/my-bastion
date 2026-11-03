@@ -798,6 +798,15 @@
                 Inherit permissions from parent folder
             </label>
             <div class="field-hint">When ticked, if this folder's own groups list doesn't grant a user access, the check walks up to the parent (and further ancestors if they also inherit). Uncheck to enforce this folder's groups list on its own. Top-level folders have no parent so this has no effect.</div>
+            <label for="fm-ai-mode">AI agents</label>
+            <select id="fm-ai-mode">
+                <option value="">As the parent folder (none at the top)</option>
+                <option value="none">None: not reachable by AI</option>
+                <option value="observe">Observe: list and look only</option>
+                <option value="approve">Approve: every action waits for a person</option>
+                <option value="auto">Auto: allowed by policy, fully recorded</option>
+            </select>
+            <div class="field-hint">What AI agents may do here through the MCP endpoint. Subfolders that leave it unset follow this folder. Policies still apply in every mode.</div>
             <details class="fm-defaults" id="fm-defaults">
                 <summary>Default credentials</summary>
                 <div class="field-hint">Lent to entries in this folder that have no password or key of their own, per session type, so an entry created without secrets (a NetBox webhook, an import) connects straight away. An entry's own credentials always win; subfolders inherit per type, but only those that inherit permissions from this folder and share it with nobody extra. A web entry's default password is typed into the page, where the user can read it. Secrets are write-only: leave a field blank to keep what is stored, tick clear to drop a type.</div>
@@ -3906,6 +3915,7 @@
 
         var folderEditMode = null; // null = create, {scope, name, path} = edit
         var fmUsersLoaded = false; // edit mode: has the folder's allowed_users arrived yet?
+        var fmAiLoaded = false; // edit mode: has the folder's ai_mode arrived yet?
         var subfolderParent = null; // null, or { scope, path } when creating a subfolder
 
         function openNewFolder() {
@@ -3922,6 +3932,7 @@
             document.getElementById('fm-groups-input').value = '';
             document.getElementById('fm-inherit').checked = false;
             document.getElementById('fm-users').value = '';
+            document.getElementById('fm-ai-mode').value = '';
             fmUsersLoaded = true;
             fmGroups = [];
             renderFmGroupChips();
@@ -3945,6 +3956,7 @@
             document.getElementById('fm-groups-input').value = '';
             document.getElementById('fm-inherit').checked = true;
             document.getElementById('fm-users').value = '';
+            document.getElementById('fm-ai-mode').value = '';
             fmUsersLoaded = true;
             fmGroups = [];
             renderFmGroupChips();
@@ -3972,7 +3984,9 @@
             // Reset chip state and kick off known-groups load, then fetch current config.
             document.getElementById('fm-groups-input').value = '';
             document.getElementById('fm-users').value = '';
+            document.getElementById('fm-ai-mode').value = '';
             fmUsersLoaded = false;
+            fmAiLoaded = false;
             fmGroups = [];
             renderFmGroupChips();
             loadKnownGroups(populateFmGroupOptions);
@@ -3989,6 +4003,10 @@
                     populateFmGroupOptions();
                 }
                 document.getElementById('fm-inherit').checked = !!(data && data.inherit_from_parent);
+                if (data) {
+                    document.getElementById('fm-ai-mode').value = data.ai_mode || '';
+                    fmAiLoaded = true;
+                }
                 if (data && Array.isArray(data.allowed_users)) {
                     document.getElementById('fm-users').value = data.allowed_users.join('\n');
                     fmUsersLoaded = true;
@@ -4135,7 +4153,8 @@
                         { allowed_groups: groups, description: desc, display_name: displayName, inherit_from_parent: document.getElementById('fm-inherit').checked },
                         // Only send the list once it has loaded: an omitted
                         // field keeps the stored list, an empty one clears it.
-                        fmUsersLoaded ? { allowed_users: users } : {}
+                        fmUsersLoaded ? { allowed_users: users } : {},
+                        fmAiLoaded ? { ai_mode: document.getElementById('fm-ai-mode').value } : {}
                     ))
                 })
                 .then(function(res) {
@@ -4157,7 +4176,7 @@
                     method: 'POST',
                     headers: apiHeaders({ 'Content-Type': 'application/json' }),
                     credentials: 'same-origin',
-                    body: JSON.stringify({ name: fullPath, allowed_groups: groups, allowed_users: users, description: desc, display_name: displayName, scope: postScope, inherit_from_parent: document.getElementById('fm-inherit').checked })
+                    body: JSON.stringify({ name: fullPath, allowed_groups: groups, allowed_users: users, description: desc, display_name: displayName, scope: postScope, inherit_from_parent: document.getElementById('fm-inherit').checked, ai_mode: document.getElementById('fm-ai-mode').value })
                 })
                 .then(function(res) {
                     if (!res.ok) return res.text().then(function(t) { throw new Error(t); });

@@ -247,6 +247,7 @@ fn requester_for(conn: &Connection, email: &str) -> Option<Requester> {
         groups: user.groups_vec(),
         email: Some(user.email),
         api_key: None,
+        ai_agent: None,
         role: user.role,
     })
 }

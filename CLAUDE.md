@@ -21,7 +21,11 @@ a phase. Status:
   rules with regex patterns), 2c (Telegram approvals, web-only policies
   with fresh sign-in), 2d (clipboard/file transfer rules, break-glass) and
   2e (interactive SSH command log from keystrokes, alerts) done
-- Phases 3–4 (MCP, DB proxy): not started
+- Phase 3 (MCP): slice 3a done (`/mcp` with AI agent keys, folder
+  `ai_mode`, `list_connections`, `run_ssh`, approve mode). Next: 3b headless
+  renderer + `open_session`/`screenshot`/`close_session`, 3c input tools +
+  kill switch + forced recording, 3d OAuth 2.1
+- Phase 4 (DB proxy): not started
 
 ## Architecture
 
@@ -69,6 +73,13 @@ a phase. Status:
 - `src/telegram.rs` — Telegram bot (long polling, link codes, Approve/Deny
   buttons, message edits); `telegram::notify(request_id)` after any request
   change. Decisions from the web and the bot share `policy::decide_request`
+- `src/mcp/` — MCP endpoint (`[mcp] enabled`): `agents.rs` (AI agent keys,
+  `ai_agents` table, `ai:<name>` = `AuthIdentity::AiAgent`), `auth.rs`
+  (`/mcp` takes agent keys only; REST never does), `server.rs` (rmcp
+  `ServerHandler`, stateless; tools reuse `api::run_command`), `api.rs`
+  (admin endpoints). Folder `ai_mode` (none/observe/approve/auto) lives in
+  `FolderConfig`, inherited down; `approve` forces approval via
+  `policy::gate_forced`. Docs: `docs/mcp.md`
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
 - `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
   wire format, WebSocket <-> guacd bridge with recording tee
@@ -161,6 +172,9 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_ssh_command_log.sh` — live: keystrokes typed into a real SSH
   session are logged (editing, paste, redaction) and a denied line alerts
   (audit + fake Telegram)
+- `tests/test_mcp_agent.sh` — live: `/mcp` with agent keys (`tests/mcp_call.py`
+  as the client): key isolation, AI modes, `run_ssh` on the machine's own
+  sshd, approve mode, agent policies, audit
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

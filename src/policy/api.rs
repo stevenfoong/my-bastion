@@ -20,9 +20,9 @@ use serde_json::json;
 
 use super::store::{self, ApprovalRequest, AuditEvent};
 use super::{
-    break_glass, decide_request, gate, may_decide, session_controls, Action, DecideError, Gate,
-    Requester, Resource, Rule, SessionControls, Via, BREAK_GLASS_MINUTES, FRESH_SIGNIN_SECS,
-    MIN_BREAK_GLASS_REASON,
+    break_glass, decide_request, gate, gate_forced, may_decide, session_controls, Action,
+    DecideError, Gate, Requester, Resource, Rule, SessionControls, Via, BREAK_GLASS_MINUTES,
+    FRESH_SIGNIN_SECS, MIN_BREAK_GLASS_REASON,
 };
 use crate::auth::AuthIdentity;
 use crate::db::Db;
@@ -104,21 +104,24 @@ pub async fn connect_gate(
 }
 
 /// `connect_gate` for a command run through the bastion: the policy check
-/// covers the exact command, and so does an approval.
+/// covers the exact command, and so does an approval. `forced`: approval
+/// even where the rules allow it (an AI agent in an `approve` folder).
 pub async fn command_gate(
     db: &Db,
     id: &AuthIdentity,
     res: Resource,
     command: &str,
     ip: String,
+    forced: Option<Rule>,
 ) -> Option<Response> {
-    match gate(
+    match gate_forced(
         db,
         id,
         Action::SshCommand,
         res,
         Some(command.to_string()),
         ip,
+        forced,
     )
     .await
     {

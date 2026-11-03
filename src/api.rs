@@ -2455,6 +2455,15 @@ impl Connections {
             .await
     }
 
+    /// A folder's AI mode, inherited from the nearest parent that sets one.
+    pub async fn resolve_ai_mode(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<crate::connections::AiMode, ConnectionError> {
+        self.store().await?.resolve_ai_mode(scope, folder).await
+    }
+
     /// A user's credential variables, for the My Credentials page and saves:
     /// a read error is an error.
     pub async fn read_user_credentials(
@@ -4105,6 +4114,35 @@ pub async fn ab_run_command(
                 .into_response()
         }
     };
+    if let Err(resp) = check_folder_access(&vault, &scope, &folder, &id).await {
+        return resp;
+    }
+    let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+    let ip = client_ip(&headers, addr.ip(), &proxies).to_string();
+    run_command(
+        &manager, &database, &vault, &id, &scope, &folder, &entry, req, ip, None,
+    )
+    .await
+}
+
+/// Run one command on an SSH entry for `id`, who may already reach the
+/// folder: the command checks, the `ssh_command` policy gate (with
+/// `forced` approval for an AI agent in an `approve` folder), credentials,
+/// the network check and the audit row. Shared by the REST route and MCP.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_command(
+    manager: &SessionManager,
+    database: &Db,
+    vault: &ConnectionsState,
+    id: &AuthIdentity,
+    scope: &str,
+    folder: &str,
+    entry: &str,
+    req: RunCommandRequest,
+    ip: String,
+    forced: Option<crate::policy::Rule>,
+) -> Response {
+    let (scope, folder, entry) = (scope.to_string(), folder.to_string(), entry.to_string());
     let command = req.command.trim().to_string();
     if command.is_empty() || command.len() > RUN_MAX_COMMAND_LEN {
         return (
@@ -4122,19 +4160,14 @@ pub async fn ab_run_command(
     }
     let timeout = std::time::Duration::from_secs(req.timeout_secs.unwrap_or(60).clamp(1, 600));
 
-    if let Err(resp) = check_folder_access(&vault, &scope, &folder, &id).await {
-        return resp;
-    }
-
-    let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
-    let ip = client_ip(&headers, addr.ip(), &proxies).to_string();
     let res = crate::policy::Resource::Entry {
         scope: scope.clone(),
         folder: folder.clone(),
         entry: entry.clone(),
     };
     if let Some(resp) =
-        crate::policy::api::command_gate(&database, &id, res.clone(), &command, ip.clone()).await
+        crate::policy::api::command_gate(database, id, res.clone(), &command, ip.clone(), forced)
+            .await
     {
         return resp;
     }
@@ -4164,7 +4197,7 @@ pub async fn ab_run_command(
             .into_response();
     }
     let ab_entry = lend_folder_defaults(vault.as_ref(), &scope, &folder, &entry, ab_entry).await;
-    let ab_entry = match resolve_entry_credentials(&vault, &id, ab_entry).await {
+    let ab_entry = match resolve_entry_credentials(vault, id, ab_entry).await {
         Ok(e) => e,
         Err(resp) => return resp,
     };
@@ -4219,7 +4252,7 @@ pub async fn ab_run_command(
         "Running command through the bastion"
     );
     let outcome = crate::ssh_exec::run(&target, &hops, &command, timeout, RUN_MAX_OUTPUT).await;
-    crate::policy::record_command(&database, &id, &res, &command, &outcome, ip).await;
+    crate::policy::record_command(database, id, &res, &command, &outcome, ip).await;
     match outcome {
         Ok(out) => Json(json!(out)).into_response(),
         Err(e) => (
@@ -4586,10 +4619,25 @@ pub struct CreateFolderRequest {
     pub scope: String,
     #[serde(default)]
     pub inherit_from_parent: bool,
+    /// What AI agents may do here: none | observe | approve | auto; empty or
+    /// omitted: as the parent folder.
+    #[serde(default)]
+    pub ai_mode: Option<String>,
 }
 
 fn default_scope() -> String {
     "shared".into()
+}
+
+/// A folder's `ai_mode` from a request: `None` for "as the parent" (empty).
+fn parse_ai_mode(s: &str) -> Result<Option<crate::connections::AiMode>, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    crate::connections::AiMode::parse(s)
+        .map(Some)
+        .ok_or_else(|| "ai_mode must be none, observe, approve or auto".to_string())
 }
 
 /// Most users one folder may list in `allowed_users`.
@@ -4694,6 +4742,10 @@ pub async fn ab_create_folder(
         Ok(u) => u,
         Err(msg) => return ab_error(StatusCode::BAD_REQUEST, msg),
     };
+    let ai_mode = match parse_ai_mode(req.ai_mode.as_deref().unwrap_or("")) {
+        Ok(m) => m,
+        Err(msg) => return ab_error(StatusCode::BAD_REQUEST, msg),
+    };
     let allowed_count = req.allowed_groups.len();
     let users_count = allowed_users.len();
     let inherit = req.inherit_from_parent;
@@ -4703,6 +4755,7 @@ pub async fn ab_create_folder(
         description: req.description,
         display_name: req.display_name.trim().to_string(),
         inherit_from_parent: req.inherit_from_parent,
+        ai_mode,
     };
 
     match vault
@@ -4715,6 +4768,7 @@ pub async fn ab_create_folder(
                 "allowed_groups_count": allowed_count,
                 "allowed_users_count": users_count,
                 "inherit_from_parent": inherit,
+                "ai_mode": ai_mode.map(|m| m.as_str()),
             })
             .to_string();
             log_ab_event(
@@ -4757,6 +4811,10 @@ pub struct UpdateFolderRequest {
     pub display_name: Option<String>,
     #[serde(default)]
     pub inherit_from_parent: bool,
+    /// none | observe | approve | auto, or "" for "as the parent folder".
+    /// Omitted means "leave as is", like `allowed_users`.
+    #[serde(default)]
+    pub ai_mode: Option<String>,
 }
 
 /// PUT /api/addressbook/folders/:scope/:folder — Update folder config. Admin only.
@@ -4784,15 +4842,20 @@ pub async fn ab_update_folder(
 
     // Fields the request may leave out keep their stored values, so the
     // stored config is read once when any of them is missing.
-    let existing = if req.allowed_users.is_none() || req.display_name.is_none() {
-        match vault.get_folder_config(&scope, &folder).await {
-            Ok(existing) => Some(existing),
-            Err(ConnectionError::NotFound) => None,
-            Err(e) => return ab_error(StatusCode::BAD_GATEWAY, e.to_string()),
-        }
-    } else {
-        None
+    let new_ai_mode = match req.ai_mode.as_deref().map(parse_ai_mode).transpose() {
+        Ok(m) => m,
+        Err(msg) => return ab_error(StatusCode::BAD_REQUEST, msg),
     };
+    let existing =
+        if req.allowed_users.is_none() || req.display_name.is_none() || new_ai_mode.is_none() {
+            match vault.get_folder_config(&scope, &folder).await {
+                Ok(existing) => Some(existing),
+                Err(ConnectionError::NotFound) => None,
+                Err(e) => return ab_error(StatusCode::BAD_GATEWAY, e.to_string()),
+            }
+        } else {
+            None
+        };
     let allowed_users = match req.allowed_users {
         Some(users) => match normalize_allowed_users(users) {
             Ok(u) => u,
@@ -4802,6 +4865,10 @@ pub async fn ab_update_folder(
             .as_ref()
             .map(|c| c.allowed_users.clone())
             .unwrap_or_default(),
+    };
+    let ai_mode = match new_ai_mode {
+        Some(m) => m,
+        None => existing.as_ref().and_then(|c| c.ai_mode),
     };
     let display_name = match req.display_name {
         Some(d) => d.trim().to_string(),
@@ -4816,6 +4883,7 @@ pub async fn ab_update_folder(
         description: req.description,
         display_name,
         inherit_from_parent: req.inherit_from_parent,
+        ai_mode,
     };
 
     match vault.put_folder_config(&scope, &folder, &config).await {
@@ -4825,6 +4893,7 @@ pub async fn ab_update_folder(
                 "allowed_groups_count": allowed_count,
                 "allowed_users_count": users_count,
                 "inherit_from_parent": inherit,
+                "ai_mode": ai_mode.map(|m| m.as_str()),
             })
             .to_string();
             log_ab_event(
@@ -6281,7 +6350,7 @@ pub async fn create_my_token(
     // Must be an OIDC user (not an API key admin)
     let email = match &id {
         AuthIdentity::User { email, .. } => email.clone(),
-        AuthIdentity::ApiKey(_) => {
+        AuthIdentity::ApiKey(_) | AuthIdentity::AiAgent(_) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "API key admins cannot create user tokens — use the admin endpoint"})),

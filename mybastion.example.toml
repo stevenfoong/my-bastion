@@ -349,3 +349,16 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # [ssh_log]
 # enabled = true
 # retention_days = 90
+
+# ──────────────────────────────────────────────────────────────────
+# AI agents (MCP)
+# ──────────────────────────────────────────────────────────────────
+#
+# The MCP endpoint at /mcp, for AI agents with an agent key
+# (`mybastion add-ai-agent --name <name>`, or Admin -> AI Agents). Agents
+# reach only folders whose "AI agents" mode is observe, approve or auto
+# (folder dialog), under the same policies and audit log as people.
+# See docs/mcp.md.
+
+# [mcp]
+# enabled = true

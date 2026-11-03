@@ -830,6 +830,7 @@ mod tests {
             who: Some(super::super::Requester {
                 email: Some("op@x".into()),
                 api_key: None,
+                ai_agent: None,
                 role: "operator".into(),
                 groups: vec![],
             }),

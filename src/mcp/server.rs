@@ -1,0 +1,393 @@
+//! The MCP server at `/mcp` (Streamable HTTP, the official `rmcp` SDK),
+//! stateless: every request carries the agent's key and is checked again.
+//!
+//! Tools, so far:
+//! - `list_connections(folder?)`: entries in folders whose AI mode is not
+//!   `none` and that the agent's key reaches. Never credentials.
+//! - `run_ssh(connection, command, timeout_secs?)`: one command on an SSH
+//!   entry, through the same checks as the REST `/run` route (`ssh_command`
+//!   policies, approvals, the network check, the audit log). The folder's AI
+//!   mode must allow acting: `approve` holds every command for a person's
+//!   approval, `auto` lets the policies decide, `observe` refuses.
+//!
+//! A refusal or a wait for approval is a tool error the model can read.
+
+use std::sync::Arc;
+
+use axum::http::{request::Parts, StatusCode};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+};
+use rmcp::service::RequestContext;
+use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
+use serde_json::{json, Value};
+
+use super::agents::Agent;
+use super::auth::McpClientIp;
+use crate::api::{AppState, ConnectionsState};
+use crate::auth::AuthIdentity;
+use crate::connections::AiMode;
+use crate::db::Db;
+
+/// The most folders `list_connections` walks, and how deep.
+const MAX_FOLDERS: usize = 500;
+const MAX_DEPTH: usize = 8;
+/// The most a `/run` answer may be (two streams of at most 1 MiB, in JSON).
+const MAX_RUN_BODY: usize = 8 * 1024 * 1024;
+
+#[derive(Clone)]
+pub struct McpServer {
+    pub db: Db,
+    pub conns: ConnectionsState,
+    pub manager: AppState,
+}
+
+/// The `/mcp` service, to mount behind `auth::require_agent`.
+pub fn service(server: McpServer) -> StreamableHttpService<McpServer, NeverSessionManager> {
+    // Host and Origin checks guard local servers against DNS rebinding; this
+    // one is public and every request needs a bearer key no page can send.
+    let config = StreamableHttpServerConfig::default()
+        .with_legacy_session_mode(false)
+        .with_json_response(true)
+        .with_sse_keep_alive(None)
+        .disable_allowed_hosts();
+    StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::new(NeverSessionManager::default()),
+        config,
+    )
+}
+
+/// A connection's id for the tools: `scope/folder/path/entry`.
+fn connection_id(scope: &str, folder: &str, entry: &str) -> String {
+    format!("{}/{}/{}", scope, folder, entry)
+}
+
+/// `scope/folder/path/entry` back into its parts.
+fn parse_connection_id(id: &str) -> Option<(&str, &str, &str)> {
+    let (scope, rest) = id.trim().trim_matches('/').split_once('/')?;
+    let (folder, entry) = rest.rsplit_once('/')?;
+    (matches!(scope, "shared" | "instance") && !folder.is_empty() && !entry.is_empty())
+        .then_some((scope, folder, entry))
+}
+
+/// The rule that holds an agent's every action in an `approve` folder.
+pub fn approve_mode_rule(folder: &str) -> crate::policy::Rule {
+    crate::policy::Rule {
+        id: 0,
+        name: format!("AI approve mode ({})", folder),
+        subject: crate::policy::Subject::Any,
+        target: crate::policy::Target::Any,
+        action: crate::policy::Action::SshCommand,
+        effect: crate::policy::Effect::RequireApproval,
+        approvers: vec![crate::policy::Approver::Role("admin".into())],
+        grant_minutes: 60,
+        timeout_minutes: 30,
+        enabled: true,
+        commands: Vec::new(),
+        web_only: false,
+        direction: None,
+    }
+}
+
+fn schema(v: Value) -> Arc<JsonObject> {
+    Arc::new(v.as_object().cloned().unwrap_or_default())
+}
+
+fn tools() -> Vec<Tool> {
+    vec![
+        Tool::new(
+            "list_connections",
+            "List the connections this agent may use: id, type, host and the folder's AI mode \
+             (observe: look only; approve: every action waits for a person; auto: allowed by \
+             policy). Never returns credentials.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": "Only this folder and its subfolders, as scope/path (e.g. shared/lab)"
+                    }
+                }
+            })),
+        ),
+        Tool::new(
+            "run_ssh",
+            "Run one shell command on an SSH connection through the bastion and return its \
+             exit status, stdout and stderr. Policies may refuse the command or hold it for a \
+             person's approval: then call again with the same command once it is approved.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "connection": {
+                        "type": "string",
+                        "description": "Connection id from list_connections, e.g. shared/lab/web01"
+                    },
+                    "command": { "type": "string", "description": "One line, run by the target's shell" },
+                    "timeout_secs": {
+                        "type": "integer", "minimum": 1, "maximum": 600,
+                        "description": "Seconds to wait for it (default 60)"
+                    }
+                },
+                "required": ["connection", "command"]
+            })),
+        ),
+    ]
+}
+
+fn ok(v: Value) -> CallToolResponse {
+    CallToolResult::success(vec![ContentBlock::text(v.to_string())]).into()
+}
+
+fn fail(msg: impl Into<String>) -> CallToolResponse {
+    CallToolResult::error(vec![ContentBlock::text(msg.into())]).into()
+}
+
+/// The caller, as `auth::require_agent` left it on the HTTP request.
+fn caller(ctx: &RequestContext<RoleServer>) -> Option<(AuthIdentity, Agent, String)> {
+    let parts = ctx.extensions.get::<Parts>()?;
+    let id = parts.extensions.get::<AuthIdentity>()?.clone();
+    let agent = parts.extensions.get::<Agent>()?.clone();
+    let ip = parts
+        .extensions
+        .get::<McpClientIp>()
+        .map(|i| i.0.clone())
+        .unwrap_or_default();
+    matches!(id, AuthIdentity::AiAgent(_)).then_some((id, agent, ip))
+}
+
+impl McpServer {
+    /// Folders (scope, path, mode) the agent may use, walking down from the
+    /// top-level folders; a folder's mode is its own or its parent's.
+    async fn folders(&self, agent: &Agent) -> Result<Vec<(String, String, AiMode)>, String> {
+        let (top, _) = self
+            .conns
+            .list_all_folders()
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut queue: Vec<(String, String, AiMode, usize)> = top
+            .into_iter()
+            .map(|f| {
+                let path = f.path.unwrap_or(f.name);
+                (f.scope, path, AiMode::None, 1)
+            })
+            .collect();
+        let mut out = Vec::new();
+        let mut seen = 0;
+        while let Some((scope, path, inherited, depth)) = queue.pop() {
+            seen += 1;
+            if seen > MAX_FOLDERS {
+                tracing::warn!("MCP list_connections: folder limit reached");
+                break;
+            }
+            let mode = match self.conns.get_folder_config(&scope, &path).await {
+                Ok(c) => c.ai_mode.unwrap_or(inherited),
+                Err(_) => inherited,
+            };
+            if mode != AiMode::None && agent.reaches(&scope, &path) {
+                out.push((scope.clone(), path.clone(), mode));
+            }
+            if depth < MAX_DEPTH {
+                if let Ok(subs) = self.conns.list_subfolders(&scope, &path).await {
+                    for s in subs {
+                        let p = s.path.unwrap_or_else(|| format!("{}/{}", path, s.name));
+                        queue.push((scope.clone(), p, mode, depth + 1));
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        Ok(out)
+    }
+
+    async fn list_connections(&self, agent: &Agent, args: &JsonObject) -> CallToolResponse {
+        let only = args
+            .get("folder")
+            .and_then(Value::as_str)
+            .map(|f| f.trim().trim_matches('/').to_string())
+            .filter(|f| !f.is_empty());
+        let folders = match self.folders(agent).await {
+            Ok(f) => f,
+            Err(e) => return fail(format!("cannot list connections: {}", e)),
+        };
+        let mut list = Vec::new();
+        for (scope, path, mode) in folders {
+            let label = format!("{}/{}", scope, path);
+            if let Some(o) = &only {
+                if label != *o && !label.starts_with(&format!("{}/", o)) {
+                    continue;
+                }
+            }
+            let Ok(names) = self.conns.list_entries(&scope, &path).await else {
+                continue;
+            };
+            for name in names {
+                let Ok(e) = self.conns.get_entry(&scope, &path, &name).await else {
+                    continue;
+                };
+                list.push(json!({
+                    "id": connection_id(&scope, &path, &name),
+                    "folder": label,
+                    "name": name,
+                    "display_name": e.display_name,
+                    "type": e.session_type,
+                    "hostname": e.hostname,
+                    "port": e.port,
+                    "ai_mode": mode.as_str(),
+                }));
+            }
+        }
+        ok(json!({ "connections": list }))
+    }
+
+    async fn run_ssh(
+        &self,
+        id: &AuthIdentity,
+        agent: &Agent,
+        ip: String,
+        args: &JsonObject,
+    ) -> CallToolResponse {
+        let Some(conn_id) = args.get("connection").and_then(Value::as_str) else {
+            return fail("connection is required");
+        };
+        let Some(command) = args.get("command").and_then(Value::as_str) else {
+            return fail("command is required");
+        };
+        let timeout_secs = args.get("timeout_secs").and_then(Value::as_u64);
+        let Some((scope, folder, entry)) = parse_connection_id(conn_id) else {
+            return fail("connection must be an id from list_connections, like shared/lab/web01");
+        };
+        let mode = match self.conns.resolve_ai_mode(scope, folder).await {
+            Ok(m) => m,
+            Err(e) => return fail(format!("cannot read the folder: {}", e)),
+        };
+        if mode == AiMode::None || !agent.reaches(scope, folder) {
+            return fail("no such connection for this agent");
+        }
+        if !mode.may_act() {
+            return fail(format!(
+                "{}/{} is observe-only for AI agents: commands are not allowed",
+                scope, folder
+            ));
+        }
+        let forced =
+            (mode == AiMode::Approve).then(|| approve_mode_rule(&format!("{}/{}", scope, folder)));
+        let req = crate::api::RunCommandRequest {
+            command: command.to_string(),
+            timeout_secs,
+        };
+        let resp = crate::api::run_command(
+            &self.manager,
+            &self.db,
+            &self.conns,
+            id,
+            scope,
+            folder,
+            entry,
+            req,
+            ip,
+            forced,
+        )
+        .await;
+        let status = resp.status();
+        let body: Value = match axum::body::to_bytes(resp.into_body(), MAX_RUN_BODY).await {
+            Ok(b) => serde_json::from_slice(&b).unwrap_or(Value::Null),
+            Err(e) => return fail(format!("could not read the result: {}", e)),
+        };
+        match status {
+            StatusCode::OK => ok(body),
+            StatusCode::ACCEPTED => {
+                let a = &body["approval"];
+                fail(format!(
+                    "Waiting for approval (request {}, policy '{}'). A person must approve it on \
+                     the Approvals page; then call run_ssh again with exactly the same command.",
+                    a["id"].as_str().unwrap_or("?"),
+                    a["policy_name"].as_str().unwrap_or("?")
+                ))
+            }
+            _ => fail(
+                body["error"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("refused ({})", status)),
+            ),
+        }
+    }
+}
+
+impl ServerHandler for McpServer {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("mybastion", env!("CARGO_PKG_VERSION")))
+            .with_instructions(
+                "My Bastion: privileged access through a recorded, policy-checked gateway. \
+                 Call list_connections first. Everything you do is audited under your agent \
+                 name; some actions wait for a person's approval.",
+            )
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult::with_all_items(tools()))
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        let Some((id, agent, ip)) = caller(&context) else {
+            return Err(McpError::invalid_request("not authenticated", None));
+        };
+        let args = request.arguments.unwrap_or_default();
+        tracing::info!(agent = %id.display_name(), tool = %request.name, "MCP tool call");
+        Ok(match request.name.as_ref() {
+            "list_connections" => self.list_connections(&agent, &args).await,
+            "run_ssh" => self.run_ssh(&id, &agent, ip, &args).await,
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("unknown tool '{}'", other),
+                    None,
+                ))
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_ids_round_trip() {
+        let id = connection_id("shared", "lab/linux", "web01");
+        assert_eq!(
+            parse_connection_id(&id),
+            Some(("shared", "lab/linux", "web01"))
+        );
+        assert_eq!(parse_connection_id("shared/web01"), None);
+        assert_eq!(parse_connection_id("other/lab/web01"), None);
+        assert_eq!(
+            parse_connection_id("/instance/dev/box/"),
+            Some(("instance", "dev", "box"))
+        );
+    }
+
+    #[test]
+    fn tools_have_object_schemas() {
+        let t = tools();
+        assert_eq!(
+            t.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>(),
+            vec!["list_connections", "run_ssh"]
+        );
+        assert!(t
+            .iter()
+            .all(|t| t.input_schema.get("type") == Some(&json!("object"))));
+    }
+}

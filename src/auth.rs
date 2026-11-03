@@ -81,6 +81,9 @@ pub enum AuthIdentity {
         role: String,
         groups: Vec<String>,
     },
+    /// An AI agent key on `/mcp`, as `ai:<key-name>`. It has no role, so
+    /// every REST role check refuses it; REST auth never produces one.
+    AiAgent(String),
 }
 
 impl AuthIdentity {
@@ -88,6 +91,7 @@ impl AuthIdentity {
         match self {
             AuthIdentity::ApiKey(name) => name,
             AuthIdentity::User { email, .. } => email,
+            AuthIdentity::AiAgent(name) => name,
         }
     }
 
@@ -95,6 +99,7 @@ impl AuthIdentity {
         match self {
             AuthIdentity::ApiKey(_) => "admin",
             AuthIdentity::User { role, .. } => role,
+            AuthIdentity::AiAgent(_) => "ai_agent",
         }
     }
 
@@ -102,10 +107,12 @@ impl AuthIdentity {
     /// The identity as folder access sees it: login email and groups.
     pub fn folder_subject(&self) -> crate::connections::FolderSubject<'_> {
         match self {
-            AuthIdentity::ApiKey(_) => crate::connections::FolderSubject {
-                email: None,
-                groups: &[],
-            },
+            AuthIdentity::ApiKey(_) | AuthIdentity::AiAgent(_) => {
+                crate::connections::FolderSubject {
+                    email: None,
+                    groups: &[],
+                }
+            }
             AuthIdentity::User { email, groups, .. } => crate::connections::FolderSubject {
                 email: Some(email),
                 groups,
@@ -115,7 +122,7 @@ impl AuthIdentity {
 
     pub fn groups(&self) -> &[String] {
         match self {
-            AuthIdentity::ApiKey(_) => &[],
+            AuthIdentity::ApiKey(_) | AuthIdentity::AiAgent(_) => &[],
             AuthIdentity::User { groups, .. } => groups,
         }
     }

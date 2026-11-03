@@ -170,6 +170,30 @@ impl ConnectionStore {
         }
     }
 
+    /// The AI mode of `folder`: its own `ai_mode`, else the nearest
+    /// parent's, else `none`. A folder without a `.config` sets nothing.
+    pub async fn resolve_ai_mode(
+        &self,
+        scope: &str,
+        folder: &str,
+    ) -> Result<AiMode, ConnectionError> {
+        let mut current = folder.to_string();
+        loop {
+            match self.get_folder_config(scope, &current).await {
+                Ok(FolderConfig {
+                    ai_mode: Some(mode),
+                    ..
+                }) => return Ok(mode),
+                Ok(_) | Err(ConnectionError::NotFound) => {}
+                Err(e) => return Err(e),
+            }
+            match current.rsplit_once('/') {
+                Some((parent, _)) if !parent.is_empty() => current = parent.to_string(),
+                _ => return Ok(AiMode::None),
+            }
+        }
+    }
+
     /// Write a folder's .config.
     pub async fn put_folder_config(
         &self,

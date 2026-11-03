@@ -85,6 +85,7 @@ zeroize = "1"
 
 # Command patterns in ssh_command policies
 regex = "1"
+rmcp = { version = "3.8", default-features = false, features = ["server", "transport-streamable-http-server"] }
 
 # SSH tunneling (jump host / bastion)
 russh = "0.64"

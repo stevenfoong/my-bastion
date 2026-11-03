@@ -161,12 +161,15 @@ pub enum Subject {
     Role(String),
     /// An admin API key, by name.
     ApiKey(String),
+    /// An AI agent key on `/mcp`, by name; `*` for every agent.
+    AiAgent(String),
 }
 
 impl Subject {
     fn rank(&self) -> u8 {
         match self {
-            Subject::User(_) | Subject::ApiKey(_) => 4,
+            Subject::AiAgent(a) if a == "*" => 2,
+            Subject::User(_) | Subject::ApiKey(_) | Subject::AiAgent(_) => 4,
             Subject::Group(_) => 3,
             Subject::Role(_) => 2,
             Subject::Any => 1,
@@ -183,6 +186,10 @@ impl Subject {
             Subject::Group(g) => who.groups.iter().any(|x| x == g),
             Subject::Role(r) => who.email.is_some() && who.role == *r,
             Subject::ApiKey(k) => who.api_key.as_deref() == Some(k.as_str()),
+            Subject::AiAgent(a) => who
+                .ai_agent
+                .as_deref()
+                .is_some_and(|name| a.trim() == "*" || name.strip_prefix("ai:") == Some(a.trim())),
         }
     }
 }
@@ -334,7 +341,11 @@ impl Rule {
         }
         let blank = |s: &str| s.trim().is_empty();
         match &self.subject {
-            Subject::User(v) | Subject::Group(v) | Subject::Role(v) | Subject::ApiKey(v)
+            Subject::User(v)
+            | Subject::Group(v)
+            | Subject::Role(v)
+            | Subject::ApiKey(v)
+            | Subject::AiAgent(v)
                 if blank(v) =>
             {
                 return Err("subject value is required".into())
@@ -471,6 +482,8 @@ pub struct Requester {
     pub email: Option<String>,
     /// API key name; `None` for users.
     pub api_key: Option<String>,
+    /// An AI agent, as `ai:<key-name>`.
+    pub ai_agent: Option<String>,
     pub role: String,
     pub groups: Vec<String>,
 }
@@ -481,6 +494,7 @@ impl Requester {
             AuthIdentity::ApiKey(name) => Requester {
                 email: None,
                 api_key: Some(name.clone()),
+                ai_agent: None,
                 role: "admin".into(),
                 groups: Vec::new(),
             },
@@ -491,18 +505,27 @@ impl Requester {
             } => Requester {
                 email: Some(email.clone()),
                 api_key: None,
+                ai_agent: None,
                 role: role.clone(),
                 groups: groups.clone(),
+            },
+            AuthIdentity::AiAgent(name) => Requester {
+                email: None,
+                api_key: None,
+                ai_agent: Some(name.clone()),
+                role: "ai_agent".into(),
+                groups: Vec::new(),
             },
         }
     }
 
     /// The identity a request and its grant belong to.
     pub fn id(&self) -> String {
-        match (&self.email, &self.api_key) {
-            (Some(e), _) => e.to_ascii_lowercase(),
-            (None, Some(k)) => format!("api-key:{}", k),
-            (None, None) => "unknown".into(),
+        match (&self.email, &self.api_key, &self.ai_agent) {
+            (Some(e), _, _) => e.to_ascii_lowercase(),
+            (None, Some(k), _) => format!("api-key:{}", k),
+            (None, None, Some(a)) => a.clone(),
+            (None, None, None) => "unknown".into(),
         }
     }
 }
@@ -877,6 +900,21 @@ pub async fn gate(
     command: Option<String>,
     ip: String,
 ) -> Result<Gate, String> {
+    gate_forced(db, id, action, res, command, ip, None).await
+}
+
+/// `gate`, where what the rules allow still needs approval under `forced`
+/// (the folder's AI mode `approve`). A deny or a rule's own approval is
+/// unchanged.
+pub async fn gate_forced(
+    db: &crate::db::Db,
+    id: &AuthIdentity,
+    action: Action,
+    res: Resource,
+    command: Option<String>,
+    ip: String,
+    forced: Option<Rule>,
+) -> Result<Gate, String> {
     let db = db.clone();
     let who = Requester::from_identity(id);
     let display = id.display_name().to_string();
@@ -889,7 +927,14 @@ pub async fn gate(
         let rid = who.id();
         let target = res.label();
         let audit = |e: store::AuditEvent| store::audit(&conn, &e, now).map_err(|e| e.to_string());
-        match evaluate(&rules, &who, action, &res, command.as_deref()) {
+        let decision = match (
+            evaluate(&rules, &who, action, &res, command.as_deref()),
+            &forced,
+        ) {
+            (Decision::Allow { .. }, Some(rule)) => Decision::RequireApproval { rule },
+            (d, _) => d,
+        };
+        match decision {
             Decision::Allow { rule, alert } => {
                 if let (true, Some(rule)) = (alert, rule) {
                     audit(decision_event(
@@ -1120,6 +1165,7 @@ mod tests {
         Requester {
             email: Some(email.into()),
             api_key: None,
+            ai_agent: None,
             role: role.into(),
             groups: groups.iter().map(|g| g.to_string()).collect(),
         }
@@ -1362,6 +1408,7 @@ mod tests {
         let key = Requester {
             email: None,
             api_key: Some("ci".into()),
+            ai_agent: None,
             role: "admin".into(),
             groups: vec![],
         };
@@ -1442,6 +1489,7 @@ mod tests {
         let key = Requester {
             email: None,
             api_key: Some("k".into()),
+            ai_agent: None,
             role: "admin".into(),
             groups: vec![],
         };

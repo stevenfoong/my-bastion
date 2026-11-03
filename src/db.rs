@@ -296,19 +296,20 @@ pub fn init_db(path: &Path) -> rusqlite::Result<Db> {
     // Policies, approval requests and their audit log.
     crate::policy::store::migrate(&conn)?;
     crate::telegram::migrate(&conn)?;
+    crate::mcp::agents::migrate(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }
 
 /// Hash an API key with SHA-256 and return hex.
-fn hash_key(key: &str) -> String {
+pub(crate) fn hash_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     hex::encode(hasher.finalize())
 }
 
 /// Generate a 256-bit random API key as hex (64 chars).
-fn generate_key() -> String {
+pub(crate) fn generate_key() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill(&mut bytes);
     hex::encode(bytes)
@@ -323,7 +324,7 @@ fn generate_key() -> String {
 /// so callers can **fail closed** (treat an unparseable expiry as expired)
 /// rather than the previous behaviour of silently ignoring it, which let a
 /// malformed value authenticate forever.
-fn parse_expires_at(s: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_expires_at(s: &str) -> Option<DateTime<Utc>> {
     let s = s.trim();
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Some(dt.with_timezone(&Utc));
