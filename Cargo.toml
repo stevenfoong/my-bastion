@@ -83,6 +83,9 @@ async-trait = "0.1.92"
 ring = "0.17"
 zeroize = "1"
 
+# Command patterns in ssh_command policies
+regex = "1"
+
 # SSH tunneling (jump host / bastion)
 russh = "0.64"
 

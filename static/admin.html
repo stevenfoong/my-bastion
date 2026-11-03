@@ -114,10 +114,11 @@
     <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
         Who may connect where. A deny on any matching rule wins; otherwise the most specific rule decides (entry, then deeper folder, then user over group over role). With no matching rule a connect is allowed.
         Approvers are a comma-separated list such as <code>role:admin, group:secops</code>.
+        SSH command rules check commands run through the bastion; their patterns are regular expressions, one per line, matched anywhere in the command (empty: every command).
     </div>
     <table id="policies-table">
         <thead><tr>
-            <th>Name</th><th>Who</th><th>Target</th><th>Effect</th><th>Approvers</th><th>Grant / timeout</th><th>Enabled</th><th></th>
+            <th>Name</th><th>Who</th><th>Target</th><th>Action</th><th>Effect</th><th>Approvers</th><th>Grant / timeout</th><th>Enabled</th><th></th>
         </tr></thead>
         <tbody id="policies-body"></tbody>
     </table>
@@ -142,6 +143,11 @@
             <option value="instance">instance</option>
         </select>
         <input type="text" id="pol-path" placeholder="prod or prod/web01" style="width:11em" title="Folder path, or folder/entry for an entry">
+        <select id="pol-action">
+            <option value="connect">connect</option>
+            <option value="ssh_command">SSH command</option>
+        </select>
+        <textarea id="pol-commands" rows="1" placeholder="command patterns, one per line" style="width:14em;display:none" title="Regular expressions matched anywhere in the command, e.g. rm\s+-rf\s+/"></textarea>
         <select id="pol-effect">
             <option value="require_approval">require approval</option>
             <option value="deny">deny</option>
@@ -256,7 +262,10 @@
                 document.getElementById('no-policies').style.display = list.length ? 'none' : '';
                 list.forEach(function(p) {
                     var tr = document.createElement('tr');
-                    [p.name, polWho(p.subject), polTarget(p.target), p.effect.replace(/_/g, ' '),
+                    var act = p.action === 'ssh_command'
+                        ? 'SSH command' + ((p.commands || []).length ? ': ' + p.commands.join(' | ') : '')
+                        : 'connect';
+                    [p.name, polWho(p.subject), polTarget(p.target), act, p.effect.replace(/_/g, ' '),
                      p.effect === 'require_approval' ? polApprovers(p.approvers) : '',
                      p.effect === 'require_approval' ? p.grant_minutes + ' min / ' + p.timeout_minutes + ' min' : ''
                     ].forEach(function(v) {
@@ -271,7 +280,7 @@
                     cb.onchange = function() { p.enabled = cb.checked; savePolicy(p); };
                     en.appendChild(cb);
                     tr.appendChild(en);
-                    var act = document.createElement('td');
+                    var actions = document.createElement('td');
                     var del = document.createElement('button');
                     del.className = 'btn-small';
                     del.textContent = 'Delete';
@@ -280,13 +289,16 @@
                         fetch('/api/admin/policies/' + p.id, { method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin' })
                         .then(function() { loadPolicies(); loadPolicyAudit(); });
                     };
-                    act.appendChild(del);
-                    tr.appendChild(act);
+                    actions.appendChild(del);
+                    tr.appendChild(actions);
                     body.appendChild(tr);
                 });
             })
             .catch(function() {});
         }
+        document.getElementById('pol-action').addEventListener('change', function() {
+            document.getElementById('pol-commands').style.display = this.value === 'ssh_command' ? '' : 'none';
+        });
         document.getElementById('pol-add-btn').addEventListener('click', function() {
             var sk = document.getElementById('pol-subject-kind').value;
             var tk = document.getElementById('pol-target-kind').value;
@@ -302,7 +314,10 @@
                 name: document.getElementById('pol-name').value.trim(),
                 subject: sk === 'any' ? { kind: 'any' } : { kind: sk, value: document.getElementById('pol-subject-value').value.trim() },
                 target: target,
-                action: 'connect',
+                action: document.getElementById('pol-action').value,
+                commands: document.getElementById('pol-action').value === 'ssh_command'
+                    ? document.getElementById('pol-commands').value.split('\n').map(function(l) { return l.trim(); }).filter(Boolean)
+                    : [],
                 effect: document.getElementById('pol-effect').value,
                 approvers: parseApprovers(document.getElementById('pol-approvers').value),
                 grant_minutes: parseInt(document.getElementById('pol-grant').value, 10) || 60,

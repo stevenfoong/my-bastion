@@ -117,7 +117,7 @@ pub fn fingerprint_openssh_key(openssh_key: &str) -> Result<String, String> {
 /// SSH client handler that verifies the server's host key against an expected
 /// key stored in the address book. If no expected key is set (legacy entries),
 /// the connection is accepted with a warning log.
-struct TunnelHandler {
+pub(crate) struct TunnelHandler {
     expected_key: Option<String>,
     hop_index: usize,
     jump_host: String,
@@ -316,11 +316,17 @@ pub fn shutdown_chain(tunnels: &[SshTunnel]) {
     }
 }
 
-/// Start an SSH tunnel. Returns the tunnel handle with the local address.
-pub async fn start(config: TunnelConfig, hop_index: usize) -> Result<SshTunnel, TunnelError> {
-    let jump_addr = format!("{}:{}", config.jump_host, config.jump_port);
-
-    // Connect to the jump host
+/// Connect to `addr` over SSH, check its host key (`expected_key`, or trust
+/// on first use with a warning) and authenticate: private key first, then
+/// password. `hop_index` and the errors name the hop for the logs.
+pub(crate) async fn connect_authenticated(
+    addr: &str,
+    username: &str,
+    password: Option<&str>,
+    private_key: Option<&str>,
+    expected_key: Option<String>,
+    hop_index: usize,
+) -> Result<client::Handle<TunnelHandler>, TunnelError> {
     let ssh_config = Arc::new(client::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(300)),
         keepalive_interval: Some(std::time::Duration::from_secs(30)),
@@ -328,69 +334,70 @@ pub async fn start(config: TunnelConfig, hop_index: usize) -> Result<SshTunnel, 
     });
 
     let handler = TunnelHandler {
-        expected_key: config.expected_host_key,
+        expected_key,
         hop_index,
-        jump_host: jump_addr.clone(),
+        jump_host: addr.to_string(),
     };
 
     let mut handle = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        client::connect(ssh_config, &jump_addr, handler),
+        client::connect(ssh_config, addr, handler),
     )
     .await
-    .map_err(|_| {
-        TunnelError::Ssh(
-            hop_index,
-            format!("timeout connecting to jump host {}", jump_addr),
-        )
-    })?
-    .map_err(|e| {
-        TunnelError::Ssh(
-            hop_index,
-            format!("failed to connect to jump host {}: {}", jump_addr, e),
-        )
-    })?;
+    .map_err(|_| TunnelError::Ssh(hop_index, format!("timeout connecting to {}", addr)))?
+    .map_err(|e| TunnelError::Ssh(hop_index, format!("failed to connect to {}: {}", addr, e)))?;
 
-    tracing::debug!(hop = hop_index, "SSH connected to jump host {}", jump_addr);
+    tracing::debug!(hop = hop_index, "SSH connected to {}", addr);
 
-    // Authenticate: try private key first, then password
-    let auth_result = if let Some(ref key_pem) = config.jump_private_key {
+    let auth_result = if let Some(key_pem) = private_key {
         let private_key = russh::keys::decode_secret_key(key_pem, None).map_err(|e| {
             TunnelError::Key(hop_index, format!("failed to decode private key: {}", e))
         })?;
         let key = PrivateKeyWithHashAlg::new(Arc::new(private_key), None);
         handle
-            .authenticate_publickey(&config.jump_username, key)
+            .authenticate_publickey(username, key)
             .await
             .map_err(|e| TunnelError::Auth(hop_index, format!("public key auth error: {}", e)))?
-    } else if let Some(ref password) = config.jump_password {
+    } else if let Some(password) = password {
         handle
-            .authenticate_password(&config.jump_username, password)
+            .authenticate_password(username, password)
             .await
             .map_err(|e| TunnelError::Auth(hop_index, format!("password auth error: {}", e)))?
     } else {
         return Err(TunnelError::Auth(
             hop_index,
-            "no password or private key provided for jump host".into(),
+            "no password or private key provided".into(),
         ));
     };
 
     if !auth_result.success() {
         return Err(TunnelError::Auth(
             hop_index,
-            format!(
-                "authentication failed for {}@{}",
-                config.jump_username, jump_addr
-            ),
+            format!("authentication failed for {}@{}", username, addr),
         ));
     }
 
     tracing::debug!(
         hop = hop_index,
-        "SSH authenticated to jump host {} as {}",
-        jump_addr,
-        config.jump_username
+        "SSH authenticated to {} as {}",
+        addr,
+        username
     );
+    Ok(handle)
+}
+
+/// Start an SSH tunnel. Returns the tunnel handle with the local address.
+pub async fn start(config: TunnelConfig, hop_index: usize) -> Result<SshTunnel, TunnelError> {
+    let jump_addr = format!("{}:{}", config.jump_host, config.jump_port);
+    let handle = connect_authenticated(
+        &jump_addr,
+        &config.jump_username,
+        config.jump_password.as_deref(),
+        config.jump_private_key.as_deref(),
+        config.expected_host_key,
+        hop_index,
+    )
+    .await?;
 
     // Bind a local TCP listener on an OS-assigned port
     let listener = TcpListener::bind("127.0.0.1:0").await.map_err(|e| {

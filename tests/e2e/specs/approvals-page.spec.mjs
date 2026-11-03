@@ -31,7 +31,7 @@ test('approve a waiting request with a comment', async ({ page }) => {
 
     const row = page.locator(`tr[data-approval-id="${waiting.id}"]`);
     await expect(row).toContainText('contractor@example.com');
-    await expect(row).toContainText('shared/prod/web01');
+    await expect(row).toContainText('Connect to shared/prod/web01');
     await expect(row).toContainText('patching');
     await expect(page.locator('#mine-body')).toContainText('go ahead');
 
@@ -48,4 +48,14 @@ test('the Approvals link is in everyone\'s nav', async ({ page }) => {
     await settle(page);
     await expect(page.locator('nav a', { hasText: 'Approvals' })).toBeVisible();
     await expect(page.locator('#mine-empty')).toBeVisible();
+});
+
+test('a command request shows the command to be run', async ({ page }) => {
+    const cmd = { ...waiting, id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', command: 'sudo systemctl restart nginx', policy_name: 'sudo needs approval' };
+    await installApi(page, { routes: { 'GET /api/approvals': { to_decide: [cmd], mine: [], recent: [] } } });
+    await page.goto('/approvals.html');
+    await settle(page);
+    await expect(page.locator(`tr[data-approval-id="${cmd.id}"]`))
+        .toContainText('Run on shared/prod/web01: sudo systemctl restart nginx');
+    await expect(page.locator(`tr[data-approval-id="${waiting.id}"]`)).toHaveCount(0);
 });
