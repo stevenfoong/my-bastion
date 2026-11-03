@@ -2079,6 +2079,11 @@
                         return;
                     }
                     return res.json().then(function(data) {
+                        if (data && data.approval_required && data.approval) {
+                            // A policy holds the reconnect for approval.
+                            rgGo('/connections.html#approval=' + encodeURIComponent(data.approval.id));
+                            return;
+                        }
                         if (data && data.client_url) {
                             var dest = data.client_url;
                             if (relaunchInfo.display_name) {

@@ -376,6 +376,10 @@
                 { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), credentials: 'same-origin', body: JSON.stringify(body) });
         })
             .then(function (res) {
+                if (res.status === 202) {
+                    if (win && !win.closed) win.close();
+                    return rgApprovalRequired(res);
+                }
                 if (!res.ok) {
                     if (win && !win.closed) win.close();
                     if (res.status === 412) { openFolder(scope, folder); return null; }
@@ -507,6 +511,7 @@
             fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder) + '/entries/' + encodeURIComponent(name) + '/connect',
                 { method: 'POST', headers: headers({ 'Content-Type': 'application/json' }), credentials: 'same-origin', body: JSON.stringify(body) })
                 .then(function (res) {
+                    if (res.status === 202) { teardown(); return rgApprovalRequired(res); }
                     if (!res.ok) { if (res.status === 412) { teardown(); openFolder(scope, folder); return null; } return res.text().then(function (t) { throw new Error(t); }); }
                     return res.json();
                 })
@@ -525,6 +530,18 @@
         setTimeout(startConnect, 2500);
     }
     window.rgLaunchFullscreen = rgLaunchFullscreen;
+
+    // A connect held for approval (202): on Connections, show the waiting
+    // dialog there; anywhere else, go to Connections, which shows it.
+    function rgApprovalRequired(res) {
+        return res.json().then(function (j) {
+            var a = j && j.approval;
+            if (!a) return null;
+            if (typeof window.showApprovalWait === 'function') window.showApprovalWait(a, null);
+            else location.href = '/connections.html#approval=' + encodeURIComponent(a.id);
+            return null;
+        });
+    }
 
     function openFolder(scope, path) {
         if (typeof window.rgSelectFolder === 'function') { close(); window.rgSelectFolder(scope, path); return; }

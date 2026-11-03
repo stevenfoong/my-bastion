@@ -30,6 +30,7 @@ pub async fn create_session(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
+    Extension(database): Extension<Db>,
     Json(mut req): Json<CreateSessionRequest>,
 ) -> impl IntoResponse {
     let identity = identity.map(|Extension(id)| id);
@@ -81,6 +82,17 @@ pub async fn create_session(
     let client_ip = client_ip(&headers, addr.ip(), &proxies);
 
     let target = session_target(&req);
+
+    if let Some(ref id) = identity {
+        let res = crate::policy::Resource::AdHoc {
+            host: target.clone(),
+        };
+        if let Some(resp) =
+            crate::policy::api::connect_gate(&database, id, res, client_ip.to_string()).await
+        {
+            return resp;
+        }
+    }
 
     tracing::info!(
         admin = %admin_name,
@@ -4026,6 +4038,7 @@ pub async fn ab_connect_entry(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
+    Extension(database): Extension<Db>,
     Extension(vault): Extension<ConnectionsState>,
     Path((scope, folder, entry)): Path<(String, String, String)>,
     Json(req): Json<ConnectRequest>,
@@ -4042,6 +4055,23 @@ pub async fn ab_connect_entry(
     };
 
     if let Err(resp) = check_folder_access(&vault, &scope, &folder, &id).await {
+        return resp;
+    }
+
+    // Policy: before anything is read or a session exists.
+    let gate_ip = {
+        let proxies = trusted
+            .as_ref()
+            .map(|Extension(t)| t.0.clone())
+            .unwrap_or_default();
+        client_ip(&headers, addr.ip(), &proxies).to_string()
+    };
+    let res = crate::policy::Resource::Entry {
+        scope: scope.clone(),
+        folder: folder.clone(),
+        entry: entry.clone(),
+    };
+    if let Some(resp) = crate::policy::api::connect_gate(&database, &id, res, gate_ip).await {
         return resp;
     }
 
@@ -4300,6 +4330,7 @@ pub async fn ab_adhoc_connect(
     headers: axum::http::HeaderMap,
     identity: Option<Extension<AuthIdentity>>,
     trusted: Option<Extension<TrustedProxies>>,
+    Extension(database): Extension<Db>,
     Extension(vault): Extension<ConnectionsState>,
     Extension(vault_configured): Extension<StoreConfigured>,
     Json(mut req): Json<AdhocConnectRequest>,
@@ -4332,6 +4363,14 @@ pub async fn ab_adhoc_connect(
     let client_ip_addr = client_ip(&headers, addr.ip(), &proxies);
     let user = id.display_name().to_string();
     let target = session_target(&create_req);
+    let res = crate::policy::Resource::AdHoc {
+        host: target.clone(),
+    };
+    if let Some(resp) =
+        crate::policy::api::connect_gate(&database, &id, res, client_ip_addr.to_string()).await
+    {
+        return resp;
+    }
     tracing::info!(
         user = %user,
         client_ip = %client_ip_addr,
@@ -6949,6 +6988,35 @@ pub struct QuickConnectQuery {
 /// Creates a session and 302-redirects to the client page.
 /// If not authenticated, redirects to /auth/login?next=<original-url>.
 #[allow(clippy::too_many_arguments)]
+/// `quick_connect`'s policy check. A pending approval sends the browser to
+/// the connections page, which shows the request and waits for a decision.
+async fn quick_connect_gate(
+    database: &Db,
+    id: &AuthIdentity,
+    res: crate::policy::Resource,
+    ip: String,
+) -> Option<Response> {
+    use crate::policy::Gate;
+    match crate::policy::gate(database, id, crate::policy::Action::Connect, res, ip).await {
+        Ok(Gate::Allowed) => None,
+        Ok(Gate::Denied { policy }) => Some(quick_connect_error(
+            StatusCode::FORBIDDEN,
+            &format!("Denied by policy '{}'.", policy),
+        )),
+        Ok(Gate::Pending(req)) => Some(
+            Redirect::temporary(&format!("/connections.html#approval={}", req.id)).into_response(),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "Policy check failed; refusing the connect");
+            Some(quick_connect_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Policy check failed. Try again or ask an admin.",
+            ))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn quick_connect(
     State(manager): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -6957,6 +7025,7 @@ pub async fn quick_connect(
     trusted: Option<Extension<TrustedProxies>>,
     Extension(vault): Extension<ConnectionsState>,
     Extension(oidc_enabled): Extension<OidcEnabled>,
+    Extension(database): Extension<Db>,
     request: axum::extract::Request,
 ) -> Response {
     // Reconstruct query string from the request URI
@@ -7018,6 +7087,16 @@ pub async fn quick_connect(
             .is_err()
         {
             return quick_connect_error(StatusCode::FORBIDDEN, "No access to this folder.");
+        }
+
+        let res = crate::policy::Resource::Entry {
+            scope: scope.to_string(),
+            folder: folder.to_string(),
+            entry: entry.to_string(),
+        };
+        let gate_ip = client_ip.to_string();
+        if let Some(resp) = quick_connect_gate(&database, &id, res, gate_ip).await {
+            return resp;
         }
 
         let ab_entry = match vault.get_entry(scope, folder, entry).await {
@@ -7240,6 +7319,14 @@ pub async fn quick_connect(
         wol_wait_time: None,
     };
     crate::session::apply_adhoc_policy(&mut create_req, id.has_role("admin"), manager.config());
+
+    let res = crate::policy::Resource::AdHoc {
+        host: session_target(&create_req),
+    };
+    let gate_ip = client_ip.to_string();
+    if let Some(resp) = quick_connect_gate(&database, &id, res, gate_ip).await {
+        return resp;
+    }
 
     match manager.create_session(create_req, admin_name).await {
         Ok(info) => Redirect::temporary(&format!("/client/{}", info.session_id)).into_response(),

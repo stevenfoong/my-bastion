@@ -16,6 +16,7 @@ const DOC_FILES: &[&str] = &[
     "spice-and-proxmox.md",
     "security.md",
     "roles-and-access-control.md",
+    "policies.md",
     "integrations.md",
     "netbox.md",
     "migration.md",

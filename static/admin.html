@@ -21,6 +21,7 @@
         <a href="/recordings.html">Recordings</a>
         <a href="/reports.html" id="reports-link" data-min-role="poweruser">Reports</a>
         <a href="/docs.html">Docs</a>
+        <a href="/approvals.html" id="approvals-link">Approvals</a>
         <a href="/tokens.html" id="tokens-link" data-min-role="operator">Tokens</a>
         <a href="/admin.html" class="active" id="admin-link" data-min-role="admin">Admin</a>
         <a href="/connections.html#my-credentials" id="my-creds-nav" title="Manage your saved credential variables"><span class="nav-key">&#128273;</span> Credentials</a>
@@ -109,6 +110,50 @@
         <div class="warning">This token will not be shown again. Copy it now and give it to the user securely.</div>
     </div>
 
+    <h2>Policies</h2>
+    <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
+        Who may connect where. A deny on any matching rule wins; otherwise the most specific rule decides (entry, then deeper folder, then user over group over role). With no matching rule a connect is allowed.
+        Approvers are a comma-separated list such as <code>role:admin, group:secops</code>.
+    </div>
+    <table id="policies-table">
+        <thead><tr>
+            <th>Name</th><th>Who</th><th>Target</th><th>Effect</th><th>Approvers</th><th>Grant / timeout</th><th>Enabled</th><th></th>
+        </tr></thead>
+        <tbody id="policies-body"></tbody>
+    </table>
+    <div id="no-policies" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No policies: every connect is allowed.</div>
+    <div class="add-form" id="policy-form">
+        <input type="text" id="pol-name" placeholder="Policy name" style="width:12em">
+        <select id="pol-subject-kind">
+            <option value="group">group</option>
+            <option value="user">user</option>
+            <option value="role">role</option>
+            <option value="api_key">API key</option>
+            <option value="any">anyone</option>
+        </select>
+        <input type="text" id="pol-subject-value" placeholder="contractors" style="width:9em">
+        <select id="pol-target-kind">
+            <option value="folder">folder</option>
+            <option value="entry">entry</option>
+            <option value="any">anything</option>
+        </select>
+        <select id="pol-scope">
+            <option value="shared">shared</option>
+            <option value="instance">instance</option>
+        </select>
+        <input type="text" id="pol-path" placeholder="prod or prod/web01" style="width:11em" title="Folder path, or folder/entry for an entry">
+        <select id="pol-effect">
+            <option value="require_approval">require approval</option>
+            <option value="deny">deny</option>
+            <option value="allow">allow</option>
+            <option value="allow_and_alert">allow and alert</option>
+        </select>
+        <input type="text" id="pol-approvers" placeholder="role:admin" style="width:10em">
+        <input type="number" id="pol-grant" value="60" min="1" style="width:5em" title="Minutes an approval lets the requester in">
+        <input type="number" id="pol-timeout" value="30" min="1" style="width:5em" title="Minutes a request waits for a decision">
+        <button class="btn-primary" id="pol-add-btn">Add policy</button>
+    </div>
+
     <h2>Token Audit Log</h2>
     <div style="margin-bottom:0.5em;">
         <input type="text" id="audit-email-filter" placeholder="Filter by email" style="width:200px;">
@@ -138,6 +183,18 @@
     </table>
     <div id="no-ab-audit" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No connections audit events.</div>
 
+    <h2>Policy Audit Log</h2>
+    <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
+        Every policy decision: denials, approval requests and their outcome (with requester and approver), use of an approval, alerts, and policy changes.
+    </div>
+    <table id="policy-audit-table">
+        <thead><tr>
+            <th>Time</th><th>Event</th><th>Actor</th><th>Requester</th><th>Target</th><th>Policy</th><th>IP</th><th>Details</th>
+        </tr></thead>
+        <tbody id="policy-audit-body"></tbody>
+    </table>
+    <div id="no-policy-audit" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No policy events yet.</div>
+
     <div id="error"></div>
 
     <script>
@@ -160,6 +217,134 @@
             return h;
         }
 
+
+        // ── Policies ──
+        function polWho(s) {
+            return s.kind === 'any' ? 'anyone' : (s.kind === 'api_key' ? 'API key' : s.kind) + ' ' + s.value;
+        }
+        function polTarget(t) {
+            if (t.kind === 'any') return 'anything';
+            if (t.kind === 'folder') return t.scope + '/' + t.path + '/…';
+            return t.scope + '/' + t.folder + '/' + t.entry;
+        }
+        function polApprovers(list) {
+            return (list || []).map(function(a) { return a.kind + ':' + a.value; }).join(', ');
+        }
+        function parseApprovers(text) {
+            return text.split(',').map(function(s) { return s.trim(); }).filter(Boolean).map(function(s) {
+                var i = s.indexOf(':');
+                return i < 0 ? { kind: 'role', value: s } : { kind: s.slice(0, i).trim(), value: s.slice(i + 1).trim() };
+            });
+        }
+        function savePolicy(p) {
+            return fetch('/api/admin/policies/' + p.id, {
+                method: 'PUT',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(p)
+            }).then(function(r) {
+                if (!r.ok) return r.json().then(function(d) { showError(d.error || 'Failed to update policy'); });
+                loadPolicyAudit();
+            });
+        }
+        function loadPolicies() {
+            fetch('/api/admin/policies', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(list) {
+                var body = document.getElementById('policies-body');
+                body.innerHTML = '';
+                document.getElementById('no-policies').style.display = list.length ? 'none' : '';
+                list.forEach(function(p) {
+                    var tr = document.createElement('tr');
+                    [p.name, polWho(p.subject), polTarget(p.target), p.effect.replace(/_/g, ' '),
+                     p.effect === 'require_approval' ? polApprovers(p.approvers) : '',
+                     p.effect === 'require_approval' ? p.grant_minutes + ' min / ' + p.timeout_minutes + ' min' : ''
+                    ].forEach(function(v) {
+                        var td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    });
+                    var en = document.createElement('td');
+                    var cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.checked = p.enabled;
+                    cb.onchange = function() { p.enabled = cb.checked; savePolicy(p); };
+                    en.appendChild(cb);
+                    tr.appendChild(en);
+                    var act = document.createElement('td');
+                    var del = document.createElement('button');
+                    del.className = 'btn-small';
+                    del.textContent = 'Delete';
+                    del.onclick = function() {
+                        if (!confirm('Delete policy "' + p.name + '"?')) return;
+                        fetch('/api/admin/policies/' + p.id, { method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin' })
+                        .then(function() { loadPolicies(); loadPolicyAudit(); });
+                    };
+                    act.appendChild(del);
+                    tr.appendChild(act);
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+        document.getElementById('pol-add-btn').addEventListener('click', function() {
+            var sk = document.getElementById('pol-subject-kind').value;
+            var tk = document.getElementById('pol-target-kind').value;
+            var scope = document.getElementById('pol-scope').value;
+            var path = document.getElementById('pol-path').value.trim();
+            var target = { kind: 'any' };
+            if (tk === 'folder') target = { kind: 'folder', scope: scope, path: path };
+            if (tk === 'entry') {
+                var cut = path.lastIndexOf('/');
+                target = { kind: 'entry', scope: scope, folder: cut < 0 ? '' : path.slice(0, cut), entry: path.slice(cut + 1) };
+            }
+            var policy = {
+                name: document.getElementById('pol-name').value.trim(),
+                subject: sk === 'any' ? { kind: 'any' } : { kind: sk, value: document.getElementById('pol-subject-value').value.trim() },
+                target: target,
+                action: 'connect',
+                effect: document.getElementById('pol-effect').value,
+                approvers: parseApprovers(document.getElementById('pol-approvers').value),
+                grant_minutes: parseInt(document.getElementById('pol-grant').value, 10) || 60,
+                timeout_minutes: parseInt(document.getElementById('pol-timeout').value, 10) || 30,
+                enabled: true
+            };
+            fetch('/api/admin/policies', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(policy)
+            })
+            .then(function(r) {
+                if (!r.ok) return r.json().then(function(d) { showError(d.error || 'Failed to add policy'); });
+                document.getElementById('pol-name').value = '';
+                loadPolicies();
+                loadPolicyAudit();
+            })
+            .catch(function(e) { showError(e.message); });
+        });
+
+        function loadPolicyAudit() {
+            fetch('/api/admin/policy-audit?limit=200', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('policy-audit-body');
+                body.innerHTML = '';
+                document.getElementById('no-policy-audit').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(e) {
+                    var tr = document.createElement('tr');
+                    [new Date(e.at * 1000).toLocaleString(), e.event.replace(/_/g, ' '), e.actor, e.requester,
+                     e.target, e.policy || '', e.ip || '', e.detail || ''].forEach(function(v) {
+                        var td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    });
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+
         function checkAdmin() {
             fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
             .then(function(res) {
@@ -179,6 +364,8 @@
                 loadAllTokens();
                 loadAuditLog();
                 loadAbAuditLog();
+                loadPolicies();
+                loadPolicyAudit();
                 loadSystemStatus();
             })
             .catch(function() {});

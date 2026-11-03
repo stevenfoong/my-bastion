@@ -206,6 +206,7 @@ Add `[vdi]` to your config and create a VDI entry in the connections. See [VDI D
 
 ### Features
 - [Roles & Access Control](docs/roles-and-access-control.md): OIDC, roles, group mappings, API tokens
+- [Policies and Approvals](docs/policies.md): allow, deny or require approval per user, group or role and folder or entry
 - [Web Browser Sessions](docs/web-sessions.md): autofill, domain allowlisting, login scripts
 - [SPICE and Proxmox VE Sessions](docs/spice-and-proxmox.md): SPICE displays, Proxmox VE consoles, API tokens, TLS, troubleshooting
 - [VDI Desktop Containers](docs/vdi.md): Docker desktops, image requirements, persistent homes
