@@ -658,6 +658,33 @@ pub struct Config {
     /// `[telegram]`: approval requests to Telegram, with Approve / Deny
     /// buttons for linked approvers.
     pub telegram: Option<TelegramConfig>,
+    /// `[ssh_log]`: the lines typed in interactive SSH sessions. On unless
+    /// turned off.
+    pub ssh_log: Option<SshLogConfig>,
+}
+
+/// `[ssh_log]`: interactive SSH command log, rebuilt from keystrokes
+/// (best-effort; see `policy/keylog.rs`).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SshLogConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Lines older than this are deleted.
+    #[serde(default = "default_ssh_log_retention_days")]
+    pub retention_days: u32,
+}
+
+impl Default for SshLogConfig {
+    fn default() -> Self {
+        SshLogConfig {
+            enabled: true,
+            retention_days: default_ssh_log_retention_days(),
+        }
+    }
+}
+
+fn default_ssh_log_retention_days() -> u32 {
+    90
 }
 
 /// `[telegram]`: a bot that posts approval requests and takes decisions
@@ -1418,6 +1445,7 @@ impl Default for Config {
             spice: None,
             rdp: None,
             telegram: None,
+            ssh_log: None,
         }
     }
 }

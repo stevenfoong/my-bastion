@@ -211,6 +211,25 @@
     </table>
     <div id="no-policy-audit" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No policy events yet.</div>
 
+    <h2>SSH Command Log</h2>
+    <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
+        Lines typed in interactive SSH sessions, rebuilt from keystrokes: best-effort, for review and alerts, not proof of what ran.
+        <em>Uncertain</em> lines used tab completion or history; a one-word line typed right after <code>sudo</code>, <code>su</code>, <code>ssh</code> and the like is not stored, as it is probably a password.
+    </div>
+    <div style="margin-bottom:0.5em;">
+        <input type="text" id="cmd-search" placeholder="Search lines, users, targets" style="width:220px;">
+        <input type="text" id="cmd-session" placeholder="Session id" style="width:160px;">
+        <label><input type="checkbox" id="cmd-alerts"> flagged only</label>
+        <button class="btn-primary" id="cmd-filter-btn" style="padding:0.3em 0.8em;">Filter</button>
+    </div>
+    <table id="cmd-table">
+        <thead><tr>
+            <th>Time</th><th>User</th><th>Target</th><th>Line</th><th>Flags</th><th>Policy</th><th>Session</th>
+        </tr></thead>
+        <tbody id="cmd-body"></tbody>
+    </table>
+    <div id="no-cmd" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No SSH commands logged.</div>
+
     <div id="error"></div>
 
     <script>
@@ -380,6 +399,46 @@
             .catch(function() {});
         }
 
+        function loadSshCommands() {
+            var url = '/api/admin/ssh-commands?limit=200';
+            var q = document.getElementById('cmd-search').value.trim();
+            var sid = document.getElementById('cmd-session').value.trim();
+            if (q) url += '&q=' + encodeURIComponent(q);
+            if (sid) url += '&session_id=' + encodeURIComponent(sid);
+            if (document.getElementById('cmd-alerts').checked) url += '&alerts=true';
+            fetch(url, { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('cmd-body');
+                body.innerHTML = '';
+                document.getElementById('no-cmd').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(c) {
+                    var tr = document.createElement('tr');
+                    tr.className = 'audit-row';
+                    var flags = [];
+                    if (c.uncertain) flags.push('uncertain');
+                    if (c.pasted) flags.push('pasted');
+                    if (c.redacted) flags.push('redacted');
+                    var policy = c.policy ? c.policy + ' (' + (c.effect || '').replace(/_/g, ' ') + ')' : '';
+                    [new Date(c.at * 1000).toLocaleString(), c.actor, c.target,
+                     c.redacted ? '(hidden)' : c.line, flags.join(', '), policy, c.session_id].forEach(function(v, i) {
+                        var cell = document.createElement('td');
+                        cell.textContent = v;
+                        if (i === 3) { cell.style.fontFamily = 'monospace'; cell.style.whiteSpace = 'pre-wrap'; }
+                        if (i === 3 && c.policy) cell.style.color = 'var(--danger, #e5534b)';
+                        if (i === 6) { cell.style.fontSize = '0.8em'; cell.title = c.session_id; }
+                        tr.appendChild(cell);
+                    });
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+        document.getElementById('cmd-filter-btn').addEventListener('click', loadSshCommands);
+        document.getElementById('cmd-search').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') loadSshCommands();
+        });
+
         function checkAdmin() {
             fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
             .then(function(res) {
@@ -401,6 +460,7 @@
                 loadAbAuditLog();
                 loadPolicies();
                 loadPolicyAudit();
+                loadSshCommands();
                 loadSystemStatus();
             })
             .catch(function() {});

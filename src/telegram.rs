@@ -13,7 +13,8 @@
 //! - The bot token is read from the secret store (`bot_token_path`).
 //!
 //! Everything else calls `notify(request_id)` when a request is created or
-//! changes; it does nothing unless `[telegram]` is enabled.
+//! changes, and `alert` for an interactive SSH command a policy flags (sent
+//! to the `chat_ids` only); both do nothing unless `[telegram]` is enabled.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -34,8 +35,14 @@ use crate::db::Db;
 use crate::policy::store::{self, ApprovalRequest};
 use crate::policy::{decide_request, may_decide, DecideError, Requester, Via};
 
-/// Request ids whose messages need sending or updating.
-static EVENTS: OnceLock<mpsc::UnboundedSender<String>> = OnceLock::new();
+/// What the delivery task has to send.
+enum Outgoing {
+    /// A request whose messages need sending or updating.
+    Request(String),
+    Command(CommandAlert),
+}
+
+static EVENTS: OnceLock<mpsc::UnboundedSender<Outgoing>> = OnceLock::new();
 /// The bot's @username, once `getMe` has answered.
 static BOT_USERNAME: OnceLock<String> = OnceLock::new();
 
@@ -49,8 +56,43 @@ const MAX_SHOWN_COMMAND: usize = 1000;
 /// Request `request_id` was created or changed: send or update its messages.
 pub fn notify(request_id: &str) {
     if let Some(tx) = EVENTS.get() {
-        let _ = tx.send(request_id.to_string());
+        let _ = tx.send(Outgoing::Request(request_id.to_string()));
     }
+}
+
+/// An interactive SSH line a command rule flags.
+#[derive(Debug, Clone)]
+pub struct CommandAlert {
+    pub actor: String,
+    pub target: String,
+    pub line: String,
+    pub policy: String,
+    /// The rule denies it (rather than holding or alerting).
+    pub denied: bool,
+    pub uncertain: bool,
+}
+
+/// Tell the `chat_ids` about a flagged SSH command.
+pub fn alert(a: CommandAlert) {
+    if let Some(tx) = EVENTS.get() {
+        let _ = tx.send(Outgoing::Command(a));
+    }
+}
+
+fn render_command_alert(a: &CommandAlert) -> String {
+    let mut t = format!(
+        "{} <b>SSH command flagged</b>\n<b>Who:</b> {}\n<b>On:</b> {}\n<b>Typed:</b> <code>{}</code>\n<b>Policy:</b> {}{}",
+        if a.denied { "⛔" } else { "⚠️" },
+        esc(&a.actor),
+        esc(&a.target),
+        esc(&a.line.chars().take(MAX_SHOWN_COMMAND).collect::<String>()),
+        esc(&a.policy),
+        if a.denied { " (would be denied in command mode)" } else { "" },
+    );
+    if a.uncertain {
+        t += "\n<i>Rebuilt from keystrokes with completion or history: the shell may have run something else.</i>";
+    }
+    t
 }
 
 // ── Store ──
@@ -559,11 +601,30 @@ async fn deliver(
     bot: Arc<Bot>,
     db: Db,
     cfg: TelegramConfig,
-    mut rx: mpsc::UnboundedReceiver<String>,
+    mut rx: mpsc::UnboundedReceiver<Outgoing>,
 ) {
-    while let Some(id) = rx.recv().await {
-        if let Err(e) = deliver_one(&bot, &db, &cfg, &id).await {
-            tracing::warn!(request = %id, error = %e, "Telegram update failed");
+    while let Some(out) = rx.recv().await {
+        match out {
+            Outgoing::Request(id) => {
+                if let Err(e) = deliver_one(&bot, &db, &cfg, &id).await {
+                    tracing::warn!(request = %id, error = %e, "Telegram update failed");
+                }
+            }
+            Outgoing::Command(a) => {
+                let text = render_command_alert(&a);
+                for chat in &cfg.chat_ids {
+                    if let Err(e) = bot
+                        .call(
+                            "sendMessage",
+                            json!({"chat_id": chat, "text": text, "parse_mode": "HTML",
+                                   "link_preview_options": {"is_disabled": true}}),
+                        )
+                        .await
+                    {
+                        tracing::warn!(chat, error = %e, "Telegram alert failed");
+                    }
+                }
+            }
         }
     }
 }

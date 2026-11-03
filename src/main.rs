@@ -1059,6 +1059,8 @@ async fn run_server(config: Config, database: Db) {
     let history_retention_days = config.session_history_retention_days;
     // Approval requests nobody decided in time.
     policy::spawn_expiry(database.clone());
+    let ssh_log = config.ssh_log.clone().unwrap_or_default();
+    policy::keylog::configure(ssh_log.enabled);
 
     let cleanup_db = database.clone();
     tokio::spawn(async move {
@@ -1084,6 +1086,17 @@ async fn run_server(config: Config, database: Db) {
             match db::cleanup_session_history(&cleanup_db, history_retention_days) {
                 Ok(n) if n > 0 => tracing::info!("Cleaned up {} old session history entries", n),
                 Err(e) => tracing::warn!("Failed to clean up session history: {}", e),
+                _ => {}
+            }
+            let pruned = cleanup_db
+                .lock()
+                .map(|c| {
+                    policy::keylog::prune(&c, ssh_log.retention_days, policy::store::now_secs())
+                })
+                .map_err(|_| ());
+            match pruned {
+                Ok(Ok(n)) if n > 0 => tracing::info!("Cleaned up {} old SSH command log lines", n),
+                Ok(Err(e)) => tracing::warn!("Failed to clean up the SSH command log: {}", e),
                 _ => {}
             }
         }
@@ -1403,6 +1416,7 @@ async fn run_server(config: Config, database: Db) {
             delete(policy::api::delete_policy),
         )
         .route("/api/admin/policy-audit", get(policy::api::policy_audit))
+        .route("/api/admin/ssh-commands", get(policy::api::ssh_commands))
         .route("/api/approvals", get(policy::api::list_approvals))
         .route("/api/approvals/{id}", get(policy::api::get_approval))
         .route("/api/approvals/{id}/reason", post(policy::api::set_reason))

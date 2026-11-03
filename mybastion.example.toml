@@ -333,4 +333,19 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # enabled = true
 # bot_token_path = "mybastion/telegram"   # secret-store path, field "token"
 # chat_ids = [-1001234567890]             # chats that get every request
+#                                         # and every flagged SSH command
 # notify_approvers = true                 # also message linked approvers
+
+# ──────────────────────────────────────────────────────────────────
+# Interactive SSH command log
+# ──────────────────────────────────────────────────────────────────
+#
+# Lines typed in SSH sessions, rebuilt from keystrokes on the WebSocket
+# bridge: best-effort (tab completion and history make a line "uncertain";
+# the one-word line after sudo/su/ssh/... is not stored, as it is probably a
+# password). Admin page -> SSH Command Log. Lines that ssh_command rules
+# would deny are alerted. On by default. See docs/policies.md.
+
+# [ssh_log]
+# enabled = true
+# retention_days = 90

@@ -5,8 +5,9 @@ browser on a session's Guacamole tunnel.
 Usage: ws_probe.py HOST:PORT PATH HEADER SECONDS [INSTRUCTION ...]
 
 Connects to ws://HOST:PORT/PATH with HEADER (e.g. "Authorization: Bearer x"),
-waits a moment for guacd's first instructions, sends each INSTRUCTION as its
-own text message, then prints every text message received for SECONDS.
+waits a moment (WS_PROBE_DELAY seconds, default 1) for guacd's first
+instructions, sends each INSTRUCTION as its own text message, then prints
+every text message received for SECONDS.
 """
 
 import base64
@@ -100,7 +101,7 @@ s.settimeout(0.5)
 sent = False
 start = time.time()
 while time.time() < deadline:
-    if not sent and time.time() - start > 1.0:
+    if not sent and time.time() - start > float(os.environ.get("WS_PROBE_DELAY", "1")):
         for ins in to_send:
             send(ins)
         sent = True

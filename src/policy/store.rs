@@ -89,7 +89,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     ] {
         add_column(conn, table, column, decl)?;
     }
-    Ok(())
+    super::keylog::migrate(conn)
 }
 
 /// Add a column to a table made before it existed.

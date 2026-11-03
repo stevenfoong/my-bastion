@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! WebSocket proxy: bridges browser ↔ guacd TCP socket.
 
 use crate::api::AppState;
@@ -5,6 +6,7 @@ use crate::auth::{client_ip, AuthIdentity, TrustedProxies};
 use crate::db::{self, Db};
 use crate::guacd::GuacdStream;
 use crate::policy::filter::{Side, TransferFilter};
+use crate::policy::keylog::SshWatch;
 use crate::policy::SessionControls;
 use crate::protocol::{last_instruction_boundary, Instruction};
 use crate::session::{SessionManager, ShareTokenValidation};
@@ -171,10 +173,11 @@ async fn handle_ws(
     } else {
         None
     };
-    let (guacd_stream, cancel) = if let Some((stream, cancel)) = owned {
+    // `can_type`: the connection's input reaches the target.
+    let (guacd_stream, cancel, can_type) = if let Some((stream, cancel)) = owned {
         let identity_str = identity_name.as_deref().unwrap_or("unknown");
         tracing::info!(session_id = %session_id, client_ip = %client_addr, identity = %identity_str, "Session owner connected");
-        (stream, cancel)
+        (stream, cancel, true)
     } else {
         // Not pending — try to join an active session
         // Joining requires a valid share token
@@ -236,7 +239,7 @@ async fn handle_ws(
         match manager.join_session(session_id, read_only).await {
             Ok((stream, cancel)) => {
                 tracing::info!(session_id = %session_id, client_ip = %client_addr, read_only, "Viewer connected via share token");
-                (stream, cancel)
+                (stream, cancel, !read_only)
             }
             Err(e) => {
                 tracing::warn!(session_id = %session_id, client_ip = %client_addr, error = %e, "Failed to join session");
@@ -303,12 +306,22 @@ async fn handle_ws(
     };
 
     // Run the bidirectional proxy, filtered by the session's clipboard and
-    // file transfer controls.
+    // file transfer controls; in SSH, what is typed is logged.
     let controls = manager.session_controls(session_id).await;
+    let is_ssh = manager
+        .get_session(session_id)
+        .await
+        .is_some_and(|s| s.session_type == crate::session::SessionType::Ssh);
+    let typist = (is_ssh && can_type && crate::policy::keylog::enabled()).then(|| {
+        identity_name
+            .clone()
+            .unwrap_or_else(|| "share link".to_string())
+    });
     let watch = Watch {
         controls,
         db: database.clone(),
         session_id: session_id.to_string(),
+        typist,
     };
     let start = Instant::now();
     let proxy_outcome = proxy_ws_guacd(ws, guacd_stream, recording_file, cancel, watch).await;
@@ -430,9 +443,34 @@ struct Watch {
     controls: SessionControls,
     db: Option<Db>,
     session_id: String,
+    /// In an SSH session, who is typing on this connection: their lines go
+    /// to the SSH command log.
+    typist: Option<String>,
+}
+
+/// The SSH command log of one connection: the line reader and the writer
+/// its lines go to.
+struct SshLog {
+    watch: SshWatch,
+    writer: tokio::sync::mpsc::UnboundedSender<Vec<crate::policy::keylog::Line>>,
 }
 
 impl Watch {
+    fn ssh_log(&self) -> Option<SshLog> {
+        let (Some(db), Some(actor)) = (&self.db, &self.typist) else {
+            return None;
+        };
+        Some(SshLog {
+            watch: SshWatch::default(),
+            writer: crate::policy::keylog::recorder(
+                db.clone(),
+                self.controls.clone(),
+                self.session_id.clone(),
+                actor.clone(),
+            ),
+        })
+    }
+
     /// The filter for one direction, or `None` when there is nothing to do.
     fn filter(&self, side: Side) -> Option<TransferFilter> {
         let f = TransferFilter::new(&self.controls, side);
@@ -664,6 +702,7 @@ async fn ws_to_guacd(
     watch: Watch,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut filter = watch.filter(Side::ToTarget);
+    let mut ssh = watch.ssh_log();
     while let Some(msg) = ws_read.next().await {
         let msg = msg?;
         match msg {
@@ -697,9 +736,26 @@ async fn ws_to_guacd(
                         out.forward
                     }
                 };
-                if !text.is_empty() {
-                    guacd.lock().await.write_all(text.as_bytes()).await?;
+                if text.is_empty() {
+                    continue;
                 }
+                // Only what reaches guacd: a paste the filter dropped is
+                // not typed.
+                if let Some(log) = ssh.as_mut() {
+                    match log
+                        .watch
+                        .observe(&text, crate::policy::store::now_secs() as u64)
+                    {
+                        Ok(lines) if !lines.is_empty() => {
+                            let _ = log.writer.send(lines);
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(session_id = %watch.session_id, error = %e, "SSH command log skipped input")
+                        }
+                    }
+                }
+                guacd.lock().await.write_all(text.as_bytes()).await?;
             }
             Message::Binary(_) => {
                 continue;

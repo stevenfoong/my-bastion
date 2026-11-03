@@ -20,6 +20,8 @@
 //! to the target, `out` from it) are evaluated once when a session starts;
 //! the result (`SessionControls`) switches guacd's own clipboard and transfer
 //! options off and drives the filter on the WebSocket bridge (`filter.rs`).
+//! In interactive SSH sessions, typed lines are logged and checked against
+//! the `ssh_command` rules for alerts only (`keylog.rs`).
 //!
 //! **Break-glass:** an admin can override policy for themself on one target
 //! with a mandatory reason. It is granted at once for `BREAK_GLASS_MINUTES`,
@@ -33,6 +35,7 @@
 
 pub mod api;
 pub mod filter;
+pub mod keylog;
 pub mod store;
 
 use serde::{Deserialize, Serialize};
@@ -462,7 +465,7 @@ impl Resource {
 }
 
 /// The caller, as policies see them.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Requester {
     /// Login email; `None` for API keys.
     pub email: Option<String>,
@@ -630,6 +633,12 @@ pub struct SessionControls {
     pub requester: String,
     #[serde(skip)]
     pub target: String,
+    /// Who and what the session is for, to check typed SSH lines against
+    /// the command rules (`keylog.rs`).
+    #[serde(skip)]
+    pub who: Option<Requester>,
+    #[serde(skip)]
+    pub resource: Option<Resource>,
 }
 
 impl SessionControls {
@@ -649,6 +658,8 @@ impl SessionControls {
             actor: String::new(),
             requester: who.id(),
             target: res.label(),
+            who: Some(who.clone()),
+            resource: Some(res.clone()),
         }
     }
 }
