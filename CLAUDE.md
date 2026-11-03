@@ -19,8 +19,8 @@ a phase. Status:
 - Phase 2 (policy/approval engine): 2a (rules, connect approvals, approvals
   page, admin policies, audit) and 2b (`run_ssh` command mode, `ssh_command`
   rules with regex patterns), 2c (Telegram approvals, web-only policies
-  with fresh sign-in) and 2d (clipboard/file transfer rules, break-glass)
-  done. Next: 2e interactive SSH logging
+  with fresh sign-in), 2d (clipboard/file transfer rules, break-glass) and
+  2e (interactive SSH command log from keystrokes, alerts) done
 - Phases 3–4 (MCP, DB proxy): not started
 
 ## Architecture
@@ -60,6 +60,10 @@ a phase. Status:
   bridge (`SessionControls` from `policy::session_controls`, decided at
   connect and carried on `CreateSessionRequest.policy`; guacd's own
   `disable-*` switches are set from it too)
+- `src/policy/keylog.rs` — interactive SSH command log: lines rebuilt from
+  `key`/paste instructions on the bridge (`SshWatch`), redaction after
+  password-prompting commands, `ssh_command_log` table, alerts from
+  `ssh_command` rules (`[ssh_log]`)
 - `src/ssh_exec.rs` — run one command over SSH (through `tunnel::start_chain`
   for jump hosts); the `/run` handler is `ab_run_command` in `api.rs`
 - `src/telegram.rs` — Telegram bot (long polling, link codes, Approve/Deny
@@ -154,6 +158,9 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_policy_transfer.sh` — live: clipboard/upload filtering on a
   real SSH session (own plain guacd, `tests/ws_probe.py` as the browser) and
   break-glass
+- `tests/test_ssh_command_log.sh` — live: keystrokes typed into a real SSH
+  session are logged (editing, paste, redaction) and a denied line alerts
+  (audit + fake Telegram)
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

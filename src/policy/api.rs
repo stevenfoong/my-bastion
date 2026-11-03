@@ -1,7 +1,7 @@
 //! HTTP handlers for policies and approvals.
 //!
 //! - `GET/POST /api/admin/policies`, `PUT/DELETE /api/admin/policies/{id}`,
-//!   `GET /api/admin/policy-audit`: admin only.
+//!   `GET /api/admin/policy-audit`, `GET /api/admin/ssh-commands`: admin only.
 //! - `GET /api/approvals`: requests the caller can decide, and their own.
 //! - `GET /api/approvals/{id}`, `POST /api/approvals/{id}/{reason,approve,deny,cancel}`.
 //! - `POST /api/break-glass`: an admin's own override, with a reason.
@@ -288,6 +288,39 @@ pub async fn policy_audit(
     let limit = q.limit.unwrap_or(200).min(1000);
     match with_db(&db, move |c| {
         store::list_audit(c, limit).map_err(|e| e.to_string())
+    })
+    .await
+    {
+        Ok(rows) => Json(json!(rows)).into_response(),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CommandQuery {
+    session_id: Option<String>,
+    q: Option<String>,
+    #[serde(default)]
+    alerts: bool,
+    limit: Option<u32>,
+}
+
+/// GET /api/admin/ssh-commands: lines typed in interactive SSH sessions,
+/// newest first; `session_id`, `q` (text search) and `alerts=true` narrow.
+pub async fn ssh_commands(
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(db): Extension<Db>,
+    Query(q): Query<CommandQuery>,
+) -> Response {
+    if let Err(r) = admin(identity) {
+        return r;
+    }
+    let limit = q.limit.unwrap_or(200).min(1000);
+    let blank = |s: Option<String>| s.filter(|s| !s.trim().is_empty());
+    let (session, text) = (blank(q.session_id), blank(q.q));
+    match with_db(&db, move |c| {
+        super::keylog::list(c, session.as_deref(), text.as_deref(), q.alerts, limit)
+            .map_err(|e| e.to_string())
     })
     .await
     {

@@ -73,6 +73,44 @@ use an allowlist: a rule that requires approval for (or denies) every
 command, plus allow rules for the exact commands people need. Commands are
 one line; control characters are refused.
 
+## Interactive SSH command log
+
+In an interactive SSH session, the WebSocket bridge rebuilds the lines the
+user types from their keystrokes and logs each one (Admin page → **SSH
+Command Log**, or `GET /api/admin/ssh-commands`), with the user, target and
+session. guacd draws the terminal as images, so the bridge sees what is
+typed, never what the shell shows: the log is **best-effort**, for review
+and alerting, and never blocks anything.
+
+- Line editing is followed: backspace, delete, cursor keys, Home/End,
+  Ctrl+A/E/U/K/W/H, and Ctrl+C (the line is dropped). So are pastes
+  (Ctrl+Shift+V, or the right or middle mouse button) of text the browser
+  sent to the session's clipboard; such lines are marked **pasted**.
+- Tab completion, history (Up/Down, Ctrl+R), Alt and Escape sequences change
+  the line in ways only the shell knows: the line is marked **uncertain**.
+  Full-screen programs (vi, less) are logged as typed.
+- Password prompts have no echo and look like any other input. The
+  one-word line typed within a minute after a command that usually prompts
+  (`sudo`, `su`, `ssh`, `scp`, `mysql`, `psql`, `passwd`, `docker login`, …)
+  is not stored: it is logged as **redacted**. Other prompts (a password
+  typed into a script, say) are logged as typed: keep that in mind when
+  granting access to the log.
+- Read-only viewers (share links, shadowing) type nothing and are not
+  logged; a viewer with input is logged under their own name.
+
+Each line is also checked against the `ssh_command` rules, as if it were run
+in command mode. A line a rule would **deny**, or **hold** by a command
+pattern, or that an `allow_and_alert` rule matches, is flagged: an
+`ssh_command_alert` row in the policy audit log, a warning in the server
+log, and a Telegram message to the `chat_ids`. Rules without command
+patterns that require approval do not flag every line; they are about
+command mode. Users can hide what they run (aliases, scripts, `bash -c`,
+base64), so for real control use command mode, connect approvals and
+restrictions on the target.
+
+`[ssh_log]` turns the log off (`enabled = false`) and sets how long lines
+are kept (`retention_days`, default 90).
+
 ## Clipboard and file transfer
 
 `clipboard` and `file_transfer` rules decide, when a session starts, what it
@@ -185,7 +223,8 @@ requester and, where there is one, the approver: denials, new requests,
 approvals and denials by an approver (with `via Telegram` for button
 presses), expiry, withdrawal, use of an approval, `allow_and_alert` connects,
 Telegram links and unlinks, break-glass overrides and their use, audited or
-blocked clipboard and file transfers, and every policy change.
+blocked clipboard and file transfers, flagged interactive SSH commands
+(`ssh_command_alert`), and every policy change.
 
 ## API
 
@@ -194,6 +233,7 @@ blocked clipboard and file transfers, and every policy change.
 | GET, POST | `/api/admin/policies` | admin | list, create |
 | PUT, DELETE | `/api/admin/policies/{id}` | admin | replace, delete |
 | GET | `/api/admin/policy-audit?limit=N` | admin | newest first |
+| GET | `/api/admin/ssh-commands` | admin | typed SSH lines, newest first; `session_id`, `q` (search), `alerts=true`, `limit` |
 | GET | `/api/approvals` | anyone | `to_decide`, `mine`, and `recent` (admins) |
 | GET | `/api/approvals/{id}` | requester, approvers, admins | one request |
 | POST | `/api/approvals/{id}/reason` | requester | `{"reason": "..."}` |

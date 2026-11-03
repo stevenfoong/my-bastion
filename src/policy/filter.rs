@@ -237,7 +237,7 @@ pub fn audit(db: &crate::db::Db, c: &SessionControls, session_id: &str, events: 
 /// The first few elements of the instruction at byte `pos` of `s` (the
 /// opcode and up to five arguments; the rest is skipped, not copied), and
 /// the byte after its `;`. `None` when it is malformed or incomplete.
-fn read_instruction(s: &str, mut pos: usize) -> Option<(Vec<&str>, usize)> {
+pub(super) fn read_instruction(s: &str, mut pos: usize) -> Option<(Vec<&str>, usize)> {
     let bytes = s.as_bytes();
     let mut elems = Vec::new();
     loop {
