@@ -758,6 +758,8 @@ async fn read_instruction(
 ) -> Result<Instruction, GuacdError> {
     let mut parser = InstructionParser::new();
     let mut buf = [0u8; 4096];
+    // Bytes of a character split across reads, carried to the next read.
+    let mut pending: Vec<u8> = Vec::new();
 
     loop {
         let n = stream
@@ -767,10 +769,21 @@ async fn read_instruction(
         if n == 0 {
             return Err(GuacdError::Connection("guacd closed connection".into()));
         }
-        let data = std::str::from_utf8(&buf[..n])
-            .map_err(|e| GuacdError::Protocol(format!("Invalid UTF-8 from guacd: {}", e)))?;
+        pending.extend_from_slice(&buf[..n]);
+        let valid = match std::str::from_utf8(&pending) {
+            Ok(_) => pending.len(),
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(e) => {
+                return Err(GuacdError::Protocol(format!(
+                    "Invalid UTF-8 from guacd: {}",
+                    e
+                )))
+            }
+        };
+        let data = std::str::from_utf8(&pending[..valid]).expect("checked above");
 
         let results = parser.receive(data);
+        pending.drain(..valid);
         if let Some(result) = results.into_iter().next() {
             return result.map_err(|e| GuacdError::Protocol(e.to_string()));
         }
