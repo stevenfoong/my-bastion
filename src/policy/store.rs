@@ -5,7 +5,7 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
-use super::{Action, Approver, Effect, Resource, Rule, Subject, Target};
+use super::{Action, Approver, Direction, Effect, Resource, Rule, Subject, Target};
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
@@ -22,6 +22,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             enabled         INTEGER NOT NULL DEFAULT 1,
             commands        TEXT NOT NULL DEFAULT '[]',
             web_only        INTEGER NOT NULL DEFAULT 0,
+            direction       TEXT,
             created_by      TEXT NOT NULL DEFAULT '',
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -49,7 +50,8 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             grant_until       INTEGER,
             client_ip         TEXT,
             command           TEXT,
-            web_only          INTEGER NOT NULL DEFAULT 0
+            web_only          INTEGER NOT NULL DEFAULT 0,
+            break_glass       INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS approval_requests_lookup
             ON approval_requests (requester, action, resource_key, status);
@@ -76,6 +78,12 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         (
             "approval_requests",
             "web_only",
+            "INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("policies", "direction", "TEXT"),
+        (
+            "approval_requests",
+            "break_glass",
             "INTEGER NOT NULL DEFAULT 0",
         ),
     ] {
@@ -128,7 +136,7 @@ fn bad_value(col: usize, what: &str) -> rusqlite::Error {
 // ── Policies ──
 
 const RULE_COLS: &str = "id, name, subject, target, action, effect, approvers, grant_minutes,
-    timeout_minutes, enabled, commands, web_only";
+    timeout_minutes, enabled, commands, web_only, direction";
 
 fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
     let action: String = r.get(4)?;
@@ -146,6 +154,10 @@ fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
         enabled: r.get::<_, i64>(9)? != 0,
         commands: from_json::<Vec<String>>(10, r.get(10)?)?,
         web_only: r.get::<_, i64>(11)? != 0,
+        direction: match r.get::<_, Option<String>>(12)? {
+            None => None,
+            Some(d) => Some(Direction::parse(&d).ok_or_else(|| bad_value(12, "direction"))?),
+        },
     })
 }
 
@@ -167,8 +179,8 @@ pub fn get_rule(conn: &Connection, id: i64) -> rusqlite::Result<Option<Rule>> {
 pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO policies (name, subject, target, action, effect, approvers,
-             grant_minutes, timeout_minutes, enabled, created_by, commands, web_only)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             grant_minutes, timeout_minutes, enabled, created_by, commands, web_only, direction)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             rule.name,
             serde_json::to_string(&rule.subject).map_err(json_err)?,
@@ -182,6 +194,7 @@ pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result
             by,
             serde_json::to_string(&rule.commands).map_err(json_err)?,
             rule.web_only as i64,
+            rule.direction.map(Direction::as_str),
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -192,7 +205,7 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
     let n = conn.execute(
         "UPDATE policies SET name = ?1, subject = ?2, target = ?3, action = ?4, effect = ?5,
              approvers = ?6, grant_minutes = ?7, timeout_minutes = ?8, enabled = ?9,
-             commands = ?11, web_only = ?12, updated_at = datetime('now')
+             commands = ?11, web_only = ?12, direction = ?13, updated_at = datetime('now')
          WHERE id = ?10",
         params![
             rule.name,
@@ -207,6 +220,7 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
             rule.id,
             serde_json::to_string(&rule.commands).map_err(json_err)?,
             rule.web_only as i64,
+            rule.direction.map(Direction::as_str),
         ],
     )?;
     Ok(n > 0)
@@ -246,11 +260,13 @@ pub struct ApprovalRequest {
     /// From the policy: decided on the web UI after a fresh sign-in only;
     /// Telegram just notifies.
     pub web_only: bool,
+    /// An admin's own override with a reason, granted on the spot.
+    pub break_glass: bool,
 }
 
 const REQ_COLS: &str = "id, requester, requester_display, action, resource, target_label,
     policy_id, policy_name, approvers, grant_minutes, reason, status, created_at, expires_at,
-    decided_at, decided_by, comment, grant_until, client_ip, command, web_only";
+    decided_at, decided_by, comment, grant_until, client_ip, command, web_only, break_glass";
 
 fn request_from_row(r: &Row) -> rusqlite::Result<ApprovalRequest> {
     Ok(ApprovalRequest {
@@ -275,6 +291,7 @@ fn request_from_row(r: &Row) -> rusqlite::Result<ApprovalRequest> {
         client_ip: r.get(18)?,
         command: r.get(19)?,
         web_only: r.get::<_, i64>(20)? != 0,
+        break_glass: r.get::<_, i64>(21)? != 0,
     })
 }
 
@@ -282,8 +299,10 @@ pub fn create_request(conn: &Connection, req: &ApprovalRequest) -> rusqlite::Res
     conn.execute(
         "INSERT INTO approval_requests (id, requester, requester_display, action, resource,
              resource_key, target_label, policy_id, policy_name, approvers, grant_minutes,
-             reason, status, created_at, expires_at, client_ip, command, web_only)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+             reason, status, created_at, expires_at, client_ip, command, web_only,
+             decided_at, decided_by, comment, grant_until, break_glass)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                 ?19, ?20, ?21, ?22, ?23)",
         params![
             req.id,
             req.requester,
@@ -303,6 +322,11 @@ pub fn create_request(conn: &Connection, req: &ApprovalRequest) -> rusqlite::Res
             req.client_ip,
             req.command,
             req.web_only as i64,
+            req.decided_at,
+            req.decided_by,
+            req.comment,
+            req.grant_until,
+            req.break_glass as i64,
         ],
     )?;
     Ok(())
@@ -325,17 +349,63 @@ pub fn active_grant(
     key: &str,
     now: i64,
 ) -> rusqlite::Result<Option<ApprovalRequest>> {
+    grant_query(conn, requester, action, key, now, false)
+}
+
+/// A live break-glass grant: the only kind that also overrides a deny.
+pub fn active_break_glass(
+    conn: &Connection,
+    requester: &str,
+    action: Action,
+    key: &str,
+    now: i64,
+) -> rusqlite::Result<Option<ApprovalRequest>> {
+    grant_query(conn, requester, action, key, now, true)
+}
+
+fn grant_query(
+    conn: &Connection,
+    requester: &str,
+    action: Action,
+    key: &str,
+    now: i64,
+    break_glass_only: bool,
+) -> rusqlite::Result<Option<ApprovalRequest>> {
     conn.query_row(
         &format!(
             "SELECT {REQ_COLS} FROM approval_requests
              WHERE requester = ?1 AND action = ?2 AND resource_key = ?3
                AND status = 'approved' AND grant_until > ?4
+               AND (?5 = 0 OR break_glass = 1)
              ORDER BY grant_until DESC LIMIT 1"
         ),
-        params![requester, action.as_str(), key, now],
+        params![
+            requester,
+            action.as_str(),
+            key,
+            now,
+            break_glass_only as i64
+        ],
         request_from_row,
     )
     .optional()
+}
+
+/// Withdraw the requests still waiting for this; their ids.
+pub fn cancel_open(
+    conn: &Connection,
+    requester: &str,
+    action: Action,
+    key: &str,
+    now: i64,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "UPDATE approval_requests SET status = 'cancelled', decided_at = ?4, decided_by = ?1
+         WHERE requester = ?1 AND action = ?2 AND resource_key = ?3 AND status = 'pending'
+         RETURNING id",
+    )?;
+    let ids = stmt.query_map(params![requester, action.as_str(), key, now], |r| r.get(0))?;
+    ids.collect()
 }
 
 /// A request already waiting for the same thing, so a retried connect does
@@ -566,6 +636,7 @@ mod tests {
             enabled: true,
             commands: vec![],
             web_only: false,
+            direction: None,
         }
     }
 
@@ -596,6 +667,7 @@ mod tests {
             client_ip: Some("192.0.2.1".into()),
             command: None,
             web_only: false,
+            break_glass: false,
         }
     }
 

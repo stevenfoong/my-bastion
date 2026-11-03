@@ -16,7 +16,8 @@ A rule has:
 |---|---|
 | **Who** | `anyone`, a `user` (login email), a `group` (OIDC group), a `role` (exactly that role), or an `api_key` (by name) |
 | **Target** | `anything`, a `folder` (and everything under it), or one `entry`, each in the `shared` or `instance` scope |
-| **Action** | `connect`, or `ssh_command` (one command run through the bastion, see below). Clipboard and file transfer come in a later release |
+| **Action** | `connect`; `ssh_command` (one command run through the bastion, see below); `clipboard` or `file_transfer` (in a session, see below) |
+| **Direction** | for `clipboard` and `file_transfer`: `in` (paste, upload to the target), `out` (copy, download from it), or both (unset) |
 | **Commands** | for `ssh_command`: regular expressions, matched anywhere in the command line; the rule applies to commands any of them matches (none: every command) |
 | **Effect** | `allow`, `deny`, `require_approval`, or `allow_and_alert` |
 | **Approvers** | for `require_approval`: `role:<role>` (that role or higher) and/or `group:<group>` |
@@ -72,6 +73,33 @@ use an allowlist: a rule that requires approval for (or denies) every
 command, plus allow rules for the exact commands people need. Commands are
 one line; control characters are refused.
 
+## Clipboard and file transfer
+
+`clipboard` and `file_transfer` rules decide, when a session starts, what it
+may do in each direction:
+
+| | `in` (to the target) | `out` (from the target) |
+|---|---|---|
+| `clipboard` | paste | copy |
+| `file_transfer` | upload (RDP drive, SFTP) | download |
+
+Their effect is `allow`, `allow_and_alert` (allowed, and each transfer goes
+to the audit log with its file name) or `deny`; they cannot wait for
+approval. The usual rules pick the winner, and a rule for one direction
+beats a rule for both. Example: deny `clipboard` `out` and `file_transfer`
+`out` in `prod`, so nothing leaves it, and audit uploads.
+
+A denied direction is enforced twice: guacd is started with its own switch
+off (`disable-copy`, `disable-paste`, `disable-upload`, `disable-download`
+and the SFTP equivalents), and the WebSocket bridge drops the instructions
+that would carry it, answering the sender with `CLIENT_FORBIDDEN`. With both
+upload and download denied, the file browser is hidden. Blocked attempts the
+bridge sees are audited (`clipboard_paste_blocked`, `file_download_blocked`,
+…); clipboard contents and file data never are.
+
+The controls are fixed when the session starts: a policy change applies to
+the next session.
+
 ## Approvals
 
 When a rule requires approval, the connect does not start a session. The
@@ -87,6 +115,24 @@ reason, and approve or deny it with an optional comment.
 - A request nobody decides **expires** after the rule's timeout.
 - Connecting again while a request waits reuses it rather than opening
   another. The requester can withdraw it.
+
+## Break-glass
+
+When a policy stops an admin in an emergency (a deny, or an approval nobody
+is there to give), they can override it for themself: **Break glass** in the
+connect dialog, with a reason.
+
+- It needs the `admin` role, a person (not an API key or token) and a
+  **fresh sign-in** on the web UI (within the last 15 minutes).
+- The reason is mandatory (at least 10 characters).
+- It grants that admin, and nobody else, that entry for **60 minutes**, a
+  deny included. Their own requests still waiting for it are withdrawn.
+- It is always alerted: a `break_glass` row in the audit log with the
+  reason, every use (`allowed_by_break_glass`), a warning in the server log,
+  and a Telegram message to the `chat_ids` and every other linked admin.
+
+The API also takes `"action": "ssh_command"` with a `command`, to override a
+command policy for that exact command.
 
 ## Telegram
 
@@ -138,7 +184,8 @@ The **Policy Audit Log** on the Admin page records every decision with the
 requester and, where there is one, the approver: denials, new requests,
 approvals and denials by an approver (with `via Telegram` for button
 presses), expiry, withdrawal, use of an approval, `allow_and_alert` connects,
-Telegram links and unlinks, and every policy change.
+Telegram links and unlinks, break-glass overrides and their use, audited or
+blocked clipboard and file transfers, and every policy change.
 
 ## API
 
@@ -155,6 +202,7 @@ Telegram links and unlinks, and every policy change.
 | POST | `/api/addressbook/folders/{scope}/{folder}/entries/{entry}/run` | operator+ | run one command (see Command mode) |
 | GET | `/api/telegram` | signed-in users | `enabled`, `bot_username`, and the caller's `linked` account |
 | POST, DELETE | `/api/telegram/link` | signed-in users | a new one-time link code (with a `t.me` `url`); unlink |
+| POST | `/api/break-glass` | admins (fresh sign-in) | `{"scope", "folder", "entry", "reason"}`, optionally `"action": "ssh_command"` and `"command"` |
 
 A connect held for approval answers **202** with
 `{"approval_required": true, "approval": {...}}`; a denied one answers

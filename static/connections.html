@@ -3505,6 +3505,19 @@
             actions.appendChild(send);
             actions.appendChild(go);
             actions.appendChild(cancel);
+            if (canBreakGlass() && approval.resource && approval.resource.kind === 'entry') {
+                var bg = document.createElement('button');
+                bg.className = 'btn-cancel';
+                bg.id = 'approval-break-glass';
+                bg.textContent = 'Break glass';
+                bg.title = 'Override the policy for yourself, with a reason';
+                bg.onclick = function() {
+                    closeApprovalWait();
+                    showBreakGlass({ scope: approval.resource.scope, folder: approval.resource.folder,
+                        entry: approval.resource.entry, policy: approval.policy_name }, retry);
+                };
+                actions.appendChild(bg);
+            }
             [h, p, status, label, reason, actions].forEach(function(el) { box.appendChild(el); });
             overlay.appendChild(box);
             document.body.appendChild(overlay);
@@ -3564,6 +3577,86 @@
         }
         window.showApprovalWait = showApprovalWait;
 
+        // ── Break-glass ──
+        // An admin overrides a policy (a deny, or an approval nobody gave
+        // yet) for themself on one entry, with a reason. It needs a fresh
+        // sign-in, lasts an hour, and every admin is told.
+        function canBreakGlass() {
+            return !(typeof apiKey !== 'undefined' && apiKey)
+                && document.documentElement.getAttribute('data-role-level') === '4';
+        }
+        function showBreakGlass(t, retry) {
+            closeApprovalWait();
+            var overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active';
+            overlay.id = 'approval-modal';
+            var box = document.createElement('div');
+            box.className = 'modal';
+            box.style.maxWidth = '480px';
+            var h = document.createElement('h3');
+            h.textContent = 'Break glass';
+            var p = document.createElement('p');
+            p.style.cssText = 'color:var(--text-muted);font-size:0.9em;margin-top:0';
+            p.textContent = 'Policy "' + (t.policy || '') + '" stops this connect to ' + t.scope + '/' + t.folder + '/' + t.entry
+                + '. As an admin you can override it for yourself for an hour. The override and your reason are logged and every admin is alerted.';
+            var label = document.createElement('label');
+            label.textContent = 'Reason (required)';
+            label.style.cssText = 'display:block;font-size:0.85em;color:var(--text-muted)';
+            var reason = document.createElement('textarea');
+            reason.id = 'break-glass-reason';
+            reason.rows = 2;
+            reason.maxLength = 500;
+            reason.style.width = '100%';
+            var status = document.createElement('div');
+            status.id = 'break-glass-status';
+            status.style.cssText = 'margin:0.6em 0;font-weight:600';
+            var actions = document.createElement('div');
+            actions.className = 'modal-actions';
+            var doIt = document.createElement('button');
+            doIt.className = 'btn-connect';
+            doIt.id = 'break-glass-confirm';
+            doIt.textContent = 'Break glass';
+            var go = document.createElement('button');
+            go.className = 'btn-connect';
+            go.id = 'break-glass-connect';
+            go.textContent = 'Connect now';
+            go.style.display = 'none';
+            var close = document.createElement('button');
+            close.className = 'btn-cancel';
+            close.textContent = 'Cancel';
+            actions.appendChild(doIt);
+            actions.appendChild(go);
+            actions.appendChild(close);
+            [h, p, label, reason, status, actions].forEach(function(el) { box.appendChild(el); });
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            close.onclick = closeApprovalWait;
+            go.onclick = function() { closeApprovalWait(); if (retry) retry(go); };
+            doIt.onclick = function() {
+                if (reason.value.trim().length < 10) { status.textContent = 'Give a reason of at least 10 characters.'; return; }
+                doIt.disabled = true;
+                fetch('/api/break-glass', {
+                    method: 'POST',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ scope: t.scope, folder: t.folder, entry: t.entry, reason: reason.value })
+                })
+                .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+                .then(function(res) {
+                    if (!res.ok) { status.textContent = res.j.error || 'Break-glass failed.'; doIt.disabled = false; return; }
+                    var until = res.j.approval && res.j.approval.grant_until
+                        ? new Date(res.j.approval.grant_until * 1000).toLocaleTimeString() : '';
+                    status.textContent = 'Override granted' + (until ? ' until ' + until : '') + '.';
+                    reason.disabled = true;
+                    doIt.style.display = 'none';
+                    close.textContent = 'Close';
+                    if (retry) go.style.display = '';
+                })
+                .catch(function(e) { status.textContent = e.message; doIt.disabled = false; });
+            };
+        }
+        window.showBreakGlass = showBreakGlass;
+
         function doConnect(scope, folder, name, btn, extraBody, newWindow) {
             var isWinBtn = !!(btn.getAttribute && btn.getAttribute('data-connect-win'));
             btn.disabled = true;
@@ -3612,6 +3705,13 @@
             .then(function(res) {
                 if (res.status === 202) return approvalRequired(res);
                 if (!res.ok) {
+                    if (res.status === 403 && canBreakGlass()) {
+                        return res.json().catch(function() { return {}; }).then(function(j) {
+                            var err = new Error(j.error || 'Forbidden');
+                            if (j.policy) { err.policyDenied = j.policy; }
+                            throw err;
+                        });
+                    }
                     if (res.status === 412) {
                         return res.json().then(function(j) {
                             var err = new Error('missing_credentials');
@@ -3639,6 +3739,10 @@
                 if (targetWin && !targetWin.closed) targetWin.close();
                 if (err.message === 'approval_required') {
                     showApprovalWait(err.approval, function(b) {
+                        doConnect(scope, folder, name, b, extraBody, newWindow);
+                    });
+                } else if (err.policyDenied) {
+                    showBreakGlass({ scope: scope, folder: folder, entry: name, policy: err.policyDenied }, function(b) {
                         doConnect(scope, folder, name, b, extraBody, newWindow);
                     });
                 } else if (err.message === 'missing_credentials') {

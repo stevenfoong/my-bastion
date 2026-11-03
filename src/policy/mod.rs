@@ -16,6 +16,15 @@
 //! the rule's `grant_minutes`, so a dropped connection needs no new approval.
 //! For `ssh_command` a grant covers that exact command only.
 //!
+//! `clipboard` and `file_transfer` rules (optionally for one direction: `in`
+//! to the target, `out` from it) are evaluated once when a session starts;
+//! the result (`SessionControls`) switches guacd's own clipboard and transfer
+//! options off and drives the filter on the WebSocket bridge (`filter.rs`).
+//!
+//! **Break-glass:** an admin can override policy for themself on one target
+//! with a mandatory reason. It is granted at once for `BREAK_GLASS_MINUTES`,
+//! overrides a deny too, and is always audited and sent to Telegram.
+//!
 //! An `ssh_command` rule may list `commands`: regular expressions matched
 //! against the whole command line (unanchored, so `rm\s+-rf` matches anywhere
 //! in it). With none, the rule matches every command. Patterns are a guard on
@@ -23,20 +32,24 @@
 //! known commands) is far stronger than a denylist.
 
 pub mod api;
+pub mod filter;
 pub mod store;
 
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{role_level, AuthIdentity};
 
-/// What is being done. Phase 2a enforces `connect`; later slices add
-/// clipboard, file transfer, SSH commands and AI input.
+/// What is being done. AI input comes with the MCP endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Connect,
     /// One command run through the bastion (`run_ssh`).
     SshCommand,
+    /// Copy (out) and paste (in) in a session.
+    Clipboard,
+    /// Download (out) and upload (in): RDP drive and SFTP.
+    FileTransfer,
 }
 
 impl Action {
@@ -44,6 +57,8 @@ impl Action {
         match self {
             Action::Connect => "connect",
             Action::SshCommand => "ssh_command",
+            Action::Clipboard => "clipboard",
+            Action::FileTransfer => "file_transfer",
         }
     }
 
@@ -51,6 +66,40 @@ impl Action {
         match s {
             "connect" => Some(Action::Connect),
             "ssh_command" => Some(Action::SshCommand),
+            "clipboard" => Some(Action::Clipboard),
+            "file_transfer" => Some(Action::FileTransfer),
+            _ => None,
+        }
+    }
+
+    /// Clipboard and file transfer: decided per session, with a direction.
+    fn is_transfer(self) -> bool {
+        matches!(self, Action::Clipboard | Action::FileTransfer)
+    }
+}
+
+/// Which way data moves, for clipboard and file transfer rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    /// To the target: paste, upload.
+    In,
+    /// From the target: copy, download.
+    Out,
+}
+
+impl Direction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Direction::In => "in",
+            Direction::Out => "out",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "in" => Some(Direction::In),
+            "out" => Some(Direction::Out),
             _ => None,
         }
     }
@@ -227,6 +276,9 @@ pub struct Rule {
     /// and the decision needs a fresh sign-in on the web UI.
     #[serde(default)]
     pub web_only: bool,
+    /// For `clipboard` and `file_transfer`: only this direction. None: both.
+    #[serde(default)]
+    pub direction: Option<Direction>,
 }
 
 const MAX_COMMAND_PATTERNS: usize = 50;
@@ -247,7 +299,9 @@ fn default_enabled() -> bool {
 impl Rule {
     fn specificity(&self) -> (u8, usize, u8, u8, u8) {
         let (t, depth) = self.target.rank();
-        let commands = u8::from(!self.commands.is_empty());
+        // A rule narrowed to some commands, or to one direction, beats one
+        // that is not.
+        let commands = u8::from(!self.commands.is_empty() || self.direction.is_some());
         (
             t,
             depth,
@@ -321,6 +375,15 @@ impl Rule {
         }
         if self.web_only && self.effect != Effect::RequireApproval {
             return Err("web only applies to require_approval rules".into());
+        }
+        if self.action.is_transfer() && self.effect == Effect::RequireApproval {
+            return Err(
+                "clipboard and file transfer rules allow, alert or deny; they cannot wait for approval"
+                    .into(),
+            );
+        }
+        if self.direction.is_some() && !self.action.is_transfer() {
+            return Err("a direction only applies to clipboard and file_transfer rules".into());
         }
         if !self.commands.is_empty() && self.action != Action::SshCommand {
             return Err("command patterns only apply to ssh_command rules".into());
@@ -464,6 +527,18 @@ pub fn evaluate<'a>(
     res: &Resource,
     command: Option<&str>,
 ) -> Decision<'a> {
+    evaluate_in(rules, who, action, res, command, None)
+}
+
+/// `evaluate`, for one direction of a clipboard or file transfer.
+fn evaluate_in<'a>(
+    rules: &'a [Rule],
+    who: &Requester,
+    action: Action,
+    res: &Resource,
+    command: Option<&str>,
+    direction: Option<Direction>,
+) -> Decision<'a> {
     let matching: Vec<&Rule> = rules
         .iter()
         .filter(|r| {
@@ -472,6 +547,7 @@ pub fn evaluate<'a>(
                 && r.subject.matches(who)
                 && r.target.matches(res)
                 && r.matches_command(command)
+                && (r.direction.is_none() || r.direction == direction)
         })
         .collect();
     if let Some(rule) = matching
@@ -524,6 +600,162 @@ pub fn may_decide(
     } else {
         Err("you are not an approver for this request".into())
     }
+}
+
+/// What a session may do with the clipboard and file transfer, one value
+/// per direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transfer {
+    #[default]
+    Allow,
+    /// Allowed, and each one goes to the audit log.
+    Alert,
+    Deny,
+}
+
+/// The clipboard and file transfer decisions for one session, and who and
+/// what they were made for (for the audit rows the bridge writes).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct SessionControls {
+    /// Clipboard out of the target.
+    pub copy: Transfer,
+    /// Clipboard into the target.
+    pub paste: Transfer,
+    pub upload: Transfer,
+    pub download: Transfer,
+    #[serde(skip)]
+    pub actor: String,
+    #[serde(skip)]
+    pub requester: String,
+    #[serde(skip)]
+    pub target: String,
+}
+
+impl SessionControls {
+    /// Evaluate the clipboard and file transfer rules for a session.
+    pub fn decide(rules: &[Rule], who: &Requester, res: &Resource) -> Self {
+        let one = |action, dir| match evaluate_in(rules, who, action, res, None, Some(dir)) {
+            Decision::Allow { alert: false, .. } => Transfer::Allow,
+            Decision::Allow { alert: true, .. } => Transfer::Alert,
+            // `validate` refuses approval for these; treat one as a deny.
+            Decision::RequireApproval { .. } | Decision::Deny { .. } => Transfer::Deny,
+        };
+        SessionControls {
+            copy: one(Action::Clipboard, Direction::Out),
+            paste: one(Action::Clipboard, Direction::In),
+            upload: one(Action::FileTransfer, Direction::In),
+            download: one(Action::FileTransfer, Direction::Out),
+            actor: String::new(),
+            requester: who.id(),
+            target: res.label(),
+        }
+    }
+}
+
+/// The clipboard and file transfer controls for `id` starting a session
+/// on `res`.
+pub async fn session_controls(
+    db: &crate::db::Db,
+    id: &AuthIdentity,
+    res: Resource,
+) -> Result<SessionControls, String> {
+    let db = db.clone();
+    let who = Requester::from_identity(id);
+    let actor = id.display_name().to_string();
+    tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| "database lock poisoned".to_string())?;
+        let rules = store::list_rules(&conn).map_err(|e| e.to_string())?;
+        Ok(SessionControls {
+            actor,
+            ..SessionControls::decide(&rules, &who, &res)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// How long a break-glass override lasts.
+pub const BREAK_GLASS_MINUTES: u32 = 60;
+/// The shortest reason a break-glass override takes.
+pub const MIN_BREAK_GLASS_REASON: usize = 10;
+
+/// An admin overrides policy for themself: `action` on `res` (and for
+/// `ssh_command`, that command) for `BREAK_GLASS_MINUTES`, deny included.
+/// Withdraws their requests still waiting for the same thing. The caller
+/// checks the role and a fresh sign-in.
+#[allow(clippy::too_many_arguments)]
+pub fn break_glass(
+    conn: &rusqlite::Connection,
+    who: &Requester,
+    display: &str,
+    action: Action,
+    res: &Resource,
+    command: Option<String>,
+    reason: &str,
+    ip: &str,
+    now: i64,
+) -> Result<store::ApprovalRequest, String> {
+    let rid = who.id();
+    let key = res.key_for(command.as_deref());
+    let withdrawn = store::cancel_open(conn, &rid, action, &key, now).map_err(|e| e.to_string())?;
+    let req = store::ApprovalRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        requester: rid.clone(),
+        requester_display: display.to_string(),
+        action: action.as_str().into(),
+        resource: res.clone(),
+        target_label: res.label(),
+        command,
+        policy_id: 0,
+        policy_name: "break-glass".into(),
+        approvers: Vec::new(),
+        grant_minutes: BREAK_GLASS_MINUTES,
+        reason: reason.to_string(),
+        status: "approved".into(),
+        created_at: now,
+        expires_at: now,
+        decided_at: Some(now),
+        decided_by: Some(display.to_string()),
+        comment: Some(reason.to_string()),
+        grant_until: Some(now + i64::from(BREAK_GLASS_MINUTES) * 60),
+        client_ip: Some(ip.to_string()),
+        web_only: false,
+        break_glass: true,
+    };
+    store::create_request(conn, &req).map_err(|e| e.to_string())?;
+    store::audit(
+        conn,
+        &store::AuditEvent {
+            event: "break_glass",
+            actor: display,
+            requester: &rid,
+            action: action.as_str(),
+            target: &req.target_label,
+            policy: Some("break-glass"),
+            approval_id: Some(&req.id),
+            detail: Some(reason),
+            ip: Some(ip),
+            ..Default::default()
+        },
+        now,
+    )
+    .map_err(|e| e.to_string())?;
+    let admin = display;
+    tracing::warn!(
+        admin,
+        target = %req.target_label,
+        action = action.as_str(),
+        reason = reason,
+        "Break-glass override"
+    );
+    for id in withdrawn {
+        crate::telegram::notify(&id);
+    }
+    crate::telegram::notify(&req.id);
+    Ok(req)
 }
 
 /// How recent a web sign-in must be to decide a web-only request.
@@ -656,6 +888,24 @@ pub async fn gate(
                 Ok(Gate::Allowed)
             }
             Decision::Deny { rule } => {
+                let key = res.key_for(command.as_deref());
+                if let Some(grant) = store::active_break_glass(&conn, &rid, action, &key, now)
+                    .map_err(|e| e.to_string())?
+                {
+                    audit(store::AuditEvent {
+                        approval_id: Some(&grant.id),
+                        ..decision_event(
+                            "allowed_by_break_glass",
+                            &display,
+                            &rid,
+                            action,
+                            &target,
+                            rule,
+                            &ip,
+                        )
+                    })?;
+                    return Ok(Gate::Allowed);
+                }
                 audit(decision_event(
                     "denied", &display, &rid, action, &target, rule, &ip,
                 ))?;
@@ -671,7 +921,11 @@ pub async fn gate(
                     audit(store::AuditEvent {
                         approval_id: Some(&grant.id),
                         ..decision_event(
-                            "allowed_by_grant",
+                            if grant.break_glass {
+                                "allowed_by_break_glass"
+                            } else {
+                                "allowed_by_grant"
+                            },
                             &display,
                             &rid,
                             action,
@@ -709,6 +963,7 @@ pub async fn gate(
                     grant_until: None,
                     client_ip: Some(ip.clone()),
                     web_only: rule.web_only,
+                    break_glass: false,
                 };
                 store::create_request(&conn, &req).map_err(|e| e.to_string())?;
                 crate::telegram::notify(&req.id);
@@ -873,6 +1128,7 @@ mod tests {
             enabled: true,
             commands: vec![],
             web_only: false,
+            direction: None,
         }
     }
 
@@ -1286,5 +1542,191 @@ mod tests {
         assert!(r.validate().is_ok());
         r.commands = vec!["(unclosed".into()];
         assert!(r.validate().unwrap_err().contains("bad command pattern"));
+    }
+
+    fn transfer_rule(id: i64, action: Action, dir: Option<Direction>, effect: Effect) -> Rule {
+        let mut r = rule(id, Subject::Any, folder("prod"), effect);
+        r.action = action;
+        r.direction = dir;
+        r
+    }
+
+    #[test]
+    fn session_controls_follow_transfer_rules_per_direction() {
+        let who = user("c@x", "operator", &["contractors"]);
+        // No rules: everything allowed, as before.
+        let open = SessionControls::decide(&[], &who, &entry_in("prod"));
+        assert_eq!(
+            (open.copy, open.paste, open.upload, open.download),
+            (
+                Transfer::Allow,
+                Transfer::Allow,
+                Transfer::Allow,
+                Transfer::Allow
+            )
+        );
+        let rules = [
+            // Copying out of prod is denied, pasting in is fine.
+            transfer_rule(1, Action::Clipboard, Some(Direction::Out), Effect::Deny),
+            // File transfer is audited both ways, and a direction-specific
+            // rule beats the general one: uploads are allowed quietly.
+            transfer_rule(2, Action::FileTransfer, None, Effect::AllowAndAlert),
+            transfer_rule(3, Action::FileTransfer, Some(Direction::In), Effect::Allow),
+        ];
+        let c = SessionControls::decide(&rules, &who, &entry_in("prod"));
+        assert_eq!(
+            (c.copy, c.paste, c.upload, c.download),
+            (
+                Transfer::Deny,
+                Transfer::Allow,
+                Transfer::Allow,
+                Transfer::Alert
+            )
+        );
+        assert_eq!(
+            (c.requester.as_str(), c.target.as_str()),
+            ("c@x", "shared/prod/web01")
+        );
+        // Outside prod, none apply; connect rules never do.
+        let lab = SessionControls::decide(&rules, &who, &entry_in("lab"));
+        assert_eq!(lab.copy, Transfer::Allow);
+        let connect_only = [rule(4, Subject::Any, folder("prod"), Effect::Deny)];
+        assert_eq!(
+            SessionControls::decide(&connect_only, &who, &entry_in("prod")).copy,
+            Transfer::Allow
+        );
+        // A direction rule never matches a connect.
+        assert!(matches!(
+            evaluate(&rules, &who, Action::Connect, &entry_in("prod"), None),
+            Decision::Allow { rule: None, .. }
+        ));
+    }
+
+    #[test]
+    fn transfer_rules_validate() {
+        let mut r = transfer_rule(1, Action::Clipboard, Some(Direction::Out), Effect::Deny);
+        assert!(r.validate().is_ok());
+        r.effect = Effect::RequireApproval;
+        assert!(r
+            .validate()
+            .unwrap_err()
+            .contains("cannot wait for approval"));
+        let mut c = rule(2, Subject::Any, folder("prod"), Effect::Deny);
+        c.direction = Some(Direction::In);
+        assert!(c.validate().unwrap_err().contains("direction"));
+    }
+
+    fn db_with(rules: &[Rule]) -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        store::migrate(&c).unwrap();
+        for r in rules {
+            store::insert_rule(&c, r, "admin@x").unwrap();
+        }
+        c
+    }
+
+    #[test]
+    fn break_glass_overrides_a_deny_for_that_admin_only() {
+        let c = db_with(&[rule(0, Subject::Any, folder("prod"), Effect::Deny)]);
+        let boss = user("boss@x", "admin", &[]);
+        let res = entry_in("prod");
+        let now = 1_000_000;
+        let g = break_glass(
+            &c,
+            &boss,
+            "boss@x",
+            Action::Connect,
+            &res,
+            None,
+            "database outage",
+            "192.0.2.9",
+            now,
+        )
+        .unwrap();
+        assert!(g.break_glass && g.status == "approved");
+        assert_eq!(
+            g.grant_until,
+            Some(now + i64::from(BREAK_GLASS_MINUTES) * 60)
+        );
+        let key = res.key();
+        assert!(
+            store::active_break_glass(&c, "boss@x", Action::Connect, &key, now + 60)
+                .unwrap()
+                .is_some()
+        );
+        // Not for anyone else, not after the window, not for another action.
+        assert!(
+            store::active_break_glass(&c, "other@x", Action::Connect, &key, now + 60)
+                .unwrap()
+                .is_none()
+        );
+        assert!(store::active_break_glass(
+            &c,
+            "boss@x",
+            Action::Connect,
+            &key,
+            now + i64::from(BREAK_GLASS_MINUTES) * 60
+        )
+        .unwrap()
+        .is_none());
+        assert!(
+            store::active_break_glass(&c, "boss@x", Action::SshCommand, &key, now + 60)
+                .unwrap()
+                .is_none()
+        );
+        // An ordinary grant is not a break-glass one.
+        let audit = store::list_audit(&c, 10).unwrap();
+        assert!(audit.iter().any(|r| r.event == "break_glass"
+            && r.actor == "boss@x"
+            && r.detail.as_deref() == Some("database outage")));
+    }
+
+    #[test]
+    fn break_glass_withdraws_the_waiting_request() {
+        let c = db_with(&[]);
+        let boss = user("boss@x", "admin", &[]);
+        let res = entry_in("prod");
+        let now = 1_000_000;
+        let waiting = store::ApprovalRequest {
+            id: "w1".into(),
+            requester: "boss@x".into(),
+            requester_display: "boss@x".into(),
+            action: "connect".into(),
+            resource: res.clone(),
+            target_label: res.label(),
+            policy_id: 1,
+            policy_name: "p".into(),
+            approvers: vec![Approver::Role("admin".into())],
+            grant_minutes: 60,
+            reason: String::new(),
+            status: "pending".into(),
+            created_at: now,
+            expires_at: now + 1800,
+            decided_at: None,
+            decided_by: None,
+            comment: None,
+            grant_until: None,
+            client_ip: None,
+            command: None,
+            web_only: false,
+            break_glass: false,
+        };
+        store::create_request(&c, &waiting).unwrap();
+        break_glass(
+            &c,
+            &boss,
+            "boss@x",
+            Action::Connect,
+            &res,
+            None,
+            "approver is asleep",
+            "192.0.2.9",
+            now + 5,
+        )
+        .unwrap();
+        assert_eq!(
+            store::get_request(&c, "w1").unwrap().unwrap().status,
+            "cancelled"
+        );
     }
 }

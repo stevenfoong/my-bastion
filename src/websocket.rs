@@ -4,6 +4,8 @@ use crate::api::AppState;
 use crate::auth::{client_ip, AuthIdentity, TrustedProxies};
 use crate::db::{self, Db};
 use crate::guacd::GuacdStream;
+use crate::policy::filter::{Side, TransferFilter};
+use crate::policy::SessionControls;
 use crate::protocol::{last_instruction_boundary, Instruction};
 use crate::session::{SessionManager, ShareTokenValidation};
 use axum::{
@@ -300,9 +302,16 @@ async fn handle_ws(
         None // Viewer connections don't record, or recording is disabled
     };
 
-    // Run the bidirectional proxy
+    // Run the bidirectional proxy, filtered by the session's clipboard and
+    // file transfer controls.
+    let controls = manager.session_controls(session_id).await;
+    let watch = Watch {
+        controls,
+        db: database.clone(),
+        session_id: session_id.to_string(),
+    };
     let start = Instant::now();
-    let proxy_outcome = proxy_ws_guacd(ws, guacd_stream, recording_file, cancel).await;
+    let proxy_outcome = proxy_ws_guacd(ws, guacd_stream, recording_file, cancel, watch).await;
     let elapsed = start.elapsed();
     let server_disconnected = proxy_outcome.server_disconnected;
     let proxy_result = proxy_outcome.result;
@@ -414,14 +423,42 @@ async fn handle_ws(
     tracing::info!(session_id = %session_id, client_ip = %client_addr, "Session disconnected");
 }
 
+/// What the bridge enforces and audits for a session: its clipboard and
+/// file transfer controls, and where audit rows go.
+#[derive(Clone)]
+struct Watch {
+    controls: SessionControls,
+    db: Option<Db>,
+    session_id: String,
+}
+
+impl Watch {
+    /// The filter for one direction, or `None` when there is nothing to do.
+    fn filter(&self, side: Side) -> Option<TransferFilter> {
+        let f = TransferFilter::new(&self.controls, side);
+        (!f.is_passthrough()).then_some(f)
+    }
+
+    fn audit(&self, events: Vec<crate::policy::filter::Event>) {
+        if let Some(db) = &self.db {
+            crate::policy::filter::audit(db, &self.controls, &self.session_id, events);
+        }
+    }
+}
+
+type GuacdWriter = Arc<tokio::sync::Mutex<tokio::io::WriteHalf<GuacdStream>>>;
+
 /// Bidirectional proxy between WebSocket and guacd stream (TCP or TLS).
 async fn proxy_ws_guacd(
     ws: WebSocket,
     guacd: GuacdStream,
     recording_file: Option<tokio::fs::File>,
     cancel: CancellationToken,
+    watch: Watch,
 ) -> ProxyOutcome {
     let (guacd_read, guacd_write) = tokio::io::split(guacd);
+    // Shared: the guacd → browser side answers a blocked download to guacd.
+    let guacd_write: GuacdWriter = Arc::new(tokio::sync::Mutex::new(guacd_write));
     let (ws_write, ws_read) = ws.split();
 
     let recording = recording_file.map(|f| Arc::new(tokio::sync::Mutex::new(f)));
@@ -438,15 +475,23 @@ async fn proxy_ws_guacd(
     let recording_clone = recording.clone();
     let sd_flag = server_disconnected.clone();
     let ws_sink_g = ws_sink.clone();
-    let guacd_to_browser =
-        tokio::spawn(
-            async move { guacd_to_ws(guacd_read, ws_sink_g, recording_clone, sd_flag).await },
-        );
+    let (guacd_w, watch_g) = (guacd_write.clone(), watch.clone());
+    let guacd_to_browser = tokio::spawn(async move {
+        guacd_to_ws(
+            guacd_read,
+            ws_sink_g,
+            recording_clone,
+            sd_flag,
+            guacd_w,
+            watch_g,
+        )
+        .await
+    });
 
     // browser → guacd
     let ws_sink_b = ws_sink.clone();
     let browser_to_guacd =
-        tokio::spawn(async move { ws_to_guacd(ws_read, guacd_write, ws_sink_b).await });
+        tokio::spawn(async move { ws_to_guacd(ws_read, guacd_write, ws_sink_b, watch).await });
 
     // Wait for either direction to finish, or cancellation, then stop both.
     let result = match race_and_abort(guacd_to_browser, browser_to_guacd, &cancel).await {
@@ -523,9 +568,12 @@ async fn guacd_to_ws(
     ws: WsSink,
     recording: Option<Arc<tokio::sync::Mutex<tokio::fs::File>>>,
     server_disconnected: Arc<std::sync::atomic::AtomicBool>,
+    guacd_write: GuacdWriter,
+    watch: Watch,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut buf = vec![0u8; 65536];
     let mut carry: Vec<u8> = Vec::new();
+    let mut filter = watch.filter(Side::FromTarget);
 
     loop {
         let n = guacd.read(&mut buf).await?;
@@ -576,6 +624,24 @@ async fn guacd_to_ws(
             server_disconnected.store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
+        let text = match filter.as_mut() {
+            None => text,
+            Some(f) => {
+                let out = f.filter(&text)?;
+                if !out.reply.is_empty() {
+                    guacd_write
+                        .lock()
+                        .await
+                        .write_all(out.reply.as_bytes())
+                        .await?;
+                }
+                watch.audit(out.events);
+                out.forward
+            }
+        };
+        if text.is_empty() {
+            continue;
+        }
         let mut sink = ws.lock().await;
         sink.send(Message::Text(text.into())).await?;
     }
@@ -593,9 +659,11 @@ async fn guacd_to_ws(
 /// it after 15s. We mirror Apache's filter behaviour.
 async fn ws_to_guacd(
     mut ws_read: futures_util::stream::SplitStream<WebSocket>,
-    mut guacd: tokio::io::WriteHalf<GuacdStream>,
+    guacd: GuacdWriter,
     ws_sink: WsSink,
+    watch: Watch,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut filter = watch.filter(Side::ToTarget);
     while let Some(msg) = ws_read.next().await {
         let msg = msg?;
         match msg {
@@ -617,11 +685,21 @@ async fn ws_to_guacd(
                     }
                 }
 
-                // Log clipboard instructions from browser → guacd
-                if text.contains(".clipboard,") {
-                    tracing::info!("browser sent clipboard instruction to guacd");
+                let text = match filter.as_mut() {
+                    None => text.to_string(),
+                    Some(f) => {
+                        let out = f.filter(&text)?;
+                        if !out.reply.is_empty() {
+                            let mut sink = ws_sink.lock().await;
+                            sink.send(Message::Text(out.reply.into())).await?;
+                        }
+                        watch.audit(out.events);
+                        out.forward
+                    }
+                };
+                if !text.is_empty() {
+                    guacd.lock().await.write_all(text.as_bytes()).await?;
                 }
-                guacd.write_all(text.as_bytes()).await?;
             }
             Message::Binary(_) => {
                 continue;

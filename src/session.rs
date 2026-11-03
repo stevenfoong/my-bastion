@@ -218,6 +218,10 @@ pub struct CreateSessionRequest {
     pub wol_udp_port: Option<u16>,
     /// Wake-on-LAN: wait time in seconds after sending the packet.
     pub wol_wait_time: Option<u32>,
+    /// Clipboard and file transfer as policies decide them. Set by the API
+    /// after the policy check, never from the body.
+    #[serde(skip)]
+    pub policy: crate::policy::SessionControls,
 }
 
 impl CreateSessionRequest {
@@ -301,6 +305,12 @@ impl CreateSessionRequest {
             obj.insert(
                 "fence_all_targets".into(),
                 serde_json::Value::Bool(self.fence_all_targets),
+            );
+            // Likewise: a session started under other clipboard or file
+            // transfer controls is not this one.
+            obj.insert(
+                "policy".into(),
+                serde_json::to_value(&self.policy).unwrap_or_default(),
             );
         }
         hex::encode(Sha256::digest(value.to_string().as_bytes()))
@@ -447,6 +457,8 @@ pub struct Session {
     pub deferred_params: Option<guacd::ConnectionParams>,
     /// Per-session drive directory path (RDP sessions with drive enabled).
     pub drive_path: Option<std::path::PathBuf>,
+    /// Clipboard and file transfer controls, for the WebSocket bridge.
+    pub policy: crate::policy::SessionControls,
     /// SSH tunnel chain (jump hosts) — kept alive for the session duration.
     pub tunnels: Vec<tunnel::SshTunnel>,
     /// Docker container ID for VDI sessions.
@@ -973,11 +985,24 @@ impl SessionManager {
     /// Create a new session: connect to guacd, perform handshake, return session info.
     pub async fn create_session(
         &self,
-        req: CreateSessionRequest,
+        mut req: CreateSessionRequest,
         created_by: String,
     ) -> Result<SessionInfo, SessionError> {
         // Taken before any field of the request is moved out below.
         let reuse_fingerprint = req.reuse_fingerprint();
+
+        // A policy that denies the clipboard or file transfer switches
+        // guacd's own options off; the bridge filters as well.
+        let policy = std::mem::take(&mut req.policy);
+        use crate::policy::Transfer;
+        if policy.copy == Transfer::Deny {
+            req.disable_copy = Some(true);
+        }
+        if policy.paste == Transfer::Deny {
+            req.disable_paste = Some(true);
+        }
+        let policy_upload = policy.upload != Transfer::Deny;
+        let policy_download = policy.download != Transfer::Deny;
 
         // Inherited session types stay off unless their config section turns
         // them on. VDI checks its own `[vdi] enabled` further down.
@@ -1216,8 +1241,8 @@ impl SessionManager {
                     // auto-scales the canvas to fit regardless.
                     dpi: 96,
                     enable_sftp: drive_enabled,
-                    sftp_disable_download: !drive_cfg.allow_download,
-                    sftp_disable_upload: !drive_cfg.allow_upload,
+                    sftp_disable_download: !(drive_cfg.allow_download && policy_download),
+                    sftp_disable_upload: !(drive_cfg.allow_upload && policy_upload),
                     disable_copy: req.disable_copy.unwrap_or(false),
                     disable_paste: req.disable_paste.unwrap_or(false),
                     typescript_path: typescript.as_ref().map(|(p, _, _)| p.clone()),
@@ -1312,8 +1337,8 @@ impl SessionManager {
                         .as_ref()
                         .map(|p| p.to_string_lossy().to_string()),
                     drive_name: drive_cfg.drive_name.clone(),
-                    disable_download: !drive_cfg.allow_download,
-                    disable_upload: !drive_cfg.allow_upload,
+                    disable_download: !(drive_cfg.allow_download && policy_download),
+                    disable_upload: !(drive_cfg.allow_upload && policy_upload),
                     auth_pkg: resolve_rdp_auth_pkg(req.auth_pkg.as_deref(), &self.config),
                     kdc_url: req.kdc_url.clone(),
                     kerberos_cache: req.kerberos_cache.clone(),
@@ -2146,6 +2171,7 @@ impl SessionManager {
             browser_session,
             deferred_params,
             drive_path: session_drive_path,
+            policy,
             tunnels: ssh_tunnels,
             container_id,
             container_name,
@@ -2651,6 +2677,15 @@ impl SessionManager {
     }
 
     /// Check if recording is enabled for a given session.
+    /// The clipboard and file transfer controls a session started with.
+    pub async fn session_controls(&self, id: Uuid) -> crate::policy::SessionControls {
+        let sessions = self.sessions.read().await;
+        match sessions.get(&id) {
+            Some(session) => session.lock().await.policy.clone(),
+            None => Default::default(),
+        }
+    }
+
     pub async fn is_recording_enabled(&self, id: Uuid) -> bool {
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(&id) {
@@ -3498,6 +3533,7 @@ mod tests {
             browser_session: None,
             deferred_params: None,
             drive_path: None,
+            policy: Default::default(),
             tunnels: Vec::new(),
             container_id: None,
             container_name: None,

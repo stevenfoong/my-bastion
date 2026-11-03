@@ -4,6 +4,7 @@
 //!   `GET /api/admin/policy-audit`: admin only.
 //! - `GET /api/approvals`: requests the caller can decide, and their own.
 //! - `GET /api/approvals/{id}`, `POST /api/approvals/{id}/{reason,approve,deny,cancel}`.
+//! - `POST /api/break-glass`: an admin's own override, with a reason.
 //!
 //! Connect routes call `connect_gate` before creating a session.
 
@@ -19,8 +20,9 @@ use serde_json::json;
 
 use super::store::{self, ApprovalRequest, AuditEvent};
 use super::{
-    decide_request, gate, may_decide, Action, DecideError, Gate, Requester, Resource, Rule, Via,
-    FRESH_SIGNIN_SECS,
+    break_glass, decide_request, gate, may_decide, session_controls, Action, DecideError, Gate,
+    Requester, Resource, Rule, SessionControls, Via, BREAK_GLASS_MINUTES, FRESH_SIGNIN_SECS,
+    MIN_BREAK_GLASS_REASON,
 };
 use crate::auth::AuthIdentity;
 use crate::db::Db;
@@ -64,41 +66,40 @@ fn admin(identity: Option<Extension<AuthIdentity>>) -> Result<AuthIdentity, Resp
     }
 }
 
-/// What a connect route returns instead of a session, or `None` to go
-/// ahead: 403 when a policy denies it, 202 with the approval request when it
-/// waits for one. A failed check refuses rather than letting it through.
+/// The policy check of a connect route. Going ahead, it answers the
+/// session's clipboard and file transfer controls; otherwise the response
+/// to give instead: 403 when a policy denies it, 202 with the approval
+/// request when it waits for one. A failed check refuses rather than
+/// letting it through.
 pub async fn connect_gate(
     db: &Db,
     id: &AuthIdentity,
     res: Resource,
     ip: String,
-) -> Option<Response> {
-    match gate(db, id, Action::Connect, res, None, ip).await {
-        Ok(Gate::Allowed) => None,
-        Ok(Gate::Denied { policy }) => Some(
-            (
-                StatusCode::FORBIDDEN,
-                Json(json!({
-                    "error": format!("denied by policy '{}'", policy),
-                    "policy": policy,
-                })),
-            )
-                .into_response(),
-        ),
-        Ok(Gate::Pending(req)) => Some(
-            (
-                StatusCode::ACCEPTED,
-                Json(json!({ "approval_required": true, "approval": req })),
-            )
-                .into_response(),
-        ),
-        Err(e) => {
-            tracing::error!(error = %e, "Policy check failed; refusing the connect");
-            Some(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "policy check failed; try again or ask an admin",
-            ))
-        }
+) -> Result<SessionControls, Response> {
+    let failed = |e: String| {
+        tracing::error!(error = %e, "Policy check failed; refusing the connect");
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "policy check failed; try again or ask an admin",
+        )
+    };
+    match gate(db, id, Action::Connect, res.clone(), None, ip).await {
+        Ok(Gate::Allowed) => session_controls(db, id, res).await.map_err(failed),
+        Ok(Gate::Denied { policy }) => Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": format!("denied by policy '{}'", policy),
+                "policy": policy,
+            })),
+        )
+            .into_response()),
+        Ok(Gate::Pending(req)) => Err((
+            StatusCode::ACCEPTED,
+            Json(json!({ "approval_required": true, "approval": req })),
+        )
+            .into_response()),
+        Err(e) => Err(failed(e)),
     }
 }
 
@@ -560,6 +561,103 @@ pub async fn cancel(
             StatusCode::NOT_FOUND,
             "no pending request of yours with that id",
         ),
+        Err(r) => r,
+    }
+}
+
+#[derive(Deserialize)]
+pub struct BreakGlassBody {
+    scope: String,
+    folder: String,
+    entry: String,
+    /// `connect` (the default) or `ssh_command` with `command`.
+    #[serde(default)]
+    action: Option<Action>,
+    #[serde(default)]
+    command: Option<String>,
+    reason: String,
+}
+
+/// POST /api/break-glass — an admin overrides policy for themself on one
+/// entry for `BREAK_GLASS_MINUTES`, with a reason, after a fresh sign-in.
+/// Always audited and sent to Telegram.
+pub async fn break_glass_route(
+    identity: Option<Extension<AuthIdentity>>,
+    headers: HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    trusted: Option<Extension<crate::auth::TrustedProxies>>,
+    Extension(db): Extension<Db>,
+    Json(body): Json<BreakGlassBody>,
+) -> Response {
+    let id = match admin(identity) {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let who = Requester::from_identity(&id);
+    if who.email.is_none() {
+        return error(
+            StatusCode::FORBIDDEN,
+            "break-glass is for people, not API keys",
+        );
+    }
+    let reason: String = body.reason.trim().chars().take(500).collect();
+    if reason.chars().count() < MIN_BREAK_GLASS_REASON {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "break-glass needs a reason of at least {} characters",
+                MIN_BREAK_GLASS_REASON
+            ),
+        );
+    }
+    let action = body.action.unwrap_or(Action::Connect);
+    let command = match (action, body.command) {
+        (Action::Connect, None) => None,
+        (Action::SshCommand, Some(c)) if !c.is_empty() => Some(c),
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "break-glass covers connect, or ssh_command with its command",
+            )
+        }
+    };
+    if body.folder.trim().is_empty() || body.entry.trim().is_empty() {
+        return error(StatusCode::BAD_REQUEST, "folder and entry are required");
+    }
+    let res = Resource::Entry {
+        scope: body.scope,
+        folder: body.folder,
+        entry: body.entry,
+    };
+    let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+    let ip = crate::auth::client_ip(&headers, addr.ip(), &proxies).to_string();
+    let display = id.display_name().to_string();
+    let session = crate::auth::cookie_value(&headers, "mybastion_session");
+    let result = with_db(&db, move |c| {
+        let now = store::now_secs();
+        let fresh = session
+            .and_then(|t| crate::db::auth_session_started(c, &t))
+            .is_some_and(|at| now - at <= FRESH_SIGNIN_SECS);
+        if !fresh {
+            return Ok(Err(()));
+        }
+        break_glass(c, &who, &display, action, &res, command, &reason, &ip, now).map(Ok)
+    })
+    .await;
+    match result {
+        Ok(Ok(grant)) => Json(json!({
+            "approval": grant,
+            "minutes": BREAK_GLASS_MINUTES,
+        }))
+        .into_response(),
+        Ok(Err(())) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "break-glass needs a fresh sign-in: sign out, sign in again and retry within 15 minutes",
+                "fresh_signin_required": true,
+            })),
+        )
+            .into_response(),
         Err(r) => r,
     }
 }
