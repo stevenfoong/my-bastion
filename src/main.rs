@@ -15,6 +15,7 @@ mod pve;
 mod recording;
 mod recording_mp4;
 mod session;
+mod ssh_exec;
 mod store;
 mod tunnel;
 mod vdi;
@@ -1475,6 +1476,10 @@ async fn run_server(config: Config, database: Db) {
         .route(
             "/api/addressbook/folders/{scope}/{folder}/entries/{entry}/connect",
             post(api::ab_connect_entry),
+        )
+        .route(
+            "/api/addressbook/folders/{scope}/{folder}/entries/{entry}/run",
+            post(api::ab_run_command),
         )
         .route("/api/ssh/probe-host-key", post(api::ssh_probe_host_key))
         .merge(session_create_route)

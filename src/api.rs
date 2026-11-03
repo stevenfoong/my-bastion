@@ -4030,6 +4030,206 @@ pub fn can_connect_adhoc(id: &AuthIdentity) -> bool {
     id.has_role("poweruser")
 }
 
+/// Fill in an entry's `$variable` references from the caller's own credential
+/// variables. 412 naming the missing ones; an API key resolves nothing, and a
+/// failed read leaves the references as they are (logged).
+// The Err variant is the handler response, as for `check_folder_access`.
+#[allow(clippy::result_large_err)]
+async fn resolve_entry_credentials(
+    vault: &ConnectionsState,
+    id: &AuthIdentity,
+    ab_entry: AddressBookEntry,
+) -> Result<AddressBookEntry, Response> {
+    if crate::connections::entry_credential_variables(&ab_entry).is_empty() {
+        return Ok(ab_entry);
+    }
+    let AuthIdentity::User { email, .. } = id else {
+        return Ok(ab_entry);
+    };
+    match vault.get_user_credentials(email).await {
+        Ok(user_creds) => crate::connections::resolve_credential_variables(&ab_entry, &user_creds)
+            .map_err(|missing| {
+                (
+                    StatusCode::PRECONDITION_FAILED,
+                    Json(json!({
+                        "error": "missing credential variables",
+                        "missing_variables": missing,
+                    })),
+                )
+                    .into_response()
+            }),
+        Err(e) => {
+            tracing::warn!("Failed to read user credentials: {}", e);
+            Ok(ab_entry)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RunCommandRequest {
+    pub command: String,
+    /// Seconds to wait for the command (default 60, at most 600).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+const RUN_MAX_COMMAND_LEN: usize = 4096;
+const RUN_MAX_OUTPUT: usize = 1024 * 1024;
+
+/// POST /api/addressbook/folders/:scope/:folder/entries/:entry/run — run one
+/// command on an SSH entry through the bastion (command mode). Operator+.
+///
+/// The command is checked against `ssh_command` policies before anything is
+/// read or dialled: 403 when denied, 202 with an approval request when it
+/// needs one (the approval covers that exact command). Every command that
+/// runs is in the policy audit log with its exit status; its output is not.
+#[allow(clippy::too_many_arguments)]
+pub async fn ab_run_command(
+    State(manager): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
+    identity: Option<Extension<AuthIdentity>>,
+    trusted: Option<Extension<TrustedProxies>>,
+    Extension(database): Extension<Db>,
+    Extension(vault): Extension<ConnectionsState>,
+    Path((scope, folder, entry)): Path<(String, String, String)>,
+    Json(req): Json<RunCommandRequest>,
+) -> impl IntoResponse {
+    let id = match identity {
+        Some(Extension(ref id)) if id.has_role("operator") => id.clone(),
+        _ => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "operator role required"})),
+            )
+                .into_response()
+        }
+    };
+    let command = req.command.trim().to_string();
+    if command.is_empty() || command.len() > RUN_MAX_COMMAND_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("command must be 1-{} characters", RUN_MAX_COMMAND_LEN)})),
+        )
+            .into_response();
+    }
+    if command.chars().any(|c| c.is_control() && c != '\t') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "command must be one line, without control characters"})),
+        )
+            .into_response();
+    }
+    let timeout = std::time::Duration::from_secs(req.timeout_secs.unwrap_or(60).clamp(1, 600));
+
+    if let Err(resp) = check_folder_access(&vault, &scope, &folder, &id).await {
+        return resp;
+    }
+
+    let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
+    let ip = client_ip(&headers, addr.ip(), &proxies).to_string();
+    let res = crate::policy::Resource::Entry {
+        scope: scope.clone(),
+        folder: folder.clone(),
+        entry: entry.clone(),
+    };
+    if let Some(resp) =
+        crate::policy::api::command_gate(&database, &id, res.clone(), &command, ip.clone()).await
+    {
+        return resp;
+    }
+
+    let ab_entry = match vault.get_entry(&scope, &folder, &entry).await {
+        Ok(e) => e,
+        Err(ConnectionError::NotFound) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "entry not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    if ab_entry.session_type != "ssh" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "commands can only run on SSH entries"})),
+        )
+            .into_response();
+    }
+    let ab_entry = lend_folder_defaults(vault.as_ref(), &scope, &folder, &entry, ab_entry).await;
+    let ab_entry = match resolve_entry_credentials(&vault, &id, ab_entry).await {
+        Ok(e) => e,
+        Err(resp) => return resp,
+    };
+
+    let Some(hostname) = ab_entry.hostname.clone().filter(|h| !h.is_empty()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "entry has no hostname"})),
+        )
+            .into_response();
+    };
+    let port = ab_entry.port.unwrap_or(22);
+    let hops = ab_entry.jump_hosts.clone().unwrap_or_default();
+    // As for an SSH session: without jump hosts the target must be in
+    // ssh_allowed_networks and is dialled at the checked address.
+    let host = if hops.is_empty() {
+        match crate::session::allowed_address(
+            &hostname,
+            port,
+            &manager.config().ssh_allowed_networks,
+        )
+        .await
+        {
+            Ok(ip) => crate::session::dial_host(ip),
+            Err(e) => {
+                return (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()})))
+                    .into_response()
+            }
+        }
+    } else {
+        hostname.clone()
+    };
+    let target = crate::ssh_exec::ExecTarget {
+        host,
+        port,
+        username: ab_entry.username.clone().unwrap_or_default(),
+        password: ab_entry.password.clone().filter(|p| !p.is_empty()),
+        private_key: ab_entry.private_key.clone().filter(|k| !k.is_empty()),
+    };
+    if target.username.is_empty() || (target.password.is_none() && target.private_key.is_none()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "entry has no stored SSH credentials to run a command with"})),
+        )
+            .into_response();
+    }
+
+    tracing::info!(
+        user = %id.display_name(),
+        client_ip = %ip,
+        target = %res.label(),
+        "Running command through the bastion"
+    );
+    let outcome = crate::ssh_exec::run(&target, &hops, &command, timeout, RUN_MAX_OUTPUT).await;
+    crate::policy::record_command(&database, &id, &res, &command, &outcome, ip).await;
+    match outcome {
+        Ok(out) => Json(json!(out)).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": format!("could not run the command: {}", e)})),
+        )
+            .into_response(),
+    }
+}
+
 /// POST /api/addressbook/folders/:scope/:folder/entries/:entry/connect — Create session from entry.
 #[allow(clippy::too_many_arguments)]
 pub async fn ab_connect_entry(
@@ -4097,38 +4297,9 @@ pub async fn ab_connect_entry(
     let ab_entry = lend_folder_defaults(vault.as_ref(), &scope, &folder, &entry, ab_entry).await;
 
     // Resolve credential variable references ($domain_user, $domain_password, etc.)
-    let ab_entry = if !crate::connections::entry_credential_variables(&ab_entry).is_empty() {
-        let user_email = match &id {
-            AuthIdentity::User { email, .. } => Some(email.clone()),
-            _ => None,
-        };
-        if let Some(email) = user_email {
-            match vault.get_user_credentials(&email).await {
-                Ok(user_creds) => {
-                    match crate::connections::resolve_credential_variables(&ab_entry, &user_creds) {
-                        Ok(resolved) => resolved,
-                        Err(missing) => {
-                            return (
-                                StatusCode::PRECONDITION_FAILED,
-                                Json(json!({
-                                    "error": "missing credential variables",
-                                    "missing_variables": missing,
-                                })),
-                            )
-                                .into_response()
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to read user credentials from Vault: {}", e);
-                    ab_entry // Fall through with unresolved variables
-                }
-            }
-        } else {
-            ab_entry // API key users — no variable resolution
-        }
-    } else {
-        ab_entry
+    let ab_entry = match resolve_entry_credentials(&vault, &id, ab_entry).await {
+        Ok(e) => e,
+        Err(resp) => return resp,
     };
 
     let ab_entry_key = format!("{}/{}/{}", scope, folder, entry);
@@ -6997,7 +7168,7 @@ async fn quick_connect_gate(
     ip: String,
 ) -> Option<Response> {
     use crate::policy::Gate;
-    match crate::policy::gate(database, id, crate::policy::Action::Connect, res, ip).await {
+    match crate::policy::gate(database, id, crate::policy::Action::Connect, res, None, ip).await {
         Ok(Gate::Allowed) => None,
         Ok(Gate::Denied { policy }) => Some(quick_connect_error(
             StatusCode::FORBIDDEN,

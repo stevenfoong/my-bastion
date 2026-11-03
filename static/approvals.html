@@ -37,7 +37,7 @@
         <h2>Waiting for your decision</h2>
         <table>
             <thead><tr>
-                <th>Requester</th><th>Connect to</th><th>Policy</th><th>Reason</th><th>Requested</th><th>Expires</th><th>Comment</th><th></th>
+                <th>Requester</th><th>Request</th><th>Policy</th><th>Reason</th><th>Requested</th><th>Expires</th><th>Comment</th><th></th>
             </tr></thead>
             <tbody id="decide-body"></tbody>
         </table>
@@ -48,7 +48,7 @@
         <h2>Your requests</h2>
         <table>
             <thead><tr>
-                <th>Connect to</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Comment</th><th>Requested</th><th>Access until</th>
+                <th>Request</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Comment</th><th>Requested</th><th>Access until</th>
             </tr></thead>
             <tbody id="mine-body"></tbody>
         </table>
@@ -59,7 +59,7 @@
         <h2>All recent requests</h2>
         <table>
             <thead><tr>
-                <th>Requester</th><th>Connect to</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Requested</th>
+                <th>Requester</th><th>Request</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Requested</th>
             </tr></thead>
             <tbody id="recent-body"></tbody>
         </table>
@@ -108,6 +108,10 @@
             td.textContent = text == null ? '' : String(text);
             return td;
         }
+        // What is being asked for: a connect, or one command on the target.
+        function what(r) {
+            return r.command ? 'Run on ' + r.target_label + ': ' + r.command : 'Connect to ' + r.target_label;
+        }
         function statusCell(s) {
             var td = cell(s);
             td.className = 'approval-status approval-' + s;
@@ -139,7 +143,7 @@
             list.forEach(function(r) {
                 var tr = document.createElement('tr');
                 tr.setAttribute('data-approval-id', r.id);
-                [r.requester_display, r.target_label, r.policy_name, r.reason || '—',
+                [r.requester_display, what(r), r.policy_name, r.reason || '—',
                  fmtTime(r.created_at), fmtTime(r.expires_at)].forEach(function(v) { tr.appendChild(cell(v)); });
                 var ctd = document.createElement('td');
                 var comment = document.createElement('input');
@@ -172,7 +176,7 @@
             document.getElementById('mine-empty').style.display = list.length ? 'none' : '';
             list.forEach(function(r) {
                 var tr = document.createElement('tr');
-                tr.appendChild(cell(r.target_label));
+                tr.appendChild(cell(what(r)));
                 tr.appendChild(cell(r.policy_name));
                 tr.appendChild(statusCell(r.status));
                 tr.appendChild(cell(r.decided_by || ''));
@@ -189,7 +193,7 @@
             list.forEach(function(r) {
                 var tr = document.createElement('tr');
                 tr.appendChild(cell(r.requester_display));
-                tr.appendChild(cell(r.target_label));
+                tr.appendChild(cell(what(r)));
                 tr.appendChild(cell(r.policy_name));
                 tr.appendChild(statusCell(r.status));
                 tr.appendChild(cell(r.decided_by || ''));

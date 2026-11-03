@@ -14,6 +14,13 @@
 //!
 //! An approved request grants the requester that action on that target for
 //! the rule's `grant_minutes`, so a dropped connection needs no new approval.
+//! For `ssh_command` a grant covers that exact command only.
+//!
+//! An `ssh_command` rule may list `commands`: regular expressions matched
+//! against the whole command line (unanchored, so `rm\s+-rf` matches anywhere
+//! in it). With none, the rule matches every command. Patterns are a guard on
+//! what reaches the target, not a sandbox: an allowlist (deny anything, allow
+//! known commands) is far stronger than a denylist.
 
 pub mod api;
 pub mod store;
@@ -28,18 +35,22 @@ use crate::auth::{role_level, AuthIdentity};
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Connect,
+    /// One command run through the bastion (`run_ssh`).
+    SshCommand,
 }
 
 impl Action {
     pub fn as_str(self) -> &'static str {
         match self {
             Action::Connect => "connect",
+            Action::SshCommand => "ssh_command",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "connect" => Some(Action::Connect),
+            "ssh_command" => Some(Action::SshCommand),
             _ => None,
         }
     }
@@ -208,7 +219,14 @@ pub struct Rule {
     pub timeout_minutes: u32,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// For `ssh_command`: regular expressions; the rule matches a command
+    /// that any of them matches. Empty: every command.
+    #[serde(default)]
+    pub commands: Vec<String>,
 }
+
+const MAX_COMMAND_PATTERNS: usize = 50;
+const MAX_PATTERN_LEN: usize = 500;
 
 fn default_grant_minutes() -> u32 {
     60
@@ -223,9 +241,29 @@ fn default_enabled() -> bool {
 }
 
 impl Rule {
-    fn specificity(&self) -> (u8, usize, u8, u8) {
+    fn specificity(&self) -> (u8, usize, u8, u8, u8) {
         let (t, depth) = self.target.rank();
-        (t, depth, self.subject.rank(), self.effect.strictness())
+        let commands = u8::from(!self.commands.is_empty());
+        (
+            t,
+            depth,
+            self.subject.rank(),
+            commands,
+            self.effect.strictness(),
+        )
+    }
+
+    /// Whether the rule's command patterns admit `command`. A rule without
+    /// patterns matches any command; a pattern that does not compile (only
+    /// possible for a rule written outside `validate`) matches nothing.
+    fn matches_command(&self, command: Option<&str>) -> bool {
+        if self.commands.is_empty() {
+            return true;
+        }
+        let Some(cmd) = command else { return false };
+        self.commands
+            .iter()
+            .any(|p| regex::Regex::new(p).is_ok_and(|re| re.is_match(cmd)))
     }
 
     /// Check the parts a caller can get wrong. Errors are for the admin UI.
@@ -277,6 +315,21 @@ impl Rule {
                 return Err("grant_minutes and timeout_minutes must be at least 1".into());
             }
         }
+        if !self.commands.is_empty() && self.action != Action::SshCommand {
+            return Err("command patterns only apply to ssh_command rules".into());
+        }
+        if self.commands.len() > MAX_COMMAND_PATTERNS {
+            return Err(format!("at most {} command patterns", MAX_COMMAND_PATTERNS));
+        }
+        for p in &self.commands {
+            if p.trim().is_empty() || p.len() > MAX_PATTERN_LEN {
+                return Err(format!(
+                    "command patterns must be 1-{} characters",
+                    MAX_PATTERN_LEN
+                ));
+            }
+            regex::Regex::new(p).map_err(|e| format!("bad command pattern '{}': {}", p, e))?;
+        }
         Ok(())
     }
 }
@@ -309,6 +362,19 @@ impl Resource {
                 entry,
             } => format!("entry:{}/{}/{}", scope, folder, entry),
             Resource::AdHoc { host } => format!("adhoc:{}", host),
+        }
+    }
+
+    /// The key with the command folded in, so a grant or a waiting request
+    /// for one command never covers another.
+    pub fn key_for(&self, command: Option<&str>) -> String {
+        match command {
+            None => self.key(),
+            Some(cmd) => {
+                use sha2::{Digest, Sha256};
+                let h = hex::encode(Sha256::digest(cmd.as_bytes()));
+                format!("{}#cmd:{}", self.key(), &h[..32])
+            }
         }
     }
 
@@ -389,11 +455,16 @@ pub fn evaluate<'a>(
     who: &Requester,
     action: Action,
     res: &Resource,
+    command: Option<&str>,
 ) -> Decision<'a> {
     let matching: Vec<&Rule> = rules
         .iter()
         .filter(|r| {
-            r.enabled && r.action == action && r.subject.matches(who) && r.target.matches(res)
+            r.enabled
+                && r.action == action
+                && r.subject.matches(who)
+                && r.target.matches(res)
+                && r.matches_command(command)
         })
         .collect();
     if let Some(rule) = matching
@@ -467,6 +538,7 @@ pub async fn gate(
     id: &AuthIdentity,
     action: Action,
     res: Resource,
+    command: Option<String>,
     ip: String,
 ) -> Result<Gate, String> {
     let db = db.clone();
@@ -481,7 +553,7 @@ pub async fn gate(
         let rid = who.id();
         let target = res.label();
         let audit = |e: store::AuditEvent| store::audit(&conn, &e, now).map_err(|e| e.to_string());
-        match evaluate(&rules, &who, action, &res) {
+        match evaluate(&rules, &who, action, &res, command.as_deref()) {
             Decision::Allow { rule, alert } => {
                 if let (true, Some(rule)) = (alert, rule) {
                     audit(decision_event(
@@ -499,7 +571,7 @@ pub async fn gate(
                 })
             }
             Decision::RequireApproval { rule } => {
-                let key = res.key();
+                let key = res.key_for(command.as_deref());
                 if let Some(grant) = store::active_grant(&conn, &rid, action, &key, now)
                     .map_err(|e| e.to_string())?
                 {
@@ -529,6 +601,7 @@ pub async fn gate(
                     action: action.as_str().into(),
                     resource: res.clone(),
                     target_label: target.clone(),
+                    command: command.clone(),
                     policy_id: rule.id,
                     policy_name: rule.name.clone(),
                     approvers: rule.approvers.clone(),
@@ -554,6 +627,63 @@ pub async fn gate(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Record a command run through the bastion in the policy audit log: who,
+/// where, the command and how it ended. Its output is never kept.
+pub async fn record_command(
+    db: &crate::db::Db,
+    id: &AuthIdentity,
+    res: &Resource,
+    command: &str,
+    outcome: &Result<crate::ssh_exec::ExecOutput, String>,
+    ip: String,
+) {
+    let (event, detail) = match outcome {
+        Ok(o) => (
+            "command_run",
+            serde_json::json!({
+                "command": command,
+                "exit_status": o.exit_status,
+                "signal": o.signal,
+                "timed_out": o.timed_out,
+                "duration_ms": o.duration_ms,
+            }),
+        ),
+        Err(e) => (
+            "command_failed",
+            serde_json::json!({ "command": command, "error": e }),
+        ),
+    };
+    let db = db.clone();
+    let actor = id.display_name().to_string();
+    let requester = Requester::from_identity(id).id();
+    let target = res.label();
+    let detail = detail.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = db
+            .lock()
+            .map_err(|_| "database lock poisoned".to_string())?;
+        store::audit(
+            &conn,
+            &store::AuditEvent {
+                event,
+                actor: &actor,
+                requester: &requester,
+                action: Action::SshCommand.as_str(),
+                target: &target,
+                detail: Some(&detail),
+                ip: Some(&ip),
+                ..Default::default()
+            },
+            store::now_secs(),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await;
+    if let Ok(Err(e)) | Err(e) = result.map_err(|e| e.to_string()) {
+        tracing::error!(error = %e, "Failed to audit a command run");
+    }
 }
 
 /// The audit row for a policy decision.
@@ -645,6 +775,7 @@ mod tests {
             grant_minutes: 60,
             timeout_minutes: 30,
             enabled: true,
+            commands: vec![],
         }
     }
 
@@ -676,7 +807,7 @@ mod tests {
     fn no_rule_allows() {
         let who = user("a@x", "operator", &[]);
         assert_eq!(
-            evaluate(&[], &who, Action::Connect, &entry_in("prod")),
+            evaluate(&[], &who, Action::Connect, &entry_in("prod"), None),
             Decision::Allow {
                 rule: None,
                 alert: false
@@ -696,7 +827,7 @@ mod tests {
         let staff = user("s@x", "operator", &["staff"]);
         for f in ["prod", "prod/web"] {
             assert_eq!(
-                effect_of(&evaluate(&rules, &c, Action::Connect, &entry_in(f))),
+                effect_of(&evaluate(&rules, &c, Action::Connect, &entry_in(f), None)),
                 "approval"
             );
         }
@@ -705,7 +836,8 @@ mod tests {
                 &rules,
                 &c,
                 Action::Connect,
-                &entry_in("production")
+                &entry_in("production"),
+                None
             )),
             "allow"
         );
@@ -714,7 +846,8 @@ mod tests {
                 &rules,
                 &staff,
                 Action::Connect,
-                &entry_in("prod")
+                &entry_in("prod"),
+                None
             )),
             "allow"
         );
@@ -724,7 +857,7 @@ mod tests {
             entry: "web01".into(),
         };
         assert_eq!(
-            effect_of(&evaluate(&rules, &c, Action::Connect, &other_scope)),
+            effect_of(&evaluate(&rules, &c, Action::Connect, &other_scope, None)),
             "allow"
         );
     }
@@ -749,6 +882,7 @@ mod tests {
             &user("c@x", "admin", &[]),
             Action::Connect,
             &entry_in("prod"),
+            None,
         );
         assert!(matches!(d, Decision::Deny { rule } if rule.id == 2));
     }
@@ -774,7 +908,13 @@ mod tests {
         let c = user("c@x", "operator", &[]);
         // Folder beats Any even though rule 1 names the user.
         assert_eq!(
-            effect_of(&evaluate(&rules, &c, Action::Connect, &entry_in("prod"))),
+            effect_of(&evaluate(
+                &rules,
+                &c,
+                Action::Connect,
+                &entry_in("prod"),
+                None
+            )),
             "allow"
         );
         // The deeper folder wins.
@@ -783,7 +923,8 @@ mod tests {
                 &rules,
                 &c,
                 Action::Connect,
-                &entry_in("prod/web")
+                &entry_in("prod/web"),
+                None
             )),
             "alert"
         );
@@ -794,13 +935,20 @@ mod tests {
                 &rules,
                 &g,
                 Action::Connect,
-                &entry_in("prod/web")
+                &entry_in("prod/web"),
+                None
             )),
             "approval"
         );
         // Elsewhere only rule 1 matches.
         assert_eq!(
-            effect_of(&evaluate(&rules, &c, Action::Connect, &entry_in("lab"))),
+            effect_of(&evaluate(
+                &rules,
+                &c,
+                Action::Connect,
+                &entry_in("lab"),
+                None
+            )),
             "approval"
         );
     }
@@ -818,7 +966,13 @@ mod tests {
         ];
         let who = user("x@x", "operator", &["a", "b"]);
         assert_eq!(
-            effect_of(&evaluate(&rules, &who, Action::Connect, &entry_in("prod"))),
+            effect_of(&evaluate(
+                &rules,
+                &who,
+                Action::Connect,
+                &entry_in("prod"),
+                None
+            )),
             "approval"
         );
     }
@@ -834,7 +988,7 @@ mod tests {
         };
         // Folder rules never match an ad-hoc connection; the Any rule is off.
         assert_eq!(
-            effect_of(&evaluate(&rules, &who, Action::Connect, &adhoc)),
+            effect_of(&evaluate(&rules, &who, Action::Connect, &adhoc, None)),
             "allow"
         );
     }
@@ -863,7 +1017,13 @@ mod tests {
             ),
         ];
         assert_eq!(
-            effect_of(&evaluate(&rules, &key, Action::Connect, &entry_in("x"))),
+            effect_of(&evaluate(
+                &rules,
+                &key,
+                Action::Connect,
+                &entry_in("x"),
+                None
+            )),
             "deny"
         );
         // A role rule is exact, and never matches an API key.
@@ -872,7 +1032,8 @@ mod tests {
                 &rules,
                 &user("o@x", "operator", &[]),
                 Action::Connect,
-                &entry_in("x")
+                &entry_in("x"),
+                None
             )),
             "approval"
         );
@@ -881,7 +1042,8 @@ mod tests {
                 &rules,
                 &user("p@x", "poweruser", &[]),
                 Action::Connect,
-                &entry_in("x")
+                &entry_in("x"),
+                None
             )),
             "allow"
         );
@@ -891,7 +1053,8 @@ mod tests {
                 &rules,
                 &user("pat@example.COM", "viewer", &[]),
                 Action::Connect,
-                &entry_in("x")
+                &entry_in("x"),
+                None
             )),
             "alert"
         );
@@ -921,6 +1084,86 @@ mod tests {
         assert!(may_decide(&approvers, &key, "c@x").is_err());
     }
 
+    fn cmd_rule(id: i64, patterns: &[&str], effect: Effect) -> Rule {
+        let mut r = rule(id, Subject::Any, folder("prod"), effect);
+        r.action = Action::SshCommand;
+        r.commands = patterns.iter().map(|p| p.to_string()).collect();
+        r
+    }
+
+    #[test]
+    fn command_rules_match_on_the_command_line() {
+        let rules = [
+            cmd_rule(1, &[], Effect::Allow),
+            cmd_rule(2, &[r"rm\s+-rf\s+/(\s|$)", r"^\s*shutdown\b"], Effect::Deny),
+            cmd_rule(3, &[r"^systemctl\s+restart\b"], Effect::RequireApproval),
+        ];
+        let who = user("o@x", "operator", &[]);
+        let run = |cmd: &str| {
+            effect_of(&evaluate(
+                &rules,
+                &who,
+                Action::SshCommand,
+                &entry_in("prod"),
+                Some(cmd),
+            ))
+        };
+        assert_eq!(run("uptime"), "allow");
+        assert_eq!(run("rm -rf /"), "deny");
+        assert_eq!(run("sudo rm  -rf / --no-preserve-root"), "deny");
+        assert_eq!(run("rm -rf /tmp/build"), "allow");
+        assert_eq!(run("shutdown -h now"), "deny");
+        assert_eq!(run("systemctl restart nginx"), "approval");
+        // Connect rules are separate from command rules.
+        assert_eq!(
+            effect_of(&evaluate(
+                &rules,
+                &who,
+                Action::Connect,
+                &entry_in("prod"),
+                None
+            )),
+            "allow"
+        );
+    }
+
+    #[test]
+    fn a_rule_with_patterns_beats_one_without() {
+        let rules = [
+            cmd_rule(1, &[], Effect::RequireApproval),
+            cmd_rule(2, &[r"^(uptime|df -h)$"], Effect::Allow),
+        ];
+        let who = user("o@x", "operator", &[]);
+        assert_eq!(
+            effect_of(&evaluate(
+                &rules,
+                &who,
+                Action::SshCommand,
+                &entry_in("prod"),
+                Some("uptime")
+            )),
+            "allow"
+        );
+        assert_eq!(
+            effect_of(&evaluate(
+                &rules,
+                &who,
+                Action::SshCommand,
+                &entry_in("prod"),
+                Some("reboot")
+            )),
+            "approval"
+        );
+    }
+
+    #[test]
+    fn grants_are_per_command() {
+        let res = entry_in("prod");
+        assert_eq!(res.key_for(None), res.key());
+        assert_ne!(res.key_for(Some("uptime")), res.key_for(Some("reboot")));
+        assert_eq!(res.key_for(Some("uptime")), res.key_for(Some("uptime")));
+    }
+
     #[test]
     fn validation_catches_unusable_rules() {
         let mut r = rule(1, Subject::Group("".into()), folder("prod"), Effect::Allow);
@@ -939,5 +1182,12 @@ mod tests {
         assert!(r.validate().is_err());
         r.approvers = vec![Approver::Group("ops".into())];
         assert!(r.validate().is_ok());
+        // Patterns only on command rules, and they must compile.
+        r.commands = vec!["^uptime$".into()];
+        assert!(r.validate().is_err());
+        r.action = Action::SshCommand;
+        assert!(r.validate().is_ok());
+        r.commands = vec!["(unclosed".into()];
+        assert!(r.validate().unwrap_err().contains("bad command pattern"));
     }
 }

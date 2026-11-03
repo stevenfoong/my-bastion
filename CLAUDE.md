@@ -16,9 +16,10 @@ a phase. Status:
   `src/connections/`, SQLite default, DR split dropped, migration CLI). Left
   from its done-when: connecting to a real RDP target from the UI on a
   fresh install with no Vault
-- Phase 2 (policy/approval engine): slice 2a done (rules, connect approvals,
-  approvals page, admin policies, audit). Next: 2b `run_ssh`, 2c Telegram,
-  2d clipboard/file transfer + break-glass, 2e interactive SSH logging
+- Phase 2 (policy/approval engine): 2a (rules, connect approvals, approvals
+  page, admin policies, audit) and 2b (`run_ssh` command mode, `ssh_command`
+  rules with regex patterns) done. Next: 2c Telegram, 2d clipboard/file
+  transfer + break-glass, 2e interactive SSH logging
 - Phases 3–4 (MCP, DB proxy): not started
 
 ## Architecture
@@ -54,6 +55,8 @@ a phase. Status:
   every connect route), `store.rs` (policies, approval_requests,
   policy_audit_log tables), `api.rs` (admin + approvals endpoints). Docs:
   `docs/policies.md`
+- `src/ssh_exec.rs` — run one command over SSH (through `tunnel::start_chain`
+  for jump hosts); the `/run` handler is `ab_run_command` in `api.rs`
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
 - `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
   wire format, WebSocket <-> guacd bridge with recording tee
@@ -136,6 +139,8 @@ image in `contrib/vdi-test-image/`).
   create/read across restarts, `secret put`, `rotate-kek`)
 - `tests/test_policy_approval.sh` — live: contractors→prod held for approval,
   self-approval refused, deny wins, expiry, audit
+- `tests/test_policy_run_ssh.sh` — live: commands through the bastion against
+  the machine's own sshd (temporary key): deny/approval patterns, jump host
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

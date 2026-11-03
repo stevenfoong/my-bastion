@@ -70,7 +70,7 @@ pub async fn connect_gate(
     res: Resource,
     ip: String,
 ) -> Option<Response> {
-    match gate(db, id, Action::Connect, res, ip).await {
+    match gate(db, id, Action::Connect, res, None, ip).await {
         Ok(Gate::Allowed) => None,
         Ok(Gate::Denied { policy }) => Some(
             (
@@ -91,6 +91,53 @@ pub async fn connect_gate(
         ),
         Err(e) => {
             tracing::error!(error = %e, "Policy check failed; refusing the connect");
+            Some(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "policy check failed; try again or ask an admin",
+            ))
+        }
+    }
+}
+
+/// `connect_gate` for a command run through the bastion: the policy check
+/// covers the exact command, and so does an approval.
+pub async fn command_gate(
+    db: &Db,
+    id: &AuthIdentity,
+    res: Resource,
+    command: &str,
+    ip: String,
+) -> Option<Response> {
+    match gate(
+        db,
+        id,
+        Action::SshCommand,
+        res,
+        Some(command.to_string()),
+        ip,
+    )
+    .await
+    {
+        Ok(Gate::Allowed) => None,
+        Ok(Gate::Denied { policy }) => Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": format!("command denied by policy '{}'", policy),
+                    "policy": policy,
+                })),
+            )
+                .into_response(),
+        ),
+        Ok(Gate::Pending(req)) => Some(
+            (
+                StatusCode::ACCEPTED,
+                Json(json!({ "approval_required": true, "approval": req })),
+            )
+                .into_response(),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "Policy check failed; refusing the command");
             Some(error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "policy check failed; try again or ask an admin",
