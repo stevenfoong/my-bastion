@@ -246,6 +246,9 @@ fn when(ts: i64) -> String {
 
 /// The message text (HTML) and buttons for `req` as it stands at `now`.
 fn render(req: &ApprovalRequest, now: i64) -> (String, Value) {
+    if req.break_glass {
+        return (render_break_glass(req), json!({ "inline_keyboard": [] }));
+    }
     let mut t = String::from("🔐 <b>Approval request</b>\n");
     t += &format!("<b>Who:</b> {}\n", esc(&req.requester_display));
     match &req.command {
@@ -312,6 +315,47 @@ fn render(req: &ApprovalRequest, now: i64) -> (String, Value) {
         json!([])
     };
     (t, json!({ "inline_keyboard": buttons }))
+}
+
+/// The alert for an admin's break-glass override.
+fn render_break_glass(req: &ApprovalRequest) -> String {
+    let what = match &req.command {
+        Some(cmd) => format!(
+            "run on {}: <code>{}</code>",
+            esc(&req.target_label),
+            esc(&cmd.chars().take(MAX_SHOWN_COMMAND).collect::<String>())
+        ),
+        None => format!("connect to {}", esc(&req.target_label)),
+    };
+    let mut t = format!(
+        "🚨 <b>Break-glass</b>\n<b>Who:</b> {}\n<b>Override:</b> {}\n<b>Reason:</b> {}\n",
+        esc(&req.requester_display),
+        what,
+        esc(&req.reason)
+    );
+    if let Some(ip) = &req.client_ip {
+        t += &format!("<b>From:</b> {}\n", esc(ip));
+    }
+    if let Some(until) = req.grant_until {
+        t += &format!("\nAccess until {}", when(until));
+    }
+    t
+}
+
+/// Linked admins other than `requester`: who hears of a break-glass.
+fn admin_chats(conn: &Connection, requester: &str) -> rusqlite::Result<Vec<i64>> {
+    let mut stmt = conn.prepare("SELECT email, telegram_user_id FROM telegram_links")?;
+    let links = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(links
+        .into_iter()
+        .filter(|(email, _)| {
+            requester_for(conn, email)
+                .is_some_and(|who| who.role == "admin" && who.id() != requester)
+        })
+        .map(|(_, chat)| chat)
+        .collect())
 }
 
 /// A button's data: approve or deny, and the request id.
@@ -532,7 +576,11 @@ async fn deliver_one(bot: &Bot, db: &Db, cfg: &TelegramConfig, id: &str) -> Resu
         let sent = messages_of(c, &rid).map_err(|e| e.to_string())?;
         let mut chats = cfg2.chat_ids.clone();
         if let (Some(r), true, true) = (&req, sent.is_empty(), cfg2.notify_approvers) {
-            chats.extend(approver_chats(c, r).map_err(|e| e.to_string())?);
+            if r.break_glass {
+                chats.extend(admin_chats(c, &r.requester).map_err(|e| e.to_string())?);
+            } else {
+                chats.extend(approver_chats(c, r).map_err(|e| e.to_string())?);
+            }
         }
         chats.dedup();
         Ok((req, sent, chats))
@@ -559,8 +607,9 @@ async fn deliver_one(bot: &Bot, db: &Db, cfg: &TelegramConfig, id: &str) -> Resu
         }
         return Ok(());
     }
-    // Only a request still waiting is worth a new message.
-    if req.status != "pending" {
+    // Only a request still waiting, or a break-glass alert, is worth a new
+    // message.
+    if req.status != "pending" && !req.break_glass {
         return Ok(());
     }
     let mut seen = std::collections::HashSet::new();
@@ -822,6 +871,7 @@ mod tests {
             client_ip: Some("192.0.2.1".into()),
             command: None,
             web_only: false,
+            break_glass: false,
         }
     }
 
@@ -996,6 +1046,27 @@ mod tests {
             .iter()
             .any(|r| r.event == "telegram_linked" && r.actor == "boss@x"));
         assert!(audit.iter().any(|r| r.event == "telegram_unlinked"));
+    }
+
+    #[test]
+    fn break_glass_alerts_have_no_buttons_and_reach_other_admins() {
+        let c = conn();
+        link(&c, "boss@x", 1);
+        link(&c, "op@x", 2);
+        let mut req = request("bg1", "boss@x", 1000);
+        req.break_glass = true;
+        req.status = "approved".into();
+        req.reason = "outage <db>".into();
+        req.grant_until = Some(4600);
+        let (text, buttons) = render(&req, 1001);
+        assert!(
+            text.contains("Break-glass") && text.contains("outage &lt;db&gt;"),
+            "{text}"
+        );
+        assert_eq!(buttons, json!({"inline_keyboard": []}));
+        // The admin who broke the glass is not told; operators never are.
+        assert!(admin_chats(&c, "boss@x").unwrap().is_empty());
+        assert_eq!(admin_chats(&c, "op@x").unwrap(), vec![1]);
     }
 
     #[test]

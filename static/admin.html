@@ -115,6 +115,7 @@
         Who may connect where. A deny on any matching rule wins; otherwise the most specific rule decides (entry, then deeper folder, then user over group over role). With no matching rule a connect is allowed.
         Approvers are a comma-separated list such as <code>role:admin, group:secops</code>.
         Web only (for require approval): Telegram just notifies, and approvers decide here after a fresh sign-in.
+        Clipboard and file transfer rules allow, alert or deny, per session, in one direction or both.
         SSH command rules check commands run through the bastion; their patterns are regular expressions, one per line, matched anywhere in the command (empty: every command).
     </div>
     <table id="policies-table">
@@ -147,6 +148,13 @@
         <select id="pol-action">
             <option value="connect">connect</option>
             <option value="ssh_command">SSH command</option>
+            <option value="clipboard">clipboard</option>
+            <option value="file_transfer">file transfer</option>
+        </select>
+        <select id="pol-direction" style="display:none" title="In: paste and upload to the target. Out: copy and download from it.">
+            <option value="">both ways</option>
+            <option value="in">in (paste / upload)</option>
+            <option value="out">out (copy / download)</option>
         </select>
         <textarea id="pol-commands" rows="1" placeholder="command patterns, one per line" style="width:14em;display:none" title="Regular expressions matched anywhere in the command, e.g. rm\s+-rf\s+/"></textarea>
         <select id="pol-effect">
@@ -266,6 +274,8 @@
                     var tr = document.createElement('tr');
                     var act = p.action === 'ssh_command'
                         ? 'SSH command' + ((p.commands || []).length ? ': ' + p.commands.join(' | ') : '')
+                        : p.action === 'clipboard' || p.action === 'file_transfer'
+                        ? p.action.replace(/_/g, ' ') + (p.direction ? ' (' + p.direction + ')' : '')
                         : 'connect';
                     [p.name, polWho(p.subject), polTarget(p.target), act, p.effect.replace(/_/g, ' '),
                      p.effect === 'require_approval' ? polApprovers(p.approvers) + (p.web_only ? ' (web only)' : '') : '',
@@ -300,6 +310,8 @@
         }
         document.getElementById('pol-action').addEventListener('change', function() {
             document.getElementById('pol-commands').style.display = this.value === 'ssh_command' ? '' : 'none';
+            document.getElementById('pol-direction').style.display =
+                this.value === 'clipboard' || this.value === 'file_transfer' ? '' : 'none';
         });
         document.getElementById('pol-add-btn').addEventListener('click', function() {
             var sk = document.getElementById('pol-subject-kind').value;
@@ -317,6 +329,10 @@
                 subject: sk === 'any' ? { kind: 'any' } : { kind: sk, value: document.getElementById('pol-subject-value').value.trim() },
                 target: target,
                 action: document.getElementById('pol-action').value,
+                direction: (function(a) {
+                    return (a === 'clipboard' || a === 'file_transfer') && document.getElementById('pol-direction').value
+                        ? document.getElementById('pol-direction').value : null;
+                })(document.getElementById('pol-action').value),
                 commands: document.getElementById('pol-action').value === 'ssh_command'
                     ? document.getElementById('pol-commands').value.split('\n').map(function(l) { return l.trim(); }).filter(Boolean)
                     : [],

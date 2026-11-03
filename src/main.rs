@@ -1409,6 +1409,7 @@ async fn run_server(config: Config, database: Db) {
         .route("/api/approvals/{id}/approve", post(policy::api::approve))
         .route("/api/approvals/{id}/deny", post(policy::api::deny))
         .route("/api/approvals/{id}/cancel", post(policy::api::cancel))
+        .route("/api/break-glass", post(policy::api::break_glass_route))
         .route("/api/telegram", get(telegram::status))
         .route(
             "/api/telegram/link",

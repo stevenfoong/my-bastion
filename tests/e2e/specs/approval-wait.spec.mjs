@@ -100,3 +100,72 @@ test('withdrawing a waiting request cancels it on the server', async ({ page }) 
     await expect(page.locator('#approval-modal')).toHaveCount(0);
     await expect.poll(() => api.calls.some(c => c.path === `/api/approvals/${ID}/cancel`)).toBe(true);
 });
+
+// Phase 2d: break-glass. An admin may override a deny, or an approval
+// nobody has given yet, with a reason; others are not offered it.
+const SESSION = { status: 201, contentType: 'application/json', body: JSON.stringify({
+    session_id: '55555555-5555-4555-8555-555555555555',
+    client_url: '/client.html?session=5555', ws_url: '/ws/5555', session_type: 'rdp' }) };
+
+test('an admin breaks the glass on a denied connect, then connects', async ({ page }) => {
+    const state = { broken: false };
+    const api = await installApi(page, {
+        routes: {
+            [CONNECT]: () => state.broken ? SESSION : { status: 403, contentType: 'application/json',
+                body: JSON.stringify({ error: "denied by policy 'nobody in acme'", policy: 'nobody in acme' }) },
+            'POST /api/break-glass': () => {
+                state.broken = true;
+                return { approval: request({ status: 'approved', break_glass: true, grant_until: Math.floor(Date.now() / 1000) + 3600 }), minutes: 60 };
+            }
+        }
+    });
+    await connectDc01(page);
+    const modal = page.locator('#approval-modal');
+    await expect(modal).toContainText('Break glass');
+    await expect(modal).toContainText('nobody in acme');
+    await page.locator('#break-glass-reason').fill('short');
+    await page.locator('#break-glass-confirm').click();
+    await expect(page.locator('#break-glass-status')).toContainText('at least 10');
+    await page.locator('#break-glass-reason').fill('dc01 is down, approvers unreachable');
+    await page.locator('#break-glass-confirm').click();
+    await expect(page.locator('#break-glass-status')).toContainText('Override granted');
+    const body = api.calls.find(c => c.path === '/api/break-glass').body;
+    expect(body).toEqual({ scope: 'shared', folder: 'acme', entry: 'dc01', reason: 'dc01 is down, approvers unreachable' });
+    const popup = page.waitForEvent('popup');
+    await page.locator('#break-glass-connect').click();
+    await popup;
+    await expect.poll(() => api.calls.filter(c => `${c.method} ${c.path}` === CONNECT).length).toBe(2);
+});
+
+test('break-glass from the approval dialog, and the fresh sign-in message', async ({ page }) => {
+    await installApi(page, {
+        routes: {
+            [CONNECT]: { status: 202, contentType: 'application/json', body: JSON.stringify({
+                approval_required: true, approval: request() }) },
+            [`GET /api/approvals/${ID}`]: request(),
+            'POST /api/break-glass': { status: 403, contentType: 'application/json', body: JSON.stringify({
+                error: 'break-glass needs a fresh sign-in: sign out, sign in again and retry within 15 minutes',
+                fresh_signin_required: true }) }
+        }
+    });
+    await connectDc01(page);
+    await page.locator('#approval-break-glass').click();
+    await page.locator('#break-glass-reason').fill('the approver is on a plane');
+    await page.locator('#break-glass-confirm').click();
+    await expect(page.locator('#break-glass-status')).toContainText('fresh sign-in');
+    await expect(page.locator('#break-glass-connect')).toBeHidden();
+});
+
+test('operators are not offered break-glass', async ({ page }) => {
+    await installApi(page, {
+        role: 'operator',
+        routes: {
+            [CONNECT]: { status: 202, contentType: 'application/json', body: JSON.stringify({
+                approval_required: true, approval: request() }) },
+            [`GET /api/approvals/${ID}`]: request()
+        }
+    });
+    await connectDc01(page);
+    await expect(page.locator('#approval-modal')).toBeVisible();
+    await expect(page.locator('#approval-break-glass')).toHaveCount(0);
+});

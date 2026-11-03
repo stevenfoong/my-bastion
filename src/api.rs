@@ -87,10 +87,9 @@ pub async fn create_session(
         let res = crate::policy::Resource::AdHoc {
             host: target.clone(),
         };
-        if let Some(resp) =
-            crate::policy::api::connect_gate(&database, id, res, client_ip.to_string()).await
-        {
-            return resp;
+        match crate::policy::api::connect_gate(&database, id, res, client_ip.to_string()).await {
+            Ok(controls) => req.policy = controls,
+            Err(resp) => return resp,
         }
     }
 
@@ -3989,6 +3988,7 @@ pub fn session_request_from_entry(
         wol_broadcast_addr: entry.wol_broadcast_addr,
         wol_udp_port: entry.wol_udp_port,
         wol_wait_time: entry.wol_wait_time,
+        policy: Default::default(),
     })
 }
 
@@ -4271,9 +4271,10 @@ pub async fn ab_connect_entry(
         folder: folder.clone(),
         entry: entry.clone(),
     };
-    if let Some(resp) = crate::policy::api::connect_gate(&database, &id, res, gate_ip).await {
-        return resp;
-    }
+    let controls = match crate::policy::api::connect_gate(&database, &id, res, gate_ip).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
 
     // Read full entry (with credentials) from Vault
     let ab_entry = match vault.get_entry(&scope, &folder, &entry).await {
@@ -4303,12 +4304,13 @@ pub async fn ab_connect_entry(
     };
 
     let ab_entry_key = format!("{}/{}/{}", scope, folder, entry);
-    let create_req = match entry_connect_request(ab_entry, req, &ab_entry_key, &folder) {
+    let mut create_req = match entry_connect_request(ab_entry, req, &ab_entry_key, &folder) {
         Ok(r) => r,
         Err(msg) => {
             return (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
         }
     };
+    create_req.policy = controls;
 
     let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
     let client_ip_addr = client_ip(&headers, addr.ip(), &proxies);
@@ -4522,7 +4524,7 @@ pub async fn ab_adhoc_connect(
         Ok(e) => e,
         Err(e) => return e.into_response(),
     };
-    let create_req =
+    let mut create_req =
         match adhoc_session_request(entry, &req, id.has_role("admin"), manager.config()) {
             Ok(r) => r,
             Err(msg) => {
@@ -4537,10 +4539,9 @@ pub async fn ab_adhoc_connect(
     let res = crate::policy::Resource::AdHoc {
         host: target.clone(),
     };
-    if let Some(resp) =
-        crate::policy::api::connect_gate(&database, &id, res, client_ip_addr.to_string()).await
-    {
-        return resp;
+    match crate::policy::api::connect_gate(&database, &id, res, client_ip_addr.to_string()).await {
+        Ok(controls) => create_req.policy = controls,
+        Err(resp) => return resp,
     }
     tracing::info!(
         user = %user,
@@ -7161,29 +7162,44 @@ pub struct QuickConnectQuery {
 #[allow(clippy::too_many_arguments)]
 /// `quick_connect`'s policy check. A pending approval sends the browser to
 /// the connections page, which shows the request and waits for a decision.
+#[allow(clippy::result_large_err)]
 async fn quick_connect_gate(
     database: &Db,
     id: &AuthIdentity,
     res: crate::policy::Resource,
     ip: String,
-) -> Option<Response> {
+) -> Result<crate::policy::SessionControls, Response> {
     use crate::policy::Gate;
-    match crate::policy::gate(database, id, crate::policy::Action::Connect, res, None, ip).await {
-        Ok(Gate::Allowed) => None,
-        Ok(Gate::Denied { policy }) => Some(quick_connect_error(
+    let failed = |e: String| {
+        tracing::error!(error = %e, "Policy check failed; refusing the connect");
+        quick_connect_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Policy check failed. Try again or ask an admin.",
+        )
+    };
+    match crate::policy::gate(
+        database,
+        id,
+        crate::policy::Action::Connect,
+        res.clone(),
+        None,
+        ip,
+    )
+    .await
+    {
+        Ok(Gate::Allowed) => crate::policy::session_controls(database, id, res)
+            .await
+            .map_err(failed),
+        Ok(Gate::Denied { policy }) => Err(quick_connect_error(
             StatusCode::FORBIDDEN,
             &format!("Denied by policy '{}'.", policy),
         )),
-        Ok(Gate::Pending(req)) => Some(
-            Redirect::temporary(&format!("/connections.html#approval={}", req.id)).into_response(),
-        ),
-        Err(e) => {
-            tracing::error!(error = %e, "Policy check failed; refusing the connect");
-            Some(quick_connect_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Policy check failed. Try again or ask an admin.",
-            ))
-        }
+        Ok(Gate::Pending(req)) => Err(Redirect::temporary(&format!(
+            "/connections.html#approval={}",
+            req.id
+        ))
+        .into_response()),
+        Err(e) => Err(failed(e)),
     }
 }
 
@@ -7266,9 +7282,10 @@ pub async fn quick_connect(
             entry: entry.to_string(),
         };
         let gate_ip = client_ip.to_string();
-        if let Some(resp) = quick_connect_gate(&database, &id, res, gate_ip).await {
-            return resp;
-        }
+        let controls = match quick_connect_gate(&database, &id, res, gate_ip).await {
+            Ok(c) => c,
+            Err(resp) => return resp,
+        };
 
         let ab_entry = match vault.get_entry(scope, folder, entry).await {
             Ok(e) => e,
@@ -7356,10 +7373,12 @@ pub async fn quick_connect(
             );
         }
 
-        let create_req = match quick_connect_entry_request(ab_entry, &query, scope, folder, entry) {
-            Ok(r) => r,
-            Err(msg) => return quick_connect_error(StatusCode::BAD_REQUEST, &msg),
-        };
+        let mut create_req =
+            match quick_connect_entry_request(ab_entry, &query, scope, folder, entry) {
+                Ok(r) => r,
+                Err(msg) => return quick_connect_error(StatusCode::BAD_REQUEST, &msg),
+            };
+        create_req.policy = controls;
 
         tracing::info!(
             user = %admin_name,
@@ -7488,6 +7507,7 @@ pub async fn quick_connect(
         wol_broadcast_addr: None,
         wol_udp_port: None,
         wol_wait_time: None,
+        policy: Default::default(),
     };
     crate::session::apply_adhoc_policy(&mut create_req, id.has_role("admin"), manager.config());
 
@@ -7495,8 +7515,9 @@ pub async fn quick_connect(
         host: session_target(&create_req),
     };
     let gate_ip = client_ip.to_string();
-    if let Some(resp) = quick_connect_gate(&database, &id, res, gate_ip).await {
-        return resp;
+    match quick_connect_gate(&database, &id, res, gate_ip).await {
+        Ok(controls) => create_req.policy = controls,
+        Err(resp) => return resp,
     }
 
     match manager.create_session(create_req, admin_name).await {
@@ -7773,6 +7794,7 @@ mod tests {
             wol_broadcast_addr: ab_entry.wol_broadcast_addr,
             wol_udp_port: ab_entry.wol_udp_port,
             wol_wait_time: ab_entry.wol_wait_time,
+            policy: Default::default(),
         };
         create_req
     }
@@ -7869,6 +7891,7 @@ mod tests {
             wol_broadcast_addr: ab_entry.wol_broadcast_addr,
             wol_udp_port: ab_entry.wol_udp_port,
             wol_wait_time: ab_entry.wol_wait_time,
+            policy: Default::default(),
         };
         create_req
     }
