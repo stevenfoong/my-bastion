@@ -32,55 +32,90 @@ impl Instruction {
         out
     }
 
-    /// Parse a single instruction from a complete instruction string (including the trailing `;`).
+    /// Parse a single instruction from a complete instruction string. The
+    /// trailing `;` is optional.
     pub fn parse(data: &str) -> Result<Self, ParseError> {
-        let data = data.trim_end_matches(';');
-        if data.is_empty() {
+        if data.is_empty() || data == ";" {
             return Err(ParseError::Empty);
         }
+        let (inst, consumed) = parse_prefix(data, false)?;
+        if consumed != data.len() {
+            return Err(ParseError::UnexpectedChar);
+        }
+        Ok(inst)
+    }
+}
 
-        let mut elements = Vec::new();
-        let mut remaining = data;
+/// Parse the instruction at the start of `data`, returning it and the number
+/// of bytes it took. Element lengths count Unicode characters (code points),
+/// as guacd's `guac_parser_append` and guacamole-common-js do.
+///
+/// With `need_terminator`, running out of input before the `;` is
+/// `Truncated` (the streaming parser waits for more); without it, the end of
+/// input also ends the instruction.
+fn parse_prefix(data: &str, need_terminator: bool) -> Result<(Instruction, usize), ParseError> {
+    let bytes = data.as_bytes();
+    let mut elements = Vec::new();
+    let mut pos = 0usize;
 
-        loop {
-            // Parse length
-            let dot_pos = remaining.find('.').ok_or(ParseError::MalformedElement)?;
-            let len: usize = remaining[..dot_pos]
-                .parse()
-                .map_err(|_| ParseError::InvalidLength)?;
-            remaining = &remaining[dot_pos + 1..];
-
-            // Extract element value (length is in bytes per Guacamole spec)
-            if remaining.len() < len {
+    loop {
+        // Length: ASCII digits up to the '.'.
+        let len_start = pos;
+        while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        if pos == len_start {
+            if pos >= bytes.len() && need_terminator {
                 return Err(ParseError::Truncated);
             }
-            if !remaining.is_char_boundary(len) {
-                return Err(ParseError::Truncated);
-            }
-            elements.push(remaining[..len].to_string());
-            remaining = &remaining[len..];
+            return Err(ParseError::InvalidLength);
+        }
+        let len: usize = data[len_start..pos]
+            .parse()
+            .map_err(|_| ParseError::InvalidLength)?;
+        if pos >= bytes.len() {
+            return Err(if need_terminator {
+                ParseError::Truncated
+            } else {
+                ParseError::MalformedElement
+            });
+        }
+        if bytes[pos] != b'.' {
+            return Err(ParseError::MalformedElement);
+        }
+        pos += 1;
 
-            // Check for separator or end
-            if remaining.is_empty() {
+        // Value: `len` characters.
+        let rest = &data[pos..];
+        let value_len = match rest.char_indices().nth(len) {
+            Some((i, _)) => i,
+            None if rest.chars().count() == len => rest.len(),
+            None => return Err(ParseError::Truncated),
+        };
+        elements.push(rest[..value_len].to_string());
+        pos += value_len;
+
+        // Terminator.
+        match bytes.get(pos) {
+            Some(b',') => pos += 1,
+            Some(b';') => {
+                pos += 1;
                 break;
             }
-            if remaining.starts_with(',') {
-                remaining = &remaining[1..];
-            } else {
-                return Err(ParseError::UnexpectedChar);
-            }
+            None if !need_terminator => break,
+            None => return Err(ParseError::Truncated),
+            Some(_) => return Err(ParseError::UnexpectedChar),
         }
+    }
 
-        if elements.is_empty() {
-            return Err(ParseError::Empty);
-        }
-
-        let opcode = elements.remove(0);
-        Ok(Instruction {
+    let opcode = elements.remove(0);
+    Ok((
+        Instruction {
             opcode,
             args: elements,
-        })
-    }
+        },
+        pos,
+    ))
 }
 
 impl fmt::Display for Instruction {
@@ -90,10 +125,10 @@ impl fmt::Display for Instruction {
 }
 
 fn encode_element(s: &str) -> String {
-    // Length is the number of UTF-8 bytes (matching guacamole-common-js behavior
-    // for the server-side protocol; the JS side counts UTF-16 code units but
-    // guacd uses byte length).
-    format!("{}.{}", s.len(), s)
+    // Length is the number of Unicode characters (code points), not bytes:
+    // guacd's parser steps over `guac_utf8_charsize` bytes per counted
+    // character, and guacamole-common-js uses `codePointCount`.
+    format!("{}.{}", s.chars().count(), s)
 }
 
 #[derive(Debug)]
@@ -227,10 +262,25 @@ impl InstructionParser {
 
         let mut results = Vec::new();
 
-        while let Some(semi_pos) = self.buffer.find(';') {
-            let instruction_str = self.buffer[..semi_pos].to_string();
-            self.buffer = self.buffer[semi_pos + 1..].to_string();
-            results.push(Instruction::parse(&instruction_str));
+        // Frame by element lengths, so a `;` inside an element value is data.
+        loop {
+            match parse_prefix(&self.buffer, true) {
+                Ok((inst, consumed)) => {
+                    self.buffer.drain(..consumed);
+                    results.push(Ok(inst));
+                }
+                Err(ParseError::Truncated) => break,
+                Err(e) => {
+                    // Malformed: resynchronise after the next ';', if any yet.
+                    match self.buffer.find(';') {
+                        Some(semi) => {
+                            self.buffer.drain(..=semi);
+                            results.push(Err(e));
+                        }
+                        None => break,
+                    }
+                }
+            }
         }
 
         results
@@ -371,19 +421,78 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_split_multibyte_char() {
-        // '€' is three bytes (E2 82 AC). Claiming length 2 would split the
-        // char on a non-boundary — parser must reject rather than panic.
-        let bad = "2.€";
-        let err = Instruction::parse(bad).unwrap_err();
+    fn parse_rejects_byte_length_for_multibyte_char() {
+        // '€' is one character but three bytes (E2 82 AC). A byte-counted
+        // length of 3 asks for two characters that are not there.
+        let err = Instruction::parse("3.€").unwrap_err();
         assert!(matches!(err, ParseError::Truncated));
     }
 
     #[test]
-    fn parse_accepts_correct_multibyte_length() {
-        // Correct byte-length for '€' is 3.
-        let inst = Instruction::parse("3.€").unwrap();
+    fn parse_accepts_character_length() {
+        let inst = Instruction::parse("1.€").unwrap();
         assert_eq!(inst.opcode, "€");
+    }
+
+    // ── Non-ASCII elements ─────────────────────────────────────────────────
+    // Lengths count Unicode characters (code points), as guacd's parser
+    // (`guac_utf8_charsize`) and guacamole-common-js (`codePointCount`) do.
+
+    #[test]
+    fn encode_counts_characters_not_bytes() {
+        let inst = Instruction::new("résumé", vec!["🔑".into(), "p€ss".into()]);
+        assert_eq!(inst.encode(), "6.résumé,1.🔑,4.p€ss;");
+    }
+
+    #[test]
+    fn non_ascii_roundtrip_through_parse_and_boundary() {
+        let original = Instruction::new(
+            "connect",
+            vec![
+                "résumé.txt".into(),
+                "pässwörd;🔑".into(),
+                "".into(),
+                "日本語".into(),
+            ],
+        );
+        let encoded = original.encode();
+        assert_eq!(Instruction::parse(&encoded).unwrap(), original);
+        assert_eq!(
+            last_instruction_boundary(encoded.as_bytes()),
+            Some(encoded.len())
+        );
+
+        // Followed by a partial instruction, the boundary stays at the end of
+        // the first one.
+        let two = format!("{encoded}4.sync,3.12");
+        assert_eq!(
+            last_instruction_boundary(two.as_bytes()),
+            Some(encoded.len())
+        );
+    }
+
+    #[test]
+    fn streaming_parser_non_ascii_split_at_every_char() {
+        let a = Instruction::new("clipboard", vec!["0".into(), "a;é🙂".into()]);
+        let b = Instruction::new("nop", vec![]);
+        let full = format!("{}{}", a.encode(), b.encode());
+        let mut parser = InstructionParser::new();
+        let mut all = Vec::new();
+        for ch in full.chars() {
+            all.extend(parser.receive(ch.encode_utf8(&mut [0u8; 4])));
+        }
+        let all: Vec<_> = all.into_iter().map(Result::unwrap).collect();
+        assert_eq!(all, vec![a, b]);
+    }
+
+    #[test]
+    fn streaming_parser_keeps_semicolon_inside_element() {
+        let mut parser = InstructionParser::new();
+        let out = parser.receive("5.error,11.hello;world,3.519;3.nop;");
+        assert_eq!(out.len(), 2);
+        let err = out[0].as_ref().unwrap();
+        assert_eq!(err.args, vec!["hello;world", "519"]);
+        assert_eq!(out[1].as_ref().unwrap().opcode, "nop");
     }
 
     #[test]
