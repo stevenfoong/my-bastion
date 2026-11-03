@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # H.264 passthrough for RDP
 
-rustguac can forward an RDP server's H.264 stream straight to the browser's
+My Bastion can forward an RDP server's H.264 stream straight to the browser's
 WebCodecs decoder instead of having guacd decode it and re-encode the pixels as
 JPEG/WebP. With 1080p video playing, that takes guacd from roughly a full CPU
 core down to about 2% of one — measured on both xrdp and Windows 11.
@@ -50,7 +51,7 @@ HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services
 
 Counter-intuitively this is required **for hardware encoding**, not for image
 quality: setting it to 0 on the test host stopped NVENC entirely and fell back
-to software encoding. Windows then sends AVC444, which rustguac handles — both
+to software encoding. Windows then sends AVC444, which My Bastion handles — both
 views are forwarded to the browser and combined there into full 4:4:4 chroma,
 so leaving this on costs nothing in image quality and is what makes hardware
 encoding engage.
@@ -78,7 +79,7 @@ what is already configured.
 
 The **"Prioritize H.264/AVC 444 Graphics Mode for Remote Desktop Connections"**
 policy does not need to be Disabled. It was used during development to force
-AVC420, but rustguac handles AVC444 directly now, and on the test host Windows
+AVC420, but My Bastion handles AVC444 directly now, and on the test host Windows
 ignored the client's AVC420 request regardless — it confirmed RDPGFX capability
 version 10.7 with the `AVC_THINCLIENT` flag set and sent AVC444 anyway.
 
@@ -88,17 +89,17 @@ After connecting, on the Windows host: Task Manager → Performance → GPU →
 **Video Encode** should be non-zero during activity. If it reads 0%, hardware
 encoding is not engaged — check the WDDM policy first.
 
-On the rustguac host, with guacd running at trace level (`-L trace`, e.g. via
-`systemctl edit rustguac-guacd` to override `ExecStart`):
+On the My Bastion host, with guacd running at trace level (`-L trace`, e.g. via
+`systemctl edit mybastion-guacd` to override `ExecStart`):
 
 ```bash
 # Which codecs the server is sending. 11 = AVC420, 14/15 = AVC444(v2).
 # 8 = CLEARCODEC and 9 = CAPROGRESSIVE mean H.264 is not being used.
-journalctl -u rustguac-guacd --since '1 min ago' | grep "TRACE:" \
+journalctl -u mybastion-guacd --since '1 min ago' | grep "TRACE:" \
   | grep -oP 'codec=\K[0-9]+' | sort -n | uniq -c
 
 # The RDPGFX capability version the server confirmed
-journalctl -u rustguac-guacd --since '2 min ago' | grep "RDPGFX capability version"
+journalctl -u mybastion-guacd --since '2 min ago' | grep "RDPGFX capability version"
 
 # guacd CPU with the workload running
 ./contrib/measure-guacd-cpu.sh

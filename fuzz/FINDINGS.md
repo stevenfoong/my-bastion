@@ -1,6 +1,7 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Rust Protocol Parser Fuzzing Findings
 
-Fuzz targets for `src/protocol.rs` — rustguac's Guacamole wire-format
+Fuzz targets for `src/protocol.rs` — My Bastion's Guacamole wire-format
 parser and streaming instruction parser.
 
 ## Setup

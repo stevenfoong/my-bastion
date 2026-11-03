@@ -1,7 +1,8 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Screenshot environment
 
 Rebuilds the images in [`screenshots/`](../../screenshots/) from scratch: a
-fresh rustguac with the default title, logo and theme, loaded with fictional
+fresh My Bastion with the default title, logo and theme, loaded with fictional
 data, captured with a headless browser. Run it for each release so the
 screenshots keep matching what a new install shows.
 
@@ -12,16 +13,16 @@ published on the host.
 
 | Service | Image | Role |
 |---------|-------|------|
-| `rustguac` | `sol1/rustguac` | The server, with `config.toml` from this folder |
-| `rustguac-init` | `sol1/rustguac` | Adds the first admin (`alex@example.com`) with `rustguac add-user` |
-| `openbao`, `openbao-init` | `openbao/openbao` | OpenBao in dev mode, with the rustguac policy and AppRole |
+| `mybastion` | `ghcr.io/stevenfoong/mybastion` | The server, with `config.toml` from this folder |
+| `mybastion-init` | `ghcr.io/stevenfoong/mybastion` | Adds the first admin (`alex@example.com`) with `mybastion add-user` |
+| `openbao`, `openbao-init` | `openbao/openbao` | OpenBao in dev mode, with the My Bastion policy and AppRole |
 | `oidc` | `ghcr.io/navikt/mock-oauth2-server` | OIDC provider whose login form accepts any user and claims |
 | `ssh` | built from `targets/ssh` | SSH host for every demo host name, with idle placeholder services |
 | `web` | `nginx` | A static service status page at `status.example.internal` |
 | `capture` | built from `capture/` | Seeds the data, then takes the screenshots with Playwright |
 
 The capture service signs in as the admin, creates the users, folders,
-entries, credential variables and API tokens through the rustguac API, and
+entries, credential variables and API tokens through the My Bastion API, and
 signs each user in once through the mock provider so their groups and last
 login are set. It then runs a few real SSH and Web sessions, which produce
 the recordings and the session history, and leaves four sessions open for
@@ -53,7 +54,7 @@ Copy them over and check every image before committing:
 cp -R out/. ../../screenshots/
 ```
 
-The capture refuses to run against a rustguac that already has data, so
+The capture refuses to run against a My Bastion that already has data, so
 always start from a clean stack (`down -v`). Optionally compress the images
 with [oxipng](https://github.com/shssoichiro/oxipng) (`oxipng -o 4 --strip
 safe out/*.png out/light/*.png`).
@@ -64,7 +65,7 @@ Set these in the environment or in a `.env` file next to `compose.yaml`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `RUSTGUAC_IMAGE` | `sol1/rustguac:1.12.1` | The rustguac image to capture. Build this tree with `docker build -t rustguac:dev .` and set `RUSTGUAC_IMAGE=rustguac:dev` to capture unreleased changes |
+| `MYBASTION_IMAGE` | `ghcr.io/stevenfoong/mybastion:1.12.1` | The My Bastion image to capture. Build this tree with `docker build -t mybastion:dev .` and set `MYBASTION_IMAGE=mybastion:dev` to capture unreleased changes |
 | `THEMES` | `aurora,light` | Themes to shoot the page views in. The first goes to `out/`, the rest to `out/<theme>/` |
 | `OPENBAO_VERSION` | `2.7.1` | OpenBao image tag |
 | `MOCK_OAUTH2_SERVER_VERSION` | `2.1.10` | Mock OIDC provider image tag |
@@ -74,7 +75,7 @@ Set these in the environment or in a `.env` file next to `compose.yaml`.
 
 ## Notes
 
-- **Seccomp:** the `rustguac` service runs with
+- **Seccomp:** the `mybastion` service runs with
   `security_opt: seccomp=unconfined`, because Chromium's sandbox for Web
   sessions needs namespace syscalls that Docker's default profile blocks
   (#307). This is a throwaway local environment; do not copy the setting to
@@ -83,7 +84,7 @@ Set these in the environment or in a `.env` file next to `compose.yaml`.
   run made, all from the last few minutes, so the totals are small. Dates
   and times are those of the run.
 - **Names:** the admin's email is set in both `compose.yaml`
-  (`rustguac-init`) and `capture/seed.mjs`. Change both together.
+  (`mybastion-init`) and `capture/seed.mjs`. Change both together.
 - **Fonts:** the UI uses the generic `monospace` font. The capture image
   installs DejaVu Sans Mono, the usual Linux default, so the pages look as
   they do on a typical desktop.

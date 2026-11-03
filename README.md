@@ -1,3 +1,4 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # My Bastion
 
 **One gateway for every privileged access: people and AI agents, desktops, servers and databases. Every action is recorded, controlled and, when it matters, approved.**
@@ -38,15 +39,14 @@ Built on [sol1/rustguac](https://github.com/sol1/rustguac) and [Apache Guacamole
 
 ---
 
-# Upstream rustguac documentation
+# Inherited features
 
 The sections below are from upstream [sol1/rustguac](https://github.com/sol1/rustguac) and describe the features this fork inherits.
 
 
-[![CI](https://github.com/sol1/rustguac/actions/workflows/ci.yml/badge.svg)](https://github.com/sol1/rustguac/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/sol1/rustguac)](https://github.com/sol1/rustguac/releases/latest)
-[![License](https://img.shields.io/github/license/sol1/rustguac)](LICENSE)
-[![Docker](https://img.shields.io/docker/pulls/sol1/rustguac)](https://hub.docker.com/r/sol1/rustguac)
+[![CI](https://github.com/stevenfoong/my-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/stevenfoong/my-bastion/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/stevenfoong/my-bastion)](https://github.com/stevenfoong/my-bastion/releases/latest)
+[![License](https://img.shields.io/github/license/stevenfoong/my-bastion)](LICENSE)
 
 A lightweight Rust replacement for the Apache Guacamole Java webapp. Browser-based SSH, RDP, VNC, SPICE, Proxmox VE consoles, web browsing, and VDI desktop containers through [guacd](https://github.com/apache/guacamole-server).
 
@@ -59,7 +59,7 @@ Browser (HTML/JS)
     |
     | WebSocket over HTTPS
     v
-rustguac (Rust, axum)
+mybastion (Rust, axum)
     |
     | TLS (Guacamole protocol)
     v
@@ -94,7 +94,7 @@ guacd (C, from guacamole-server)
 - **4-tier role system**: admin, poweruser, operator, viewer with OIDC group mapping
 - **API key auth**: SHA-256 hashed keys with IP allowlists and expiry
 - **Vault-backed connections**: credentials in HashiCorp Vault or OpenBao KV v2, never reach the browser (see [Requirements](#requirements))
-- **TLS everywhere**: HTTPS for clients, TLS between rustguac and guacd
+- **TLS everywhere**: HTTPS for clients, TLS between My Bastion and guacd
 - **CIDR allowlists**: per-protocol network restrictions for session targets
 - **Per-entry clipboard control**: disable copy and/or paste for data loss prevention
 - **Rate limiting**: per-IP, per-endpoint via tower_governor
@@ -147,20 +147,20 @@ The client runs in any modern browser (Chrome, Firefox, Edge, Safari, Chromium, 
 
 ### Debian 13 (.deb)
 
-Pre-built packages for amd64 and arm64 are available from [Releases](https://github.com/sol1/rustguac/releases):
+Pre-built packages for amd64 and arm64 are available from [Releases](https://github.com/stevenfoong/my-bastion/releases):
 
 ```bash
-sudo apt install ./rustguac_*.deb
-/opt/rustguac/bin/rustguac --config /opt/rustguac/config.toml add-admin --name admin
-sudo systemctl enable --now rustguac
+sudo apt install ./mybastion_*.deb
+/opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml add-admin --name admin
+sudo systemctl enable --now mybastion
 ```
 
 ### Docker
 
 ```bash
-docker pull sol1/rustguac:latest
-docker run --rm --entrypoint cat sol1/rustguac:latest /opt/rustguac/seccomp-chromium.json > seccomp-chromium.json
-docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json sol1/rustguac:latest
+docker pull ghcr.io/stevenfoong/mybastion:latest
+docker run --rm --entrypoint cat ghcr.io/stevenfoong/mybastion:latest /opt/mybastion/seccomp-chromium.json > seccomp-chromium.json
+docker run -d -p 8089:8089 --security-opt seccomp=seccomp-chromium.json ghcr.io/stevenfoong/mybastion:latest
 ```
 
 The seccomp profile lets Chromium's sandbox start for web browser sessions; see [Web sessions: Running under Docker](docs/web-sessions.md#running-under-docker).
@@ -172,7 +172,7 @@ docker run -d -p 8089:8089 \
   --security-opt seccomp=seccomp-chromium.json \
   -v /var/run/docker.sock:/var/run/docker.sock \
   --group-add $(getent group docker | cut -d: -f3) \
-  sol1/rustguac:latest
+  ghcr.io/stevenfoong/mybastion:latest
 ```
 
 ### Other distributions
@@ -191,8 +191,8 @@ VDI requires Docker on the host:
 
 ```bash
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker rustguac
-sudo systemctl restart rustguac
+sudo usermod -aG docker mybastion
+sudo systemctl restart mybastion
 ```
 
 Add `[vdi]` to your config and create a VDI entry in the connections. See [VDI Desktop Containers](docs/vdi.md) for image requirements and configuration.
@@ -215,16 +215,12 @@ Add `[vdi]` to your config and create a VDI entry in the connections. See [VDI D
 - [Reports](docs/reports.md): session analytics, history, CSV export
 
 ### Integration & reference
-- [Integrations](docs/integrations.md): Vault, LUKS drives, SSH tunnels, Kerberos, HAProxy, Knocknoc
+- [Integrations](docs/integrations.md): Vault, LUKS drives, SSH tunnels, Kerberos, HAProxy
 - [NetBox](docs/netbox.md): connections sync via custom fields and webhooks
 - [Security](docs/security.md): TLS, rate limiting, headers, audit logging, hardening
 - [API Reference](docs/api.md): REST API endpoints, the session connection flow, and headless ws-ticket integration
 - [Migration from Apache Guacamole](docs/migration.md): MySQL/MariaDB to Vault
 
-## Commercial support
-
-Commercial support for rustguac is available from [Sol1](https://www.sol1.com.au).
-
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE): My Bastion is derived from [sol1/rustguac](https://github.com/sol1/rustguac) and includes [Apache Guacamole](https://guacamole.apache.org/).

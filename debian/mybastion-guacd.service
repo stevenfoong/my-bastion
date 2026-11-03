@@ -1,0 +1,14 @@
+[Unit]
+Description=Guacamole proxy daemon (guacd) for mybastion
+After=network.target
+
+[Service]
+Type=simple
+User=mybastion
+ExecStart=/opt/mybastion/sbin/guacd -b 127.0.0.1 -l 4822 -L info -f -C /etc/mybastion/tls/cert.pem -K /etc/mybastion/tls/key.pem
+Restart=on-failure
+RestartSec=5
+Environment=LD_LIBRARY_PATH=/opt/mybastion/lib
+
+[Install]
+WantedBy=multi-user.target

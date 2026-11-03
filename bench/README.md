@@ -1,6 +1,7 @@
-# rustguac Benchmarking
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
+# My Bastion Benchmarking
 
-Scale testing harness for rustguac. Answers the question: will it handle 100 simultaneous users with 1000+ address book entries?
+Scale testing harness for mybastion. Answers the question: will it handle 100 simultaneous users with 1000+ address book entries?
 
 ## Prerequisites
 
@@ -8,10 +9,10 @@ Scale testing harness for rustguac. Answers the question: will it handle 100 sim
 - k6: `sudo apt-get install k6` or https://grafana.com/docs/k6/latest/set-up/install-k6/
 - Python 3.10+: `pip install websockets httpx`
 
-**rustguac server** (sol1-remoteconsole or similar):
-- rustguac + guacd running
+**My Bastion server** (sol1-remoteconsole or similar):
+- My Bastion + guacd running
 - `rdp_allowed_networks` must include the xrdp target IP
-- Increase fd limit: add `LimitNOFILE=65535` to the `[Service]` section in the rustguac systemd unit
+- Increase fd limit: add `LimitNOFILE=65535` to the `[Service]` section in the My Bastion systemd unit
 - An admin API key for test automation
 
 **xrdp target VM**:
@@ -25,8 +26,8 @@ Scale testing harness for rustguac. Answers the question: will it handle 100 sim
 
 ```bash
 python3 bench/guac-client.py \
-    --url https://RUSTGUAC:8089 \
-    --api-key rgu_xxx \
+    --url https://MYBASTION:8089 \
+    --api-key mbt_xxx \
     --rdp-host XRDP_IP \
     --sessions 1 --duration 120
 ```
@@ -36,12 +37,12 @@ Run `collect-metrics.sh` on the server simultaneously.
 ### 2. Session ramp-up (10 → 25 → 50 → 75 → 100)
 
 ```bash
-# On the rustguac server:
+# On the mybastion server:
 bash bench/collect-metrics.sh 5 metrics-ramp.csv &
 
 # On the load generator:
-k6 run --env API_KEY=rgu_xxx \
-       --env BASE_URL=https://RUSTGUAC:8089 \
+k6 run --env API_KEY=mbt_xxx \
+       --env BASE_URL=https://MYBASTION:8089 \
        --env XRDP_HOST=XRDP_IP \
        bench/k6-session-ramp.js
 ```
@@ -49,8 +50,8 @@ k6 run --env API_KEY=rgu_xxx \
 Or use the Python client for deeper protocol simulation:
 ```bash
 python3 bench/guac-client.py \
-    --url https://RUSTGUAC:8089 \
-    --api-key rgu_xxx \
+    --url https://MYBASTION:8089 \
+    --api-key mbt_xxx \
     --rdp-host XRDP_IP \
     --sessions 50 --duration 300 --stagger 2
 ```
@@ -59,23 +60,23 @@ python3 bench/guac-client.py \
 
 ```bash
 # Populate
-bash bench/populate-vault.sh 100 10 http://VAULT:8200 rgu_xxx https://RUSTGUAC:8089
+bash bench/populate-vault.sh 100 10 http://VAULT:8200 mbt_xxx https://MYBASTION:8089
 # Measure
-k6 run --env API_KEY=rgu_xxx --env BASE_URL=https://RUSTGUAC:8089 bench/k6-addressbook.js
+k6 run --env API_KEY=mbt_xxx --env BASE_URL=https://MYBASTION:8089 bench/k6-addressbook.js
 # Cleanup
-bash bench/cleanup-vault.sh rgu_xxx https://RUSTGUAC:8089
+bash bench/cleanup-vault.sh mbt_xxx https://MYBASTION:8089
 
 # Repeat for 500, 1000
-bash bench/populate-vault.sh 500 20 http://VAULT:8200 rgu_xxx https://RUSTGUAC:8089
-k6 run --env API_KEY=rgu_xxx --env BASE_URL=https://RUSTGUAC:8089 bench/k6-addressbook.js
-bash bench/cleanup-vault.sh rgu_xxx https://RUSTGUAC:8089
+bash bench/populate-vault.sh 500 20 http://VAULT:8200 mbt_xxx https://MYBASTION:8089
+k6 run --env API_KEY=mbt_xxx --env BASE_URL=https://MYBASTION:8089 bench/k6-addressbook.js
+bash bench/cleanup-vault.sh mbt_xxx https://MYBASTION:8089
 ```
 
 ### 4. Session creation throughput
 
 ```bash
-k6 run --env API_KEY=rgu_xxx \
-       --env BASE_URL=https://RUSTGUAC:8089 \
+k6 run --env API_KEY=mbt_xxx \
+       --env BASE_URL=https://MYBASTION:8089 \
        --env XRDP_HOST=XRDP_IP \
        bench/k6-session-burst.js
 ```
@@ -88,10 +89,10 @@ Run scenarios 2 and 3 simultaneously from two terminals.
 
 `collect-metrics.sh` outputs CSV with columns:
 - `timestamp` — ISO 8601
-- `rg_rss_kb` — rustguac RSS memory (KB)
-- `rg_threads` — rustguac thread count
-- `rg_fds` — rustguac open file descriptors
-- `rg_cpu_pct` — rustguac CPU usage (%)
+- `rg_rss_kb` — My Bastion RSS memory (KB)
+- `rg_threads` — My Bastion thread count
+- `rg_fds` — My Bastion open file descriptors
+- `rg_cpu_pct` — My Bastion CPU usage (%)
 - `gd_rss_kb` — guacd total RSS (all processes, KB)
 - `gd_threads` — guacd total thread count
 - `gd_fds` — guacd open file descriptors
@@ -104,10 +105,10 @@ Run scenarios 2 and 3 simultaneously from two terminals.
 
 | Component | Memory | CPU (idle) | CPU (active) |
 |-----------|--------|-----------|-------------|
-| rustguac | ~0.5-2 MB | ~0% | <1% |
+| My Bastion | ~0.5-2 MB | ~0% | <1% |
 | guacd (FreeRDP) | ~30-50 MB | ~0% | 1-5% |
 
-At 100 sessions: expect ~3-5 GB for guacd, ~200 MB for rustguac. The server needs at least 8 GB RAM.
+At 100 sessions: expect ~3-5 GB for guacd, ~200 MB for mybastion. The server needs at least 8 GB RAM.
 
 ## Known bottlenecks
 

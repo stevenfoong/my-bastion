@@ -1,4 +1,5 @@
-# RPM spec for rustguac — lightweight Rust replacement for Apache Guacamole.
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# RPM spec for mybastion — lightweight Rust replacement for Apache Guacamole.
 #
 # This spec expects pre-built binaries (build-rpm.sh does compilation before
 # rpmbuild runs). The _builddir macro is pointed at the repo checkout so
@@ -7,14 +8,16 @@
 # Target: Rocky Linux 9 / RHEL 9 / AlmaLinux 9
 # Requires EPEL for: ffmpeg-libs, libtelnet, libwebsockets, chromium
 
-%global _prefix /opt/rustguac
+%global _prefix /opt/mybastion
+%global confdir /etc/mybastion
+%global statedir /var/lib/mybastion
 
-Name:           rustguac
+Name:           mybastion
 Version:        %{_version}
 Release:        1%{?dist}
 Summary:        Lightweight Rust replacement for Apache Guacamole client
 License:        Apache-2.0
-URL:            https://github.com/sol1/rustguac
+URL:            https://github.com/stevenfoong/my-bastion
 
 BuildRequires:  systemd-rpm-macros
 
@@ -39,7 +42,7 @@ Recommends:     xorg-x11-utils
 Recommends:     cryptsetup
 
 %description
-rustguac is a lightweight Rust replacement for the Apache Guacamole Java
+mybastion is a lightweight Rust replacement for the Apache Guacamole Java
 webapp. It proxies the Guacamole protocol over WebSockets between web
 browsers and guacd (the C daemon from guacamole-server). Supports SSH,
 VNC, RDP, and web browser sessions (headless Chromium on Xvnc).
@@ -58,14 +61,13 @@ install -d %{buildroot}%{_prefix}/sbin
 install -d %{buildroot}%{_prefix}/lib
 install -d %{buildroot}%{_prefix}/static
 install -d %{buildroot}%{_prefix}/static/guac
-install -d %{buildroot}%{_prefix}/data
-install -d %{buildroot}%{_prefix}/recordings
-install -d %{buildroot}%{_prefix}/tls
+install -d %{buildroot}%{statedir}/recordings
+install -d %{buildroot}%{confdir}/tls
 install -d %{buildroot}%{_unitdir}
 install -d %{buildroot}%{_sysconfdir}/ld.so.conf.d
 
-# rustguac binary
-install -m 755 target/release/rustguac %{buildroot}%{_prefix}/bin/rustguac
+# mybastion binary
+install -m 755 target/release/mybastion %{buildroot}%{_prefix}/bin/mybastion
 
 # Drive setup helper script
 install -m 755 scripts/drive-setup.sh %{buildroot}%{_prefix}/bin/drive-setup.sh
@@ -82,66 +84,72 @@ cp -a rpm/staging%{_libdir}/freerdp3/*.so* %{buildroot}%{_libdir}/freerdp3/ 2>/d
 cp -r static/* %{buildroot}%{_prefix}/static/
 
 # Default config — reuse the debian default (no duplication)
-install -m 644 debian/config.toml.default %{buildroot}%{_prefix}/config.toml
+install -m 644 debian/mybastion.toml.default %{buildroot}%{confdir}/mybastion.toml
 
 # Systemd units — reuse the debian service files (no duplication)
-install -m 644 debian/rustguac.service %{buildroot}%{_unitdir}/rustguac.service
-install -m 644 debian/rustguac-guacd.service %{buildroot}%{_unitdir}/rustguac-guacd.service
+install -m 644 debian/mybastion.service %{buildroot}%{_unitdir}/mybastion.service
+install -m 644 debian/mybastion-guacd.service %{buildroot}%{_unitdir}/mybastion-guacd.service
 
 # ldconfig drop-in so guacd can find its libs
-echo "%{_prefix}/lib" > %{buildroot}%{_sysconfdir}/ld.so.conf.d/rustguac.conf
+echo "%{_prefix}/lib" > %{buildroot}%{_sysconfdir}/ld.so.conf.d/mybastion.conf
 
 %pre
-# Create rustguac system user with a real home directory (Chromium needs it)
-if ! getent passwd rustguac >/dev/null 2>&1; then
-    useradd -r -m -d /home/rustguac -s /sbin/nologin -c "rustguac service account" rustguac
+# Create mybastion system user with a real home directory (Chromium needs it)
+if ! getent passwd mybastion >/dev/null 2>&1; then
+    useradd -r -m -d /home/mybastion -s /sbin/nologin -c "mybastion service account" mybastion
 fi
 
 %post
-chown -R rustguac:rustguac %{_prefix}/data %{_prefix}/recordings
+chown -R mybastion:mybastion %{statedir}
+# Key-encryption key for the SQLite secret store (created once, never overwritten)
+if [ ! -f %{confdir}/kek ]; then
+    (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > %{confdir}/kek)
+    chown mybastion:mybastion %{confdir}/kek
+fi
 # Generate self-signed TLS certificate if none exists
-if [ ! -f %{_prefix}/tls/cert.pem ] || [ ! -f %{_prefix}/tls/key.pem ]; then
+if [ ! -f %{confdir}/tls/cert.pem ] || [ ! -f %{confdir}/tls/key.pem ]; then
     CERT_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
     echo "Generating self-signed TLS certificate for ${CERT_HOSTNAME}..."
-    %{_prefix}/bin/rustguac generate-cert \
+    %{_prefix}/bin/mybastion generate-cert \
         --hostname "$CERT_HOSTNAME" \
-        --out-dir %{_prefix}/tls
-    chmod 600 %{_prefix}/tls/key.pem
-    chmod 644 %{_prefix}/tls/cert.pem
+        --out-dir %{confdir}/tls
+    chmod 600 %{confdir}/tls/key.pem
+    chmod 644 %{confdir}/tls/cert.pem
 fi
-chown -R rustguac:rustguac %{_prefix}/tls
+chown -R mybastion:mybastion %{confdir}/tls
 /sbin/ldconfig
-%systemd_post rustguac.service rustguac-guacd.service
+%systemd_post mybastion.service mybastion-guacd.service
 echo ""
 echo "  To set up encrypted file transfer (LUKS drive), run:"
 echo "    sudo %{_prefix}/bin/drive-setup.sh"
 echo ""
 
 %preun
-%systemd_preun rustguac.service rustguac-guacd.service
+%systemd_preun mybastion.service mybastion-guacd.service
 
 %postun
 /sbin/ldconfig
 if [ $1 -eq 0 ]; then
     # Full uninstall — clean up
     rm -rf %{_prefix}
-    userdel -r rustguac 2>/dev/null || true
+    userdel -r mybastion 2>/dev/null || true
 fi
-%systemd_postun_with_restart rustguac.service rustguac-guacd.service
+%systemd_postun_with_restart mybastion.service mybastion-guacd.service
 
 %files
-%license debian/copyright
+%license debian/copyright LICENSE NOTICE
 %dir %{_prefix}
-%{_prefix}/bin/rustguac
+%{_prefix}/bin/mybastion
 %{_prefix}/bin/drive-setup.sh
 %{_prefix}/sbin/guacd
 %{_prefix}/lib/*.so*
 %{_libdir}/freerdp3/
 %{_prefix}/static/
-%config(noreplace) %{_prefix}/config.toml
-%dir %attr(0750,rustguac,rustguac) %{_prefix}/data
-%dir %attr(0750,rustguac,rustguac) %{_prefix}/recordings
-%dir %attr(0750,rustguac,rustguac) %{_prefix}/tls
-%{_unitdir}/rustguac.service
-%{_unitdir}/rustguac-guacd.service
-%{_sysconfdir}/ld.so.conf.d/rustguac.conf
+%dir %attr(0750,root,mybastion) %{confdir}
+%config(noreplace) %attr(0640,root,mybastion) %{confdir}/mybastion.toml
+%dir %attr(0750,mybastion,mybastion) %{confdir}/tls
+%dir %attr(0750,mybastion,mybastion) %{statedir}
+%dir %attr(0750,mybastion,mybastion) %{statedir}/recordings
+%{_unitdir}/mybastion.service
+%{_unitdir}/mybastion-guacd.service
+%{_sysconfdir}/ld.so.conf.d/mybastion.conf

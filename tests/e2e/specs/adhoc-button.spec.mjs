@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 // #295: "Connect to a host" is search.js's, beside the global search box on
 // every page that has one, with the box's own rules plus the server's
 // can_connect_adhoc: poweruser and above. On Connections it opens the ad-hoc
@@ -104,7 +105,7 @@ test('logging out leaves no button on the login page', async ({ page }) => {
 });
 
 test('an API key is confirmed through /api/me before the button shows', async ({ page }) => {
-    await page.addInitScript(() => { try { sessionStorage.setItem('rustguac_api_key', 'k'); } catch (e) {} });
+    await page.addInitScript(() => { try { sessionStorage.setItem('mybastion_api_key', 'k'); } catch (e) {} });
     const api = await installApi(page, { role: 'admin' });
     await page.goto('/recordings.html');
     await settle(page);

@@ -1,22 +1,22 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Reverse Proxy Configuration
 
-rustguac is designed to run behind a TLS-terminating reverse proxy. The
-primary supported path is **HAProxy + Knocknoc** (see
+My Bastion is designed to run behind a TLS-terminating reverse proxy. The
+primary supported path is **HAProxy** (see
 [`haproxy.example.cfg`](../haproxy.example.cfg) and
-[`integrations.md`](integrations.md)), which is what sol1 runs in
-production. This document covers other reverse proxies and a specific
+[`integrations.md`](integrations.md)). This document covers other reverse proxies and a specific
 gotcha that affects nested folder paths across several of them.
 
-**Give rustguac its own hostname** (e.g. `console.example.com`), at `/`,
+**Give My Bastion its own hostname** (e.g. `console.example.com`), at `/`,
 rather than a path beside other applications on a shared host. Browsers
 treat everything on the same scheme, host and port as one origin, and
-rustguac's protections against framing and other cross-site tricks rely
-on that origin being rustguac's alone. See
+My Bastion's protections against framing and other cross-site tricks rely
+on that origin being My Bastion's alone. See
 [Framing and clickjacking](security.md#framing-and-clickjacking).
 
 ## The `%2F` gotcha
 
-rustguac's connections tree uses URL path segments for folder names. When
+My Bastion's connections tree uses URL path segments for folder names. When
 a folder is nested (e.g. `Clients/Acme/Prod`), the client encodes the
 internal `/` as `%2F` so the whole path fits one segment:
 
@@ -24,17 +24,17 @@ internal `/` as `%2F` so the whole path fits one segment:
 GET /api/addressbook/folders/shared/Clients%2FAcme%2FProd/subfolders
 ```
 
-rustguac's router captures `Clients%2FAcme%2FProd` as a single `{folder}`
+My Bastion's router captures `Clients%2FAcme%2FProd` as a single `{folder}`
 parameter and percent-decodes it inside the handler. This works correctly
 when the reverse proxy passes the request URI through unchanged.
 
 Several reverse proxies **normalise the URI** before forwarding by
 default: they decode `%2F` to `/` in the path, which turns the single
-segment into three. rustguac's route definition doesn't match, and you get
+segment into three. My Bastion's route definition doesn't match, and you get
 a 404 on every subfolder click. The top-level folders work fine because
 they have no `%2F` in the URL.
 
-If you see HTTP 404 responses from rustguac specifically for nested
+If you see HTTP 404 responses from My Bastion specifically for nested
 subfolder operations (top-level folders work, subfolders don't), check
 your reverse proxy's URI handling first. The fix per proxy is below.
 
@@ -43,7 +43,7 @@ your reverse proxy's URI handling first. The fix per proxy is below.
 Default HAProxy forwards the request URI unchanged. The shipped
 `haproxy.example.cfg` doesn't rewrite paths, so it's unaffected by the
 `%2F` issue. See [`integrations.md`](integrations.md) for the full
-config including Knocknoc.
+config.
 
 ## nginx
 
@@ -77,14 +77,14 @@ server {
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection "upgrade";
 
-        # Long-lived WebSocket sessions; match rustguac's session_max_duration_secs.
+        # Long-lived WebSocket sessions; match mybastion's session_max_duration_secs.
         proxy_read_timeout  8h;
         proxy_send_timeout  8h;
     }
 }
 ```
 
-Trust nginx's IP in `config.toml`:
+Trust nginx's IP in `mybastion.toml`:
 
 ```toml
 trusted_proxies = ["127.0.0.1/32"]
@@ -99,7 +99,7 @@ so nested folders work out of the box.
 console.example.com {
     reverse_proxy https://localhost:8089 {
         transport http {
-            tls_insecure_skip_verify  # rustguac's self-signed loopback cert
+            tls_insecure_skip_verify  # mybastion's self-signed loopback cert
         }
         header_up X-Real-IP       {remote_host}
         header_up X-Forwarded-For {remote_host}
@@ -107,7 +107,7 @@ console.example.com {
 }
 ```
 
-rustguac `config.toml`:
+My Bastion `mybastion.toml`:
 
 ```toml
 trusted_proxies = ["127.0.0.1/32"]
@@ -132,7 +132,7 @@ WebSocket support is automatic in Caddy; no extra directives needed.
     ProxyPass        / https://localhost:8089/ nocanon
     ProxyPassReverse / https://localhost:8089/
 
-    # rustguac uses a self-signed cert on loopback.
+    # mybastion uses a self-signed cert on loopback.
     SSLProxyEngine on
     SSLProxyVerify none
     SSLProxyCheckPeerCN off
@@ -150,7 +150,7 @@ You may also need `AllowEncodedSlashes NoDecode` at the server or vhost
 level on some Apache versions to stop the core URI parser rejecting `%2F`
 before it reaches mod_proxy.
 
-rustguac `config.toml`:
+My Bastion `mybastion.toml`:
 
 ```toml
 trusted_proxies = ["127.0.0.1/32"]
@@ -165,15 +165,15 @@ without special configuration.
 # traefik dynamic config (file provider)
 http:
   routers:
-    rustguac:
+    mybastion:
       rule: "Host(`console.example.com`)"
       entryPoints: [websecure]
-      service: rustguac
+      service: mybastion
       tls:
         certResolver: letsencrypt
 
   services:
-    rustguac:
+    mybastion:
       loadBalancer:
         servers:
           - url: "https://localhost:8089"
@@ -184,7 +184,7 @@ http:
       insecureSkipVerify: true
 ```
 
-rustguac `config.toml`:
+My Bastion `mybastion.toml`:
 
 ```toml
 trusted_proxies = ["127.0.0.1/32"]
@@ -201,20 +201,20 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
     'https://console.example.com/api/addressbook/folders/shared/nonexistent%2Fsub/subfolders'
 ```
 
-A correctly configured proxy returns **200** (empty array from rustguac,
+A correctly configured proxy returns **200** (empty array from My Bastion,
 since the folder doesn't exist but the route matches). A broken proxy
 returns **404** from axum's router (because the URL got decoded to extra
 path segments along the way).
 
 ## Trusting the proxy's IP
 
-Whichever proxy you use, set `trusted_proxies` in `config.toml` to match
+Whichever proxy you use, set `trusted_proxies` in `mybastion.toml` to match
 the source IP your proxy connects from (usually `127.0.0.1/32` on
-same-host deployments). rustguac then honours `X-Forwarded-For` from that
+same-host deployments). My Bastion then honours `X-Forwarded-For` from that
 source, so client IPs appear correctly in audit logs, session history,
 IP allowlists and rate-limit decisions.
 
-rustguac reads `X-Forwarded-For` from the right: the client is the
+My Bastion reads `X-Forwarded-For` from the right: the client is the
 rightmost address that is not itself a trusted proxy, so entries a client
 forges on the left are ignored. List every proxy in the chain if requests
 pass through more than one.
@@ -228,7 +228,7 @@ from the proxy's own IP.
 
 ## Content-Security-Policy
 
-rustguac sends its own `Content-Security-Policy` on every response. Leave
+My Bastion sends its own `Content-Security-Policy` on every response. Leave
 it alone: the Guacamole client needs `img-src 'self' data: blob:` because
 browsers without WebCodecs `ImageDecoder` (Safari, Firefox) draw every
 image tile from a `data:` URI. If your proxy sets a CSP of its own, keep

@@ -1,14 +1,15 @@
-//! CLI behaviour for `rustguac map-group`.
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+//! CLI behaviour for `mybastion map-group`.
 //!
 //! These live here rather than in a `#[cfg(test)]` module inside `src/`
 //! because they invoke the built binary. Cargo only exports
-//! `CARGO_BIN_EXE_rustguac`, which `assert_cmd::cargo_bin` needs, to
+//! `CARGO_BIN_EXE_mybastion`, which `assert_cmd::cargo_bin` needs, to
 //! integration tests. As unit tests they appeared to pass locally only
-//! because a stale `target/debug/rustguac` happened to be present for
+//! because a stale `target/debug/mybastion` happened to be present for
 //! assert_cmd's fallback to find; on a clean checkout they failed.
 //!
 //! Database assertions go through rusqlite directly rather than the crate's
-//! own helpers, since rustguac is a binary crate with no lib target for an
+//! own helpers, since mybastion is a binary crate with no lib target for an
 //! integration test to import. That is arguably the better boundary anyway:
 //! it checks the state the CLI actually leaves behind.
 
@@ -23,10 +24,10 @@ struct ScratchDir(std::path::PathBuf);
 impl ScratchDir {
     fn new(name: &str) -> Self {
         let path =
-            std::env::temp_dir().join(format!("rustguac-cli-{}-{}", name, std::process::id()));
+            std::env::temp_dir().join(format!("mybastion-cli-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create scratch dir");
-        std::fs::write(path.join("config.toml"), "db_path = \"./rustguac.db\"\n")
+        std::fs::write(path.join("config.toml"), "db_path = \"./mybastion.db\"\n")
             .expect("write config");
         ScratchDir(path)
     }
@@ -36,7 +37,7 @@ impl ScratchDir {
     }
 
     fn conn(&self) -> Connection {
-        Connection::open(self.0.join("rustguac.db")).expect("open database")
+        Connection::open(self.0.join("mybastion.db")).expect("open database")
     }
 
     /// Every group mapping as (group, role), ordered by id.
@@ -54,7 +55,7 @@ impl ScratchDir {
     /// Runs the CLI against this scratch dir, returning the assertion so
     /// callers can require success or failure.
     fn run(&self, args: &[&str]) -> assert_cmd::assert::Assert {
-        let mut cmd = Command::cargo_bin("rustguac").unwrap();
+        let mut cmd = Command::cargo_bin("mybastion").unwrap();
         cmd.current_dir(self.path())
             .args(["--config", "config.toml"])
             .args(args)

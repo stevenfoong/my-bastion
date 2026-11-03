@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! SQLite database layer for admin/API key management.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
@@ -93,14 +94,14 @@ pub struct AddressbookAuditEntry {
 }
 
 /// If we're running as root and the db's parent directory is owned by a non-root
-/// user (the typical `/opt/rustguac/data` owned by `rustguac:rustguac` case),
+/// user (the typical `/var/lib/mybastion` owned by `mybastion:mybastion` case),
 /// chown the db file and any `-wal` / `-shm` sidecars to match the parent dir.
 ///
 /// Why: CLI commands like `add-admin` are often run under `sudo`, which would
 /// otherwise create a root-owned db that the systemd service (running as the
-/// unprivileged `rustguac` user) can't write to — surfacing later as
+/// unprivileged `mybastion` user) can't write to — surfacing later as
 /// "attempt to write a readonly database" on the first OIDC login.
-fn repair_db_ownership(path: &Path) {
+pub(crate) fn repair_db_ownership(path: &Path) {
     use std::os::unix::fs::MetadataExt;
 
     // Only act when running as root — otherwise chown(2) would fail anyway.
@@ -553,7 +554,7 @@ pub enum OidcLogin {
     NoAccount,
     /// The user with this email is bound to a different OIDC subject. Their
     /// identity provider account is not the one that logged in before, so
-    /// the login is refused; `rustguac reset-oidc-subject` releases the
+    /// the login is refused; `mybastion reset-oidc-subject` releases the
     /// binding after a provider migration.
     SubjectMismatch,
     /// More than one user has this email in a different case, so it is not
@@ -1025,7 +1026,7 @@ pub fn list_known_groups(db: &Db) -> rusqlite::Result<Vec<String>> {
 // ── User API tokens ──
 
 /// Create a user API token. Returns the plaintext token (shown once).
-/// The token is prefixed with `rgu_` to distinguish from admin keys.
+/// The token is prefixed with `mbt_` to distinguish from admin keys.
 pub fn create_user_token(
     db: &Db,
     user_id: i64,
@@ -1034,7 +1035,7 @@ pub fn create_user_token(
     expires_at: Option<&str>,
 ) -> rusqlite::Result<(i64, String)> {
     let raw_key = generate_key();
-    let token = format!("rgu_{}", raw_key);
+    let token = format!("mbt_{}", raw_key);
     let token_hash = hash_key(&token);
     let conn = db.lock().unwrap();
     conn.execute(

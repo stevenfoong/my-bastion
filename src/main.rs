@@ -1,26 +1,27 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 mod api;
 mod auth;
 mod browser;
 mod config;
+mod connections;
 mod db;
 mod drive;
 mod guacd;
 mod import;
-mod migrate;
 mod oidc;
 mod protocol;
 mod pve;
 mod recording;
 mod recording_mp4;
 mod session;
+mod store;
 mod tunnel;
-mod vault;
 mod vdi;
 mod websocket;
 
 use crate::api::{
-    AppState, CredentialDefaultScope, DriveConfigured, OidcEnabled, OidcHandle, SiteTitle,
-    ThemeData, VaultBackends, VaultCell, VaultConfigured, VaultState,
+    AppState, Connections, ConnectionsState, DriveConfigured, OidcEnabled, OidcHandle, SiteTitle,
+    StoreCell, StoreConfigured, ThemeData,
 };
 use crate::config::Config;
 use crate::db::Db;
@@ -39,7 +40,10 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "rustguac", about = "Lightweight Guacamole SSH proxy")]
+#[command(
+    name = "mybastion",
+    about = "My Bastion: one gateway for privileged access to desktops, servers and databases"
+)]
 struct Cli {
     /// Path to TOML config file
     #[arg(short, long)]
@@ -114,7 +118,7 @@ enum Command {
 
     /// Generate a self-signed TLS certificate for development/testing
     GenerateCert {
-        /// Hostname for the certificate (e.g. "rustguac.example.com")
+        /// Hostname for the certificate (e.g. "mybastion.example.com")
         #[arg(long)]
         hostname: String,
         /// Output directory for cert.pem and key.pem
@@ -194,38 +198,32 @@ enum Command {
         dry_run: bool,
         /// Rewrite substrings in the credential fields (username, password,
         /// domain, private_key) during import. Repeatable; format FROM=TO.
-        /// Maps Apache Guacamole passthrough tokens to rustguac credential
+        /// Maps Apache Guacamole passthrough tokens to mybastion credential
         /// variables, e.g. --map '${GUAC_USERNAME}=$corp_username'
         /// --map '${GUAC_PASSWORD}=$corp_password'
         #[arg(long = "map")]
         map: Vec<String>,
     },
 
-    /// Copy an address-book scope subtree between configured Vault backends
-    /// (for the multi-Vault DR split). Copies entries and every folder's
-    /// `.config`; run with --dry-run first.
-    VaultMigrate {
-        /// Scope to migrate: "shared" or "instance"
+    /// Secret store tools: `storage migrate` copies between Vault and SQLite.
+    Storage {
+        #[command(subcommand)]
+        command: store::cli::StorageCommand,
+    },
+
+    /// Re-wrap the SQLite data key under a new KEK. Rows are not
+    /// re-encrypted, and a running server keeps working. Afterwards set
+    /// `[storage] kek_source` to the new source.
+    RotateKek {
+        /// Where the new KEK is: file:<path>, env:<VAR> or systemd-creds:<name>
         #[arg(long)]
-        scope: String,
-        /// Source backend: "vault", "vault_shared", or "vault_local"
-        #[arg(long)]
-        from: String,
-        /// Destination backend: "vault", "vault_shared", or "vault_local"
-        #[arg(long)]
-        to: String,
-        /// Also copy ALL per-user credential secrets (users/*). This makes
-        /// those credentials shared; normally you toggle per-credential in the
-        /// My Credentials UI instead.
-        #[arg(long)]
-        users: bool,
-        /// Overwrite entries that already exist in the destination
-        /// (default: skip existing).
-        #[arg(long)]
-        overwrite: bool,
-        /// Preview without writing to the destination
-        #[arg(long)]
-        dry_run: bool,
+        new_kek_source: String,
+    },
+
+    /// Write secrets directly: `secret put` (e.g. the LUKS drive key).
+    Secret {
+        #[command(subcommand)]
+        command: store::cli::SecretCommand,
     },
 }
 
@@ -249,7 +247,7 @@ async fn main() {
         None | Some(Command::Serve) => {
             // Only the server talks to the IdP, so only the server insists on
             // an OIDC client secret. Checked here rather than in Config::load
-            // so `add-admin` & co. work from a shell where /opt/rustguac/env
+            // so `add-admin` & co. work from a shell where /etc/mybastion/env
             // (systemd's EnvironmentFile) has not been sourced.
             if let Err(msg) = config.validate_oidc_secret() {
                 eprintln!("[config] ERROR: {}", msg);
@@ -320,17 +318,11 @@ async fn main() {
             )
             .await;
         }
-        Some(Command::VaultMigrate {
-            scope,
-            from,
-            to,
-            users,
-            overwrite,
-            dry_run,
-        }) => {
-            migrate::cmd_vault_migrate(&config, &scope, &from, &to, users, overwrite, dry_run)
-                .await;
+        Some(Command::Storage { command }) => store::cli::run_storage(&config, command).await,
+        Some(Command::RotateKek { new_kek_source }) => {
+            store::cli::run_rotate_kek(&config, &new_kek_source)
         }
+        Some(Command::Secret { command }) => store::cli::run_secret(&config, command).await,
     }
 }
 
@@ -510,7 +502,7 @@ fn cmd_generate_cert(hostname: &str, out_dir: &str, extra_sans: &[String]) {
     println!("  Private key: {}", key_path.display());
     println!("  SANs:        {}", sans.join(", "));
     println!();
-    println!("Add to config.toml:");
+    println!("Add to mybastion.toml:");
     println!("  [tls]");
     println!("  cert_path = \"{}\"", cert_path.display());
     println!("  key_path = \"{}\"", key_path.display());
@@ -744,7 +736,7 @@ struct TlsEnabled(bool);
 /// (`cursor: url(data:...)`) and blob: image URLs need the same allowance.
 ///
 /// No page may be framed (`frame-ancestors 'none'`, `X-Frame-Options: DENY`):
-/// a framed rustguac page, above all a live session, would take the clicks
+/// a framed mybastion page, above all a live session, would take the clicks
 /// and keystrokes of whoever is fooled into using it. The one exception is
 /// `FRAMEABLE_CONTENT_SECURITY_POLICY` below.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; \
@@ -813,15 +805,15 @@ async fn security_headers(
 /// drive-init block once the awaited connect below has populated the cell).
 async fn connect_vault_backend(
     label: &'static str,
-    cell: VaultCell,
+    cell: StoreCell,
     config: crate::config::VaultConfig,
     secret_id: String,
     luks_drive: Option<crate::config::DriveConfig>,
 ) {
-    match vault::VaultClient::new(&config, &secret_id).await {
+    match connections::ConnectionStore::open_vault(&config, &secret_id).await {
         Ok(client) => {
             let client = Arc::new(client);
-            client.spawn_renewal_task();
+            client.spawn_maintenance();
             tracing::info!("Vault backend '{}' initialized: {}", label, config.addr);
             *cell.write().await = Some(client);
         }
@@ -843,10 +835,10 @@ async fn connect_vault_backend(
                         label,
                         config.addr
                     );
-                    match vault::VaultClient::new(&config, &secret_id).await {
+                    match connections::ConnectionStore::open_vault(&config, &secret_id).await {
                         Ok(client) => {
                             let client = Arc::new(client);
-                            client.spawn_renewal_task();
+                            client.spawn_maintenance();
                             tracing::info!(
                                 "Vault backend '{}' connected (retry succeeded): {}",
                                 label,
@@ -911,20 +903,28 @@ async fn run_server(config: Config, database: Db) {
         None
     };
 
-    // Initialize Vault backend(s) if configured.
-    //
-    // `[vault]` is the default/primary backend and the home of unscoped secrets
-    // (the LUKS key). Optional `[vault_shared]` / `[vault_local]` route the
-    // shared / instance address-book scopes to dedicated Vaults so one being
-    // down cannot take the others with it. Each backend gets its own connection
-    // cell, background retry, and token renewal. A bare `[vault]` behaves
-    // exactly as a single-Vault deployment: shared and local alias the default
-    // cell, so every scope resolves to the one connection.
-    let default_cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-    let mut shared_cell = default_cell.clone();
-    let mut local_cell = default_cell.clone();
+    // Open the secret store that holds connections, credential variables and
+    // the LUKS key: SQLite, or Vault (connected in the background, with
+    // retries, when it is down at startup).
+    let default_cell: StoreCell = Arc::new(tokio::sync::RwLock::new(None));
 
-    if let Some(ref vault_config) = config.vault {
+    // `[storage] backend = "sqlite"`: `[vault]` is not used at runtime.
+    let sqlite_storage = config.sqlite_storage();
+    if let Some(sc) = &sqlite_storage {
+        match store::sqlite_client(sc) {
+            Ok(client) => {
+                tracing::info!("Secret store: SQLite {}", sc.path.display());
+                *default_cell.write().await = Some(Arc::new(client));
+            }
+            Err(e) => {
+                tracing::error!("[storage]: {e}");
+                tracing::error!("Address book and drive features will be unavailable");
+            }
+        }
+    }
+    let use_vault = sqlite_storage.is_none();
+
+    if let Some(vault_config) = config.vault.as_ref().filter(|_| use_vault) {
         match vault_config.login_secret("VAULT_SECRET_ID") {
             Ok(sid) => {
                 connect_vault_backend(
@@ -940,28 +940,6 @@ async fn run_server(config: Config, database: Db) {
                 tracing::error!("[vault]: {e}");
                 tracing::error!("Address book and drive features will be unavailable");
             }
-        }
-    }
-
-    if let Some(ref vc) = config.vault_shared {
-        match vc.login_secret("VAULT_SHARED_SECRET_ID") {
-            Ok(sid) => {
-                let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-                connect_vault_backend("shared", cell.clone(), vc.clone(), sid, None).await;
-                shared_cell = cell;
-            }
-            Err(e) => tracing::error!("[vault_shared]: {e}; shared-scope connections unavailable"),
-        }
-    }
-
-    if let Some(ref vc) = config.vault_local {
-        match vc.login_secret("VAULT_LOCAL_SECRET_ID") {
-            Ok(sid) => {
-                let cell: VaultCell = Arc::new(tokio::sync::RwLock::new(None));
-                connect_vault_backend("local", cell.clone(), vc.clone(), sid, None).await;
-                local_cell = cell;
-            }
-            Err(e) => tracing::error!("[vault_local]: {e}; instance-scope connections unavailable"),
         }
     }
 
@@ -989,19 +967,11 @@ async fn run_server(config: Config, database: Db) {
         }
     }
 
-    // Assemble the shared VaultBackends state. `shared`/`local` alias the
-    // default cell unless a dedicated backend was configured above.
-    let vault_client: VaultState = Arc::new(VaultBackends {
-        default: default_cell,
-        shared: shared_cell,
-        local: local_cell,
-    });
+    let vault_client: ConnectionsState = Arc::new(Connections { cell: default_cell });
 
     let oidc_enabled = OidcEnabled(oidc_state.is_some());
-    let vault_configured = VaultConfigured(config.vault.is_some());
+    let vault_configured = StoreConfigured(config.secrets_configured());
     let ab_changes = api::AddressBookChanges::default();
-    let credential_default_scope =
-        CredentialDefaultScope(config.user_credentials_default_scope.clone());
     let drive_configured = DriveConfigured {
         configured: config.drive.is_some(),
         enabled: config.drive.as_ref().is_some_and(|d| d.enabled),
@@ -1038,7 +1008,7 @@ async fn run_server(config: Config, database: Db) {
         // One hash per distinct asset, not per reference: every page links
         // the same stylesheet and client.html alone carries 36 scripts.
         let mut hashes = std::collections::HashMap::new();
-        let version_assets_enabled = std::env::var_os("RUSTGUAC_NO_ASSET_VERSIONING").is_none();
+        let version_assets_enabled = std::env::var_os("MYBASTION_NO_ASSET_VERSIONING").is_none();
         let mut brand = |html: &str| {
             let html = rewrite_branding(html, title, logo);
             if version_assets_enabled {
@@ -1072,7 +1042,7 @@ async fn run_server(config: Config, database: Db) {
         if version_assets_enabled {
             tracing::info!("Content-hashed {} static asset URLs", versioned);
         } else {
-            tracing::info!("Asset versioning disabled (RUSTGUAC_NO_ASSET_VERSIONING)");
+            tracing::info!("Asset versioning disabled (MYBASTION_NO_ASSET_VERSIONING)");
         }
         Arc::new(pages)
     };
@@ -1498,7 +1468,6 @@ async fn run_server(config: Config, database: Db) {
         .layer(Extension(ws_ticket_store.clone()))
         .layer(Extension(vault_client.clone()))
         .layer(Extension(vault_configured.clone()))
-        .layer(Extension(credential_default_scope.clone()))
         .layer(Extension(database.clone()))
         .layer(Extension(ab_changes.clone()))
         .layer(Extension(mp4_converter.clone()));
@@ -1654,7 +1623,7 @@ async fn run_server(config: Config, database: Db) {
     } else {
         "http"
     };
-    tracing::info!("rustguac starting on {}://{}", scheme, listen_addr);
+    tracing::info!("mybastion starting on {}://{}", scheme, listen_addr);
     tracing::info!("Static files served from {:?}", static_path);
 
     // TCP keepalive on the listener. Linux inherits SO_KEEPALIVE and the
@@ -1920,7 +1889,7 @@ async fn asset_cache_control(
 /// The hash is taken at startup, in the same pass that brands the page, so
 /// the URL and the bytes it names are produced together and cannot disagree.
 /// The corollary is that **editing an asset now needs a restart to be seen**,
-/// where before a reload was enough; `RUSTGUAC_NO_ASSET_VERSIONING` turns
+/// where before a reload was enough; `MYBASTION_NO_ASSET_VERSIONING` turns
 /// this off for that reason.
 ///
 /// An asset that cannot be read is left alone: a missing file is a 404 either
@@ -2068,19 +2037,19 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-/// Rewrite branding in HTML: replace default "rustguac" site title and logo.
+/// Rewrite branding in HTML: replace default "mybastion" site title and logo.
 fn rewrite_branding(html: &str, site_title: &str, logo_url: Option<&str>) -> String {
     let mut out = html.to_string();
-    if site_title != "rustguac" {
+    if site_title != "My Bastion" {
         let safe_title = html_escape(site_title);
-        // <title>rustguac</title> and <title>rustguac - Sessions</title> etc.
+        // <title>My Bastion</title> and <title>My Bastion - Sessions</title> etc.
         out = out.replace(
-            "<title>rustguac</title>",
+            "<title>My Bastion</title>",
             &format!("<title>{}</title>", safe_title),
         );
-        out = out.replace("<title>rustguac - ", &format!("<title>{} - ", safe_title));
-        // <h1>rustguac</h1> (with or without inline style)
-        out = out.replace(">rustguac</h1>", &format!(">{}</h1>", safe_title));
+        out = out.replace("<title>My Bastion - ", &format!("<title>{} - ", safe_title));
+        // <h1>My Bastion</h1> (with or without inline style)
+        out = out.replace(">My Bastion</h1>", &format!(">{}</h1>", safe_title));
     }
     if let Some(url) = logo_url {
         let safe_url = html_escape(url);
@@ -2221,11 +2190,11 @@ mod tests {
         let static_path = std::path::Path::new("static");
         let mut hashes = std::collections::HashMap::new();
         let html = concat!(
-            "<link rel=\"stylesheet\" href=\"/rustguac.css\">",
+            "<link rel=\"stylesheet\" href=\"/mybastion.css\">",
             "<script src=\"/guac/Client.js\"></script>",
         );
         let out = version_assets(html, static_path, &mut hashes);
-        assert!(out.contains("/rustguac.css?v="), "{out}");
+        assert!(out.contains("/mybastion.css?v="), "{out}");
         assert!(out.contains("/guac/Client.js?v="), "{out}");
         // The rest of the markup survives untouched.
         assert!(out.starts_with("<link rel=\"stylesheet\""));
@@ -2294,7 +2263,7 @@ mod tests {
     fn test_asset_hash_is_content_derived_and_cached() {
         let static_path = std::path::Path::new("static");
         let mut hashes = std::collections::HashMap::new();
-        let css = asset_hash("/rustguac.css", static_path, &mut hashes).expect("css hashes");
+        let css = asset_hash("/mybastion.css", static_path, &mut hashes).expect("css hashes");
         let js = asset_hash("/guac/Client.js", static_path, &mut hashes).expect("js hashes");
         assert_ne!(css, js);
         assert_eq!(css.len(), 8);
@@ -2302,7 +2271,7 @@ mod tests {
         // One entry per distinct URL, hit or miss -- a miss is cached too, so
         // a page full of broken links does not re-stat the disk per reference.
         assert_eq!(
-            asset_hash("/rustguac.css", static_path, &mut hashes),
+            asset_hash("/mybastion.css", static_path, &mut hashes),
             Some(css)
         );
         assert!(asset_hash("/guac/NoSuchFile.js", static_path, &mut hashes).is_none());
@@ -2336,7 +2305,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_branding_title() {
-        let html = "<title>rustguac - Sessions</title>";
+        let html = "<title>My Bastion - Sessions</title>";
         assert_eq!(
             rewrite_branding(html, "MyGateway", None),
             "<title>MyGateway - Sessions</title>"
@@ -2345,7 +2314,7 @@ mod tests {
 
     #[test]
     fn test_rewrite_branding_h1() {
-        let html = r#"<h1 style="display:inline">rustguac</h1>"#;
+        let html = r#"<h1 style="display:inline">My Bastion</h1>"#;
         assert_eq!(
             rewrite_branding(html, "MyGateway", None),
             r#"<h1 style="display:inline">MyGateway</h1>"#
@@ -2356,15 +2325,15 @@ mod tests {
     fn test_rewrite_branding_logo() {
         let html = r#"<img id="site-logo" src="/logo.svg" style="max-height:40px">"#;
         assert_eq!(
-            rewrite_branding(html, "rustguac", Some("https://example.com/logo.png")),
+            rewrite_branding(html, "My Bastion", Some("https://example.com/logo.png")),
             r#"<img id="site-logo" src="https://example.com/logo.png" style="max-height:40px">"#
         );
     }
 
     #[test]
     fn test_rewrite_branding_noop() {
-        let html = "<title>rustguac</title><h1>rustguac</h1>";
-        assert_eq!(rewrite_branding(html, "rustguac", None), html);
+        let html = "<title>My Bastion</title><h1>My Bastion</h1>";
+        assert_eq!(rewrite_branding(html, "My Bastion", None), html);
     }
 
     // ── Rate-limit plumbing ─────────────────────────────────────────────

@@ -1,8 +1,9 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Roles and Access Control
 
 ## Role hierarchy
 
-rustguac implements a 4-tier role hierarchy:
+My Bastion implements a 4-tier role hierarchy:
 
 | Role | Level | Description |
 |------|-------|-------------|
@@ -15,7 +16,7 @@ Roles are hierarchical: each role includes all permissions of lower roles. For e
 
 ## Authentication paths
 
-rustguac supports three authentication methods, tried in order: admin API key, user API token, OIDC session cookie.
+My Bastion supports three authentication methods, tried in order: admin API key, user API token, OIDC session cookie.
 
 ### API key admins
 
@@ -23,10 +24,10 @@ API key holders always have full **admin** access (level 4). There is no way to 
 
 ```bash
 # Create an API key admin
-rustguac add-admin --name automation
+mybastion add-admin --name automation
 
 # With IP restrictions and expiry
-rustguac add-admin --name ci-bot \
+mybastion add-admin --name ci-bot \
   --allowed-ips "10.0.0.0/8,192.168.1.0/24" \
   --expires "2026-12-31T00:00:00Z"
 ```
@@ -34,12 +35,12 @@ rustguac add-admin --name ci-bot \
 `--if-none` creates the admin only when no admin account exists yet, and otherwise exits successfully without creating anything. It is meant for first-run provisioning, such as a container entrypoint, and works wherever `db_path` points:
 
 ```bash
-rustguac add-admin --name docker-admin --if-none
+mybastion add-admin --name docker-admin --if-none
 ```
 
 ### User API tokens
 
-User API tokens authenticate as the OIDC user who owns the token, with an effective role capped by the token's `max_role`. Tokens use the same `Authorization: Bearer <token>` header as admin API keys — rustguac tries admin keys first, then user tokens. See [User API tokens](#user-api-tokens) below for details.
+User API tokens authenticate as the OIDC user who owns the token, with an effective role capped by the token's `max_role`. Tokens use the same `Authorization: Bearer <token>` header as admin API keys — My Bastion tries admin keys first, then user tokens. See [User API tokens](#user-api-tokens) below for details.
 
 ### OIDC users
 
@@ -51,33 +52,33 @@ OIDC users are assigned a role through three mechanisms (in order of precedence)
 
 #### Only users you have added
 
-With `auto_create_users = false` in `[oidc]`, rustguac does not create accounts on login: a user must be added first with `rustguac add-user --email <email> --role <role>`, `POST /api/users`, or **Add User** on the Admin page. Anyone else who authenticates with the identity provider is sent back to the login page with "You do not have an account here". The role the admin chose is kept; `default_role` is not applied, but group-to-role mappings still are.
+With `auto_create_users = false` in `[oidc]`, My Bastion does not create accounts on login: a user must be added first with `mybastion add-user --email <email> --role <role>`, `POST /api/users`, or **Add User** on the Admin page. Anyone else who authenticates with the identity provider is sent back to the login page with "You do not have an account here". The role the admin chose is kept; `default_role` is not applied, but group-to-role mappings still are.
 
 ```bash
-rustguac add-user --email jsmith@example.com --role operator --name "J Smith"
+mybastion add-user --email jsmith@example.com --role operator --name "J Smith"
 ```
 
 Emails are matched ignoring case, so it does not matter whether the provider sends `JSmith@Example.com` or `jsmith@example.com`, and two users cannot differ only in case.
 
 #### How a login is matched to a user
 
-Users are found by email, but an email on its own is not proof of who someone is: some identity providers let people set or change their own address. So the first time a user logs in, rustguac records their provider account's **subject** (the OIDC `sub` claim, a permanent ID the provider never reuses), and from then on that user can only be signed in as by that same provider account. A login with the same email but a different subject is refused with "This sign-in does not match the account used here before", and logged as a warning. This applies whether or not `auto_create_users` is on.
+Users are found by email, but an email on its own is not proof of who someone is: some identity providers let people set or change their own address. So the first time a user logs in, My Bastion records their provider account's **subject** (the OIDC `sub` claim, a permanent ID the provider never reuses), and from then on that user can only be signed in as by that same provider account. A login with the same email but a different subject is refused with "This sign-in does not match the account used here before", and logged as a warning. This applies whether or not `auto_create_users` is on.
 
 A user an admin added who has not logged in yet has no subject, so their first login records it.
 
-rustguac also refuses a login when the provider explicitly marks the email as unverified (`email_verified: false`), with "Your identity provider says your email address is not verified" on the login page and a warning in the log. Providers that do not send the claim are trusted as before.
+My Bastion also refuses a login when the provider explicitly marks the email as unverified (`email_verified: false`), with "Your identity provider says your email address is not verified" on the login page and a warning in the log. Providers that do not send the claim are trusted as before.
 
-Some providers send `false` for everyone. authentik's default `email` mapping does, so every login is refused until the mapping is changed; the [Authentik setup guide](integrations.md#authentik-setup-guide) has a mapping that marks it verified. Where the provider can't be changed, `allow_unverified_email = true` under `[oidc]` accepts these logins. Only do that if users can't set their own email at the provider: a user an admin added who has never logged in has no subject yet, so whoever the provider gives that email first gets the account. rustguac logs a warning at startup while it is on.
+Some providers send `false` for everyone. authentik's default `email` mapping does, so every login is refused until the mapping is changed; the [Authentik setup guide](integrations.md#authentik-setup-guide) has a mapping that marks it verified. Where the provider can't be changed, `allow_unverified_email = true` under `[oidc]` accepts these logins. Only do that if users can't set their own email at the provider: a user an admin added who has never logged in has no subject yet, so whoever the provider gives that email first gets the account. My Bastion logs a warning at startup while it is on.
 
 #### Moving to a different identity provider
 
 Every user's subject changes when you switch providers (for example from JumpCloud to Entra ID), so after the switch everyone would be refused. Clear each user's recorded subject and their next login records the new one:
 
 ```bash
-rustguac reset-oidc-subject --email jsmith@example.com
+mybastion reset-oidc-subject --email jsmith@example.com
 ```
 
-Their role, group mappings, tokens and credentials are kept. This is CLI-only on purpose: it needs shell access to the rustguac host, and each use is written to the CLI audit log. The same command fixes a single user whose provider account was deleted and recreated.
+Their role, group mappings, tokens and credentials are kept. This is CLI-only on purpose: it needs shell access to the My Bastion host, and each use is written to the CLI audit log. The same command fixes a single user whose provider account was deleted and recreated.
 
 ## Endpoint access control
 
@@ -166,7 +167,7 @@ Operators can view their tokens (created by an admin on their behalf) but cannot
 Each Connections folder decides who can see it, in its `.config` entry in Vault:
 
 - `allowed_groups`: OIDC groups that can see the folder.
-- `allowed_users`: individual users who can see the folder, by login email (compared without regard to case). A user does not need to have logged in before being listed: access is checked from their identity when they use rustguac.
+- `allowed_users`: individual users who can see the folder, by login email (compared without regard to case). A user does not need to have logged in before being listed: access is checked from their identity when they use mybastion.
 
 A user can see a folder if any of their groups is in `allowed_groups` **or** their email is in `allowed_users`.
 
@@ -177,7 +178,7 @@ A user can see a folder if any of their groups is in `allowed_groups` **or** the
 - A folder the user cannot access is still shown if it leads to a subfolder they can, so a deeper grant is never orphaned out of the tree. Its own entries stay hidden; the user opens the subfolder. For example, a folder `users/jsmith` shared with `jsmith@example.com` shows `users` in jsmith's tree even if `users` itself is admin-only.
 - The list of allowed users is only shown to admins. A user who can open a folder does not see who else can.
 
-Because folder settings live in Vault, they apply on every rustguac instance sharing that Vault.
+Because folder settings live in Vault, they apply on every My Bastion instance sharing that Vault.
 
 ### Inheritance
 
@@ -223,10 +224,10 @@ A user with groups `["engineering", "support"]` would get `poweruser` (the highe
 
 ```bash
 # Map a group to a role
-rustguac map-group --group sysadmin --role admin
+mybastion map-group --group sysadmin --role admin
 
 # Change the role an existing group maps to
-rustguac map-group --group sysadmin --role poweruser --force
+mybastion map-group --group sysadmin --role poweruser --force
 
 # Roles must be one of: admin, poweruser, operator, viewer
 ```
@@ -234,7 +235,7 @@ rustguac map-group --group sysadmin --role poweruser --force
 Each OIDC group can hold only one mapping. Running `map-group` against a group that is already mapped to a *different* role leaves the existing mapping untouched and exits non-zero, so an unattended provisioning run cannot silently change who has access:
 
 ```
-$ rustguac map-group --group sysadmin --role admin
+$ mybastion map-group --group sysadmin --role admin
 Group 'sysadmin' is already mapped to role 'poweruser'. Re-run with --force to change it to 'admin'.
 ```
 
@@ -281,24 +282,24 @@ This means:
 
 ```bash
 # List all OIDC users
-rustguac list-users
+mybastion list-users
 
 # Add a user ahead of their first login (needed with auto_create_users = false)
-rustguac add-user --email user@example.com --role operator --name "A User"
+mybastion add-user --email user@example.com --role operator --name "A User"
 
 # Forget the identity provider account a user is bound to, after a provider
 # migration or a recreated provider account (see "Moving to a different
 # identity provider" above)
-rustguac reset-oidc-subject --email user@example.com
+mybastion reset-oidc-subject --email user@example.com
 
 # Set a user's role
-rustguac set-role --email user@example.com --role poweruser
+mybastion set-role --email user@example.com --role poweruser
 
 # Disable a user (blocks login)
-rustguac disable-user --email user@example.com
+mybastion disable-user --email user@example.com
 
 # Delete a user
-rustguac delete-user --email user@example.com
+mybastion delete-user --email user@example.com
 ```
 
 Re-enabling a disabled user is done from the Admin page or the API (`POST /api/users/{email}/enable`); there is no `enable-user` subcommand. Bear that in mind before disabling your own account from the shell.
@@ -307,26 +308,26 @@ Re-enabling a disabled user is done from the Admin page or the API (`POST /api/u
 
 ```bash
 # Create an admin
-rustguac add-admin --name myadmin
+mybastion add-admin --name myadmin
 
 # With IP restrictions
-rustguac add-admin --name myadmin --allowed-ips "10.0.0.0/8,192.168.1.0/24"
+mybastion add-admin --name myadmin --allowed-ips "10.0.0.0/8,192.168.1.0/24"
 
 # With expiry
-rustguac add-admin --name myadmin --expires "2026-12-31T00:00:00Z"
+mybastion add-admin --name myadmin --expires "2026-12-31T00:00:00Z"
 
 # List admins
-rustguac list-admins
+mybastion list-admins
 
 # Disable/enable
-rustguac disable-admin --name myadmin
-rustguac enable-admin --name myadmin
+mybastion disable-admin --name myadmin
+mybastion enable-admin --name myadmin
 
 # Rotate key (generates new key, invalidates old immediately)
-rustguac rotate-key --name myadmin
+mybastion rotate-key --name myadmin
 
 # Delete
-rustguac delete-admin --name myadmin
+mybastion delete-admin --name myadmin
 ```
 
 ## CLI audit log
@@ -344,7 +345,7 @@ The actor is taken from `SUDO_USER` when present, so an action run through `sudo
 There is no UI for this log yet. Read it with `sqlite3`:
 
 ```bash
-sqlite3 -header -column /opt/rustguac/data/rustguac.db \
+sqlite3 -header -column /var/lib/mybastion/mybastion.db \
   "SELECT created_at, os_user, action, target, details
      FROM cli_audit_log ORDER BY id DESC LIMIT 20;"
 ```

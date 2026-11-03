@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 // #318: "My keyboard layout" in Settings is remembered per browser and sent
 // with each connect, so the server can use it for an RDP or desktop entry
 // that leaves its layout at the server default. Not set sends nothing.
@@ -31,7 +32,7 @@ test('the keyboard layout chosen in Settings goes with each connect', async ({ p
     expect(await sel.locator('option').count(), 'every guacd layout plus Not set').toBe(24);
     await sel.selectOption('de-ch-qwertz');
     await expect(page.locator('#user-menu')).toBeVisible();
-    expect(await page.evaluate(() => localStorage.getItem('rustguac_keyboard_layout'))).toBe('de-ch-qwertz');
+    expect(await page.evaluate(() => localStorage.getItem('mybastion_keyboard_layout'))).toBe('de-ch-qwertz');
 
     // Remembered across a reload.
     await page.reload();

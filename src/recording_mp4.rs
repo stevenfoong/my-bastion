@@ -1,6 +1,7 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! MP4 downloads of recordings (#241).
 //!
-//! A `.guac` recording only plays inside rustguac. guacenc, which comes with
+//! A `.guac` recording only plays inside mybastion. guacenc, which comes with
 //! guacamole-server, turns one into a video, so a recording can be offered as
 //! an MP4 that plays anywhere. Conversion takes a while on a long session, so
 //! it runs in the background on request and the result is cached:
@@ -399,7 +400,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let p =
-                std::env::temp_dir().join(format!("rustguac-mp4-{}-{}", name, std::process::id()));
+                std::env::temp_dir().join(format!("mybastion-mp4-{}-{}", name, std::process::id()));
             let _ = std::fs::remove_dir_all(&p);
             std::fs::create_dir_all(&p).unwrap();
             Scratch(p)

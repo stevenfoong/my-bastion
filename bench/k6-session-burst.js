@@ -1,8 +1,9 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 // k6 session creation throughput test.
-// Measures how many sessions/sec rustguac can create.
+// Measures how many sessions/sec mybastion can create.
 //
 // Usage:
-//   k6 run --env API_KEY=rgu_xxx \
+//   k6 run --env API_KEY=mbt_xxx \
 //          --env BASE_URL=https://10.10.50.51:8089 \
 //          --env XRDP_HOST=10.10.50.52 \
 //          bench/k6-session-burst.js

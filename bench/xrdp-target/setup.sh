@@ -1,5 +1,6 @@
 #!/bin/bash
-# Setup xrdp on a Debian 13 VM for benchmarking rustguac.
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
+# Setup xrdp on a Debian 13 VM for benchmarking mybastion.
 # Run as root on the target VM.
 # Creates 100 bench users (bench01-bench100) with password "bench".
 set -e

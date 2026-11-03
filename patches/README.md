@@ -1,3 +1,4 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # guacamole-server patches
 
 These patches are applied to the [apache/guacamole-server](https://github.com/apache/guacamole-server) source tree before building guacd. They fix compilation and runtime issues when building against FreeRDP 3.x on Debian 13 (Trixie).
@@ -109,7 +110,7 @@ The client decodes every view. View 0 is drawn; the auxiliary view supplies the 
 
 **Keyframes** are detected as an IDR slice (NAL type 5) only. Treating an SPS (type 7) as sufficient marks ordinary delta frames as keyframes, and handing a decoder a delta labelled `key` makes it discard queued work.
 
-**Configuration:** none. Passthrough follows the per-connection `enable-h264` argument, which rustguac sets from the connection entry. There are no environment variables.
+**Configuration:** none. Passthrough follows the per-connection `enable-h264` argument, which My Bastion sets from the connection entry. There are no environment variables.
 
 **Requires:** a server sending H.264 over RDPGFX, and a browser with WebCodecs (Chrome/Edge 94+, Firefox 130+). See `docs/rdp-h264.md` for the Windows host settings, which are not optional.
 
@@ -143,7 +144,7 @@ stale/blank canvas for the resized layer. See [sol1/rustguac#118](https://github
 1. Mark the entire layer dirty (`guac_rect_init(&current_context->dirty, ...)`) so a full repaint is flushed to the client.
 2. Issue a `RefreshRect` for the full new desktop so the server re-sends authoritative pixels (legacy bitmap update path).
 
-**Scope:** Fixes the legacy bitmap update path, which is rustguac's default
+**Scope:** Fixes the legacy bitmap update path, which is My Bastion's default
 (`enable_gfx` defaults to false). The RDPGFX surface cache ignores
 `RefreshRect`, so GFX sessions are not addressed by this patch; in practice
 GFX sessions have not reproduced the artifact.
@@ -187,7 +188,7 @@ Vendored as the diff of the PR branch against its merge-base with our pinned gua
 
 ## 009-spice-empty-port.patch
 
-**Bug:** For TLS-only SPICE (e.g. Proxmox VE consoles) rustguac sends an empty `port` connect arg so guacd connects via `tls-port`. `guac_spice_session_configure()` set the spice-gtk `port` property whenever `settings->port != NULL`, but the parsed value for an omitted arg is an empty string (non-NULL), so spice-gtk logged `GSpice: Invalid port value` on every channel while parsing `""`.
+**Bug:** For TLS-only SPICE (e.g. Proxmox VE consoles) My Bastion sends an empty `port` connect arg so guacd connects via `tls-port`. `guac_spice_session_configure()` set the spice-gtk `port` property whenever `settings->port != NULL`, but the parsed value for an omitted arg is an empty string (non-NULL), so spice-gtk logged `GSpice: Invalid port value` on every channel while parsing `""`.
 
 **Fix:** Only set the plain `port` when it is non-empty (`settings->port[0] != '\0'`), so TLS-only connections use `tls-port` cleanly with no warning.
 
@@ -201,7 +202,7 @@ Vendored as the diff of the PR branch against its merge-base with our pinned gua
 
 ## 011-spice-ca-pem.patch
 
-**Bug:** rustguac sends the SPICE CA certificate (the connection entry's PEM, or the Proxmox cluster CA from `spiceproxy`) as the `ca-cert` connect arg, and the plugin from `008` passed it to spice-gtk's `ca-file` property. `ca-file` is a path, so OpenSSL failed to open a "file" named after the PEM text, spice-gtk logged `loading ca certs from ... failed`, fell back to the system trust store, and rejected servers signed by a private CA. See [sol1/rustguac#308](https://github.com/sol1/rustguac/issues/308).
+**Bug:** My Bastion sends the SPICE CA certificate (the connection entry's PEM, or the Proxmox cluster CA from `spiceproxy`) as the `ca-cert` connect arg, and the plugin from `008` passed it to spice-gtk's `ca-file` property. `ca-file` is a path, so OpenSSL failed to open a "file" named after the PEM text, spice-gtk logged `loading ca certs from ... failed`, fell back to the system trust store, and rejected servers signed by a private CA. See [sol1/rustguac#308](https://github.com/sol1/rustguac/issues/308).
 
 **Fix:** When `ca-cert` contains a PEM header (`-----BEGIN `), pass it in memory through spice-gtk's `ca` property (a `GByteArray` of PEM data, available since spice-gtk 0.15), which adds each certificate to the TLS trust store. Any other value is still treated as a path and passed as `ca-file`. The settings field is renamed `ca_file` -> `ca_cert` to match.
 
@@ -213,18 +214,18 @@ Patches are applied automatically by all build scripts (`build-deb.sh`, `build-r
 
 ```bash
 cd ../guacamole-server
-git apply ../rustguac/patches/001-freerdp3-debian13.patch
+git apply ../mybastion/patches/001-freerdp3-debian13.patch
 ```
 
 To check if patches are already applied:
 
 ```bash
 cd ../guacamole-server
-git apply --check ../rustguac/patches/001-freerdp3-debian13.patch 2>&1 || echo "Already applied or conflict"
+git apply --check ../mybastion/patches/001-freerdp3-debian13.patch 2>&1 || echo "Already applied or conflict"
 ```
 
 ## Adding new patches
 
 1. Make changes in the `../guacamole-server` working tree
-2. Export: `cd ../guacamole-server && git diff > ../rustguac/patches/NNN-description.patch`
+2. Export: `cd ../guacamole-server && git diff > ../mybastion/patches/NNN-description.patch`
 3. Patches are applied in numeric order by the build scripts

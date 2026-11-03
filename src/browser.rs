@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Process lifecycle manager for Xvnc + Chromium browser sessions.
 
 use std::collections::HashSet;
@@ -133,7 +134,7 @@ impl BrowserManager {
 
         // Create a unique profile directory for this session (UUID avoids stale crash state)
         let profile_dir =
-            std::env::temp_dir().join(format!("rustguac-chromium-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("mybastion-chromium-{}", uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&profile_dir); // clean slate
         if let Err(e) = std::fs::create_dir_all(&profile_dir) {
             self.display_allocator.release(display_num);
@@ -519,9 +520,9 @@ impl BrowserManager {
             let result = timeout(Duration::from_secs(timeout_secs), async {
                 let mut child = match Command::new(&script_path_owned)
                     .env("DISPLAY", format!(":{}", display))
-                    .env("RUSTGUAC_CDP_PORT", cdp_port.to_string())
-                    .env("RUSTGUAC_URL", &url_owned)
-                    .env("RUSTGUAC_SESSION_ID", &session_id_owned)
+                    .env("MYBASTION_CDP_PORT", cdp_port.to_string())
+                    .env("MYBASTION_URL", &url_owned)
+                    .env("MYBASTION_SESSION_ID", &session_id_owned)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
@@ -780,7 +781,7 @@ fn is_executable(path: &Path) -> bool {
 
 /// Where to read about getting Chromium's sandbox to start.
 const SANDBOX_DOCS: &str =
-    "https://github.com/sol1/rustguac/blob/main/docs/web-sessions.md#chromium-sandbox";
+    "https://github.com/stevenfoong/my-bastion/blob/main/docs/web-sessions.md#chromium-sandbox";
 
 /// Recognise Chromium's start-up messages for a sandbox it could not create
 /// and return the likely cause and the fix. Chromium prefers its namespace
@@ -891,7 +892,7 @@ mod tests {
 
     #[test]
     fn test_populate_login_data_creates_db() {
-        let dir = std::env::temp_dir().join("rustguac-test-login-data");
+        let dir = std::env::temp_dir().join("mybastion-test-login-data");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -922,7 +923,7 @@ mod tests {
 
     #[test]
     fn test_populate_login_data_multiple_creds() {
-        let dir = std::env::temp_dir().join("rustguac-test-login-data-multi");
+        let dir = std::env::temp_dir().join("mybastion-test-login-data-multi");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

@@ -1,6 +1,7 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 // Browser, sign-in and API helpers shared by seed.mjs and capture.mjs.
 
-export const BASE = (process.env.RUSTGUAC_URL || 'https://rustguac:8089').replace(/\/$/, '');
+export const BASE = (process.env.MYBASTION_URL || 'https://mybastion:8089').replace(/\/$/, '');
 
 // Desktop shots are 1440x900 pixels of a 1600x1000 CSS viewport (90% zoom),
 // which fits a whole table row of the wider pages without wrapping.
@@ -12,8 +13,8 @@ export function log(...args) {
   console.log(`[${new Date().toISOString().slice(11, 19)}]`, ...args);
 }
 
-// Wait until rustguac answers its health check.
-export async function waitForRustguac(request, timeoutMs = 120000) {
+// Wait until mybastion answers its health check.
+export async function waitForMy Bastion(request, timeoutMs = 120000) {
   const until = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -22,7 +23,7 @@ export async function waitForRustguac(request, timeoutMs = 120000) {
     } catch {
       // not listening yet
     }
-    if (Date.now() > until) throw new Error(`rustguac did not become healthy at ${BASE}`);
+    if (Date.now() > until) throw new Error(`mybastion did not become healthy at ${BASE}`);
     await sleep(1000);
   }
 }
@@ -39,8 +40,8 @@ export async function signIn(browser, user, { theme = 'aurora', size = DESKTOP }
   });
   await context.addInitScript((t) => {
     try {
-      localStorage.setItem('rustguac_theme', t);
-      localStorage.setItem('rustguac_onboarding_dismissed', '1');
+      localStorage.setItem('mybastion_theme', t);
+      localStorage.setItem('mybastion_onboarding_dismissed', '1');
     } catch {
       // storage is unavailable on about:blank
     }
@@ -65,7 +66,7 @@ export async function signIn(browser, user, { theme = 'aurora', size = DESKTOP }
   return { context, page };
 }
 
-// Call the rustguac API with the context's session cookie.
+// Call the mybastion API with the context's session cookie.
 export async function api(context, method, path, body, headers = {}) {
   const res = await context.request.fetch(`${BASE}${path}`, {
     method,

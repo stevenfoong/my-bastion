@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! guacd connection and Guacamole protocol handshake.
 
 use crate::protocol::{Instruction, InstructionParser};
@@ -82,7 +83,7 @@ pub struct SshParams {
     /// These are guacd-side paths: the guacd process must be able to
     /// write to `typescript_path`.
     pub typescript_path: Option<String>,
-    /// Base filename for the typescript, already expanded by rustguac
+    /// Base filename for the typescript, already expanded by mybastion
     /// (guacd does not substitute tokens here). Empty falls back to
     /// guacd's own default of "typescript".
     pub typescript_name: Option<String>,

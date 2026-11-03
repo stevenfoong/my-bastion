@@ -1,12 +1,13 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # Configuration Reference
 
-rustguac reads a TOML configuration file. All settings have sensible defaults and are optional.
+My Bastion reads a TOML configuration file. All settings have sensible defaults and are optional.
 
 ```bash
-rustguac --config /opt/rustguac/config.toml serve
+mybastion --config /etc/mybastion/mybastion.toml serve
 ```
 
-See `config.example.toml` for a fully commented reference.
+See `mybastion.example.toml` for a fully commented reference.
 
 ## Server settings
 
@@ -16,8 +17,8 @@ See `config.example.toml` for a fully commented reference.
 | `guacd_addr` | `127.0.0.1:4822` | guacd TCP address |
 | `recording_path` | `./recordings` | Session recording directory |
 | `static_path` | `./static` | Static web files directory |
-| `db_path` | `./rustguac.db` | SQLite database path |
-| `site_title` | `rustguac` | Browser tab and page header title |
+| `db_path` | `./mybastion.db` | SQLite database path |
+| `site_title` | `mybastion` | Browser tab and page header title |
 
 ## Session timeouts
 
@@ -37,7 +38,7 @@ See `config.example.toml` for a fully commented reference.
 | `display_range_end` | `199` | Last X display number |
 | `cdp_port_range_start` | `9200` | First Chrome DevTools Protocol port (for login scripts) |
 | `cdp_port_range_end` | `9299` | Last CDP port |
-| `login_scripts_dir` | `/opt/rustguac/scripts` | Directory containing login scripts |
+| `login_scripts_dir` | `/opt/mybastion/scripts` | Directory containing login scripts |
 | `login_script_timeout_secs` | `120` | Maximum runtime for login scripts before they are killed |
 
 ## Connection allowlists
@@ -81,22 +82,22 @@ All fields are optional. The `[tls]` section can contain any combination.
 HTTPS + guacd TLS (self-hosted):
 ```toml
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 ```
 
 HTTP server + guacd TLS (behind a reverse proxy):
 ```toml
 [tls]
-guacd_cert_path = "/opt/rustguac/tls/guacd-cert.pem"
+guacd_cert_path = "/etc/mybastion/tls/guacd-cert.pem"
 ```
 
 HTTPS only (guacd on localhost, no TLS needed):
 ```toml
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
 ```
 
 ## `[oidc]` section
@@ -110,7 +111,7 @@ Enables OpenID Connect authentication. When configured, the web UI shows a login
 | `client_secret` | — | OIDC client secret (or use `OIDC_CLIENT_SECRET` env var) |
 | `redirect_uri` | — | Redirect URI: `https://your-host/auth/callback` (required) |
 | `default_role` | `operator` | Role assigned to new users on first login |
-| `auto_create_users` | `true` | Create an account on first OIDC login. When `false`, only users already in the database can log in; add them with `rustguac add-user`, `POST /api/users` or the Admin page. See [Only users you have added](roles-and-access-control.md#only-users-you-have-added) |
+| `auto_create_users` | `true` | Create an account on first OIDC login. When `false`, only users already in the database can log in; add them with `mybastion add-user`, `POST /api/users` or the Admin page. See [Only users you have added](roles-and-access-control.md#only-users-you-have-added) |
 | `groups_claim` | `groups` | JWT claim name containing group memberships |
 | `extra_scopes` | `[]` | Additional OIDC scopes to request |
 | `ca_cert` | — | Path to CA certificate (PEM) for verifying the OIDC provider |
@@ -118,9 +119,73 @@ Enables OpenID Connect authentication. When configured, the web UI shows a login
 
 **Note:** `issuer_url` must match the discovered issuer URI **exactly**, including default ports and trailing slashes. For example, `https://idp.example.com/` and `https://idp.example.com` may be treated as different issuers. Check your provider's `.well-known/openid-configuration` for the canonical value.
 
+## `[storage]` section
+
+Where connections, folder configs, credential variables and the LUKS key are
+kept. By default that is an encrypted SQLite file, and this section only
+changes its location or key. Vault/OpenBao is used instead with
+`backend = "vault"`, or when this section is absent and `[vault]` is
+configured. With SQLite, `[vault]` is not used at runtime (`storage migrate`
+still reads it). One store serves both the shared and instance scopes.
+
+```toml
+[storage]
+backend = "sqlite"
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
+# instance_name = "prod-1"   # enables the instance scope
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `sqlite` | `sqlite` or `vault` |
+| `path` | `/var/lib/mybastion/secrets.db` | The secrets file, kept apart from `db_path`. Created with mode 0600. |
+| `kek_source` | `file:/etc/mybastion/kek` | Where the key-encryption key is: `file:<path>`, `env:<VAR>`, or `systemd-creds:<name>` (read from `$CREDENTIALS_DIRECTORY`, for `LoadCredentialEncrypted=`). 32 bytes as 64 hex digits or base64. |
+| `base_path` | `mybastion` | Prefix of the address-book paths, as `[vault] base_path` |
+| `instance_name` | — | Enables the instance scope, as `[vault] instance_name` |
+
+The installers (`install.sh`, the `.deb` and `.rpm`, the release tarball)
+create `/etc/mybastion/kek` on first install if it does not exist, readable by
+the `mybastion` user only. The Docker image creates it on first start: keep
+`/etc/mybastion` on a volume (it is declared as one), or the key is lost with
+the container and `secrets.db` can no longer be opened. To make one by hand:
+
+```bash
+sudo sh -c 'umask 277; openssl rand -hex 32 > /etc/mybastion/kek'
+sudo chown mybastion /etc/mybastion/kek
+```
+
+**Encryption.** A random data key encrypts every row with AES-256-GCM. The
+KEK wraps the data key, and only the wrapped key is stored in the file. Each
+row is bound to its path and version, so a row copied to another path or
+renumbered fails to decrypt instead of returning someone else's secret.
+
+**What this protects.** A copied `secrets.db` or a backup of it is unreadable
+without the KEK. It does **not** protect against someone who controls the
+host running mybastion: that host has to read the KEK to start. This is the
+same limit as Vault with an auto-unseal key on the same host. Keep the KEK
+out of the backups of `secrets.db`. Replacing the whole file with an older
+copy (rolling back every secret together) is not detected.
+
+**Tools:**
+
+- `mybastion storage migrate --from vault --to sqlite --dry-run`: copy
+  everything under `base_path` between backends (either direction; existing
+  secrets are kept unless `--overwrite`). Add `--path <kv path>` for secrets
+  outside it, such as the drive's `luks_key_path`. To import an existing
+  rustguac Vault, set `[vault] base_path = "rustguac"` (and `[storage]
+  base_path = "rustguac"` to keep the same paths). `[vault]` must be in the
+  config; with it there and no `[storage]` the server still runs on Vault, so
+  add `[storage]` (backend `sqlite`) and restart once the copy is done.
+- `mybastion rotate-kek --new-kek-source file:/etc/mybastion/kek.new`:
+  re-wrap the data key under a new KEK (rows are not re-encrypted, and a
+  running server keeps working), then point `kek_source` at the new one.
+- `mybastion secret put mybastion/luks key=@/root/luks.key`: write one secret,
+  e.g. the LUKS key that `[drive] luks_key_path` names.
+
 ## `[vault]` section
 
-Enables the Vault-backed connections. Uses AppRole by default, requiring the
+Keeps connections in Vault/OpenBao instead of SQLite (see `[storage]` above). Uses AppRole by default, requiring the
 `VAULT_SECRET_ID` environment variable. Configure `[vault.jwt_auth]` to use a
 workload JWT instead; JWT mode does not require an AppRole role ID or SecretID.
 
@@ -129,7 +194,7 @@ workload JWT instead; JWT mode does not require an AppRole role ID or SecretID.
 | `addr` | — | Vault server address (required) |
 | `role_id` | — | AppRole role ID (required unless `jwt_auth` is configured) |
 | `mount` | `secret` | KV v2 mount path |
-| `base_path` | `rustguac` | Base path under the mount |
+| `base_path` | `mybastion` | Base path under the mount |
 | `namespace` | — | Vault Enterprise / OpenBao namespace |
 | `instance_name` | — | Instance name for instance-scoped entries |
 | `tls_skip_verify` | `false` | Skip TLS certificate verification (dev only) |
@@ -143,11 +208,11 @@ workload JWT instead; JWT mode does not require an AppRole role ID or SecretID.
 [vault]
 addr = "https://vault.example.com:8200"
 mount = "secret"
-base_path = "rustguac"
+base_path = "mybastion"
 
 [vault.jwt_auth]
 mount = "workload-jwt"
-role = "rustguac"
+role = "mybastion"
 path = "/var/run/secrets/vault/token"
 ```
 
@@ -162,59 +227,13 @@ path = "/var/run/secrets/vault/token"
 Give exactly one of `path` and `token_command`. The token is fetched again on
 every login and reauthentication, so a rotated token is always the one used.
 JWT mode takes precedence over AppRole and never falls back to it when the token
-is missing, empty or rejected. The `import-guacamole` and `vault-migrate`
-commands log in the same way.
+is missing, empty or rejected. The `import-guacamole` and
+`storage migrate` commands log in the same way.
 Use this with Vault/OpenBao JWT auth configured to verify the token issuer,
 audience and exact workload identity. This is separate from users' OIDC login.
 
-The same nested block works as `[vault_shared.jwt_auth]` and
-`[vault_local.jwt_auth]`; only AppRole-mode backends need their SecretID env var.
 See [Integrations](integrations.md#workload-jwt-authentication) for Kubernetes,
 Nomad, SPIRE and cloud VM setups.
-
-### Multiple Vault backends (disaster recovery)
-
-By default the single `[vault]` serves both the shared and instance (local)
-address-book scopes. For DR across a fleet you can give each scope its own Vault
-so that one being unreachable cannot take the other down with it. Add either or
-both of the optional blocks below; each takes the same keys as `[vault]`.
-
-| Block | Serves | Secret ID env var |
-|-------|--------|-------------------|
-| `[vault]` | Default/fallback for any scope without a dedicated backend; also the home of the LUKS key | `VAULT_SECRET_ID` |
-| `[vault_shared]` | The `shared` scope | `VAULT_SHARED_SECRET_ID` |
-| `[vault_local]` | The `instance` (local) scope | `VAULT_LOCAL_SECRET_ID` |
-
-A bare `[vault]` with no overrides behaves exactly as a single-Vault deployment,
-so nothing changes for existing installs. Each backend connects, retries, and
-renews its token independently. If a dedicated backend is unreachable, that
-scope is shown as temporarily unavailable in the Connections tree while the
-other scopes keep working.
-
-When `[vault_local]` is used, set its `instance_name` to the value the data was
-originally stored under, so the `instance/<name>/` paths line up. Splitting an
-existing single-Vault deployment is a one-time copy with the `vault-migrate`
-subcommand (see
-[Splitting to multiple Vaults](migration.md#splitting-to-multiple-vaults-disaster-recovery)).
-
-```toml
-# Primary/local Vault (always reachable on this instance)
-[vault]
-addr = "https://127.0.0.1:8200"
-role_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-instance_name = "dc1"
-
-# Optional central Vault shared across the fleet
-[vault_shared]
-addr = "https://vault-central.example.com:8200"
-role_id = "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
-```
-
-Related top-level setting:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `user_credentials_default_scope` | `local` | Where a new per-user credential variable is stored when more than one backend is configured: `local` (stays on this instance, survives a central outage) or `shared` (propagates fleet-wide). Ignored with a single Vault. |
 
 ## `[drive]` section
 
@@ -230,7 +249,7 @@ Enables file transfer for RDP (drive redirection) and SSH (SFTP).
 | `cleanup_on_close` | `true` | Delete session drive directory on disconnect |
 | `retention_secs` | `0` | Delay before cleanup (0 = immediate) |
 | `luks_device` | — | LUKS container file path |
-| `luks_name` | `rustguac-drives` | Device-mapper name |
+| `luks_name` | `mybastion-drives` | Device-mapper name |
 | `luks_key_path` | — | Vault KV path for LUKS encryption key |
 
 ## `[theme]` section
@@ -247,9 +266,9 @@ accent_color = "#FF6600"
 
 **See [themes.md](themes.md) for the full reference**: built-in preset list, every overridable field, the per-user picker, and how to author your own themes as `.toml` files under `<static_path>/themes/` (no recompile needed).
 
-Place the logo file in the `static_path` directory (e.g. `/opt/rustguac/static/acme-logo.png`). In Docker, mount it as a volume:
+Place the logo file in the `static_path` directory (e.g. `/opt/mybastion/static/acme-logo.png`). In Docker, mount it as a volume:
 ```
--v /path/to/acme-logo.png:/opt/rustguac/static/acme-logo.png:ro
+-v /path/to/acme-logo.png:/opt/mybastion/static/acme-logo.png:ro
 ```
 
 ## `[recording]` section
@@ -267,7 +286,7 @@ Controls session recording behaviour and disk management.
 | `typescript_name` | string | `{connection}-{user}-{date}-{time}` | Filename template for typescripts. Tokens listed below. |
 | `create_typescript_path` | bool | `false` | Ask guacd to create `typescript_path` if it does not exist. |
 | `mp4_enabled` | bool | `true` | Offer recordings as MP4 downloads (see below). Off by itself when guacenc is not installed. |
-| `guacenc_path` | string | `/opt/rustguac/bin/guacenc` | The guacenc binary that converts recordings. |
+| `guacenc_path` | string | `/opt/mybastion/bin/guacenc` | The guacenc binary that converts recordings. |
 | `mp4_cache_path` | string | `<path>/mp4-cache` | Where converted MP4s are kept. |
 | `mp4_cache_hours` | integer | `24` | Remove a converted MP4 this many hours after it was made. |
 | `mp4_max_jobs` | integer | `1` | Conversions that run at once; more wait their turn. |
@@ -301,7 +320,7 @@ SSH, writes no typescript. Ad-hoc SSH connections (Connect to a host) have no
 entry; for a non-admin they never record a typescript.
 
 The typescript is produced by guacd, so `typescript_path` must be writable by
-the guacd process. On a standard install guacd runs as the same `rustguac`
+the guacd process. On a standard install guacd runs as the same `mybastion`
 user as the main service, so a path it owns just works; `create_typescript_path
 = true` lets guacd create the directory. guacd writes two files per session,
 `NAME` and `NAME.timing`.
@@ -312,18 +331,18 @@ is **list-only by design**: the text content is never downloadable through
 the web UI (a typescript can contain passwords typed at prompts or secrets
 printed to screen), so a poweruser can confirm a session was recorded
 while retrieving the actual log still requires direct access to the
-rustguac host or storage.
+My Bastion host or storage.
 
 ```toml
 [recording]
-typescript_path = "/opt/rustguac/data/typescripts"
+typescript_path = "/var/lib/mybastion/typescripts"
 typescript_name = "{connection}-{user}-{date}-{time}"
 create_typescript_path = true
 ```
 
 **Filename tokens.** guacd does not template typescript names itself (it
 uses the name verbatim and only appends a numeric suffix to avoid
-overwriting an existing file). rustguac therefore expands its own tokens
+overwriting an existing file). My Bastion therefore expands its own tokens
 in `typescript_name` before handing it over, so each file is identifiable:
 
 | Token | Expands to |
@@ -340,22 +359,22 @@ becomes `-`), so usernames like `alice@example.com` and free-text entry
 names are always reduced to a safe basename with no path separators.
 Unknown `{tokens}` are left untouched.
 
-> **Note:** these are rustguac's own tokens, not guacd's, and they are
+> **Note:** these are My Bastion's own tokens, not guacd's, and they are
 > unrelated to [credential variables](credential-variables.md) (which use
 > `$name` syntax and apply only to connection-entry credential fields).
 > guacd's own `${GUAC_*}` tokens are **not** interpreted for typescripts.
 
 Keystroke logging in the *graphical* recording (guacd's
 `recording-include-keys`, parseable by `guaclog`) is a separate mechanism
-that depends on guacd-driven graphical recording, which rustguac does not
+that depends on guacd-driven graphical recording, which My Bastion does not
 use (it records the proxied stream itself). It is therefore not wired up;
 the typescript is the supported text-audit path.
 
 ### MP4 downloads
 
-A `.guac` recording only plays in rustguac's own player. The Recordings page
+A `.guac` recording only plays in My Bastion's own player. The Recordings page
 can also give you an MP4 that plays anywhere (VLC, a browser, a video
-editor): click **mp4** next to a recording. rustguac converts it in the
+editor): click **mp4** next to a recording. My Bastion converts it in the
 background with `guacenc`, which comes with guacamole-server, and the file
 downloads when it is ready. Converting a long session takes a while, so the
 button shows **converting...** until then.
@@ -375,12 +394,12 @@ button shows **converting...** until then.
   it the button is not shown.
 
 To convert recordings yourself, for example a batch for an audit, run
-guacenc on the rustguac host. It writes `<recording>.m4v` (an MP4 file)
+guacenc on the My Bastion host. It writes `<recording>.m4v` (an MP4 file)
 next to the input, so copy recordings somewhere writable first:
 
 ```bash
-cp /opt/rustguac/recordings/<id>.guac /tmp/
-/opt/rustguac/bin/guacenc -s 1920x1080 -r 2000000 /tmp/<id>.guac
+cp /var/lib/mybastion/recordings/<id>.guac /tmp/
+/opt/mybastion/bin/guacenc -s 1920x1080 -r 2000000 /tmp/<id>.guac
 # -> /tmp/<id>.guac.m4v
 ```
 
@@ -391,35 +410,52 @@ that the `.m4v` file exists.
 
 Typescripts are written in plain text. For encryption at rest with no extra
 infrastructure, point `typescript_path` at a subdirectory of the
-LUKS-encrypted drive volume rustguac already manages (see the
-[`[drive]` section](#drive-section)). rustguac opens and mounts that volume at
+LUKS-encrypted drive volume My Bastion already manages (see the
+[`[drive]` section](#drive-section)). My Bastion opens and mounts that volume at
 startup (key fetched from Vault) and unmounts it at shutdown, so the directory
-is available whenever rustguac is running, and the files are encrypted on the
+is available whenever My Bastion is running, and the files are encrypted on the
 block device at rest (powered off, disk theft, block-device backups).
 
 ```toml
 [drive]
-drive_path = "/mnt/rustguac-drives"
+drive_path = "/mnt/mybastion-drives"
 luks_device = "/dev/disk/by-uuid/..."   # your LUKS volume
-luks_key_path = "secret/rustguac/luks"  # Vault KV path holding the key
+luks_key_path = "secret/mybastion/luks"  # Vault KV path holding the key
 
 [recording]
-typescript_path = "/mnt/rustguac-drives/typescripts"
+typescript_path = "/mnt/mybastion-drives/typescripts"
 create_typescript_path = true
 ```
 
 This is the recommended way to protect typescripts at rest today. Note its
-limits: while rustguac is running the volume is mounted, so the files are
+limits: while My Bastion is running the volume is mounted, so the files are
 plain text to anyone with host access (the same threat model as the drive
 feature), and it is one key for the whole volume rather than per-connection.
 Per-file, per-connection-key encryption is tracked as a separate feature
 request, pending demand.
 
+## `[web]` and `[spice]` sections
+
+Inherited session types are off on a fresh install, which offers only SSH,
+RDP and VNC. Each one is switched on by its own section:
+
+```toml
+[web]
+enabled = true     # headless-Chromium web sessions (see web-sessions.md)
+
+[spice]
+enabled = true     # SPICE and Proxmox VE console sessions
+```
+
+While a type is off, creating a session of that type, ad hoc or from a
+connections entry, is refused with an error that names the section. VDI has
+its own switch, `[vdi] enabled`, below, and is off by default too.
+
 ## `[vdi]` section
 
 Enables VDI (Virtual Desktop Infrastructure) sessions using Docker containers. Each user gets an ephemeral Linux desktop in a Docker container, accessed via xrdp through guacd.
 
-**Prerequisites:** Docker must be installed on the host and the `rustguac` user must be in the `docker` group. See [VDI Desktop Containers](vdi.md) for full setup.
+**Prerequisites:** Docker must be installed on the host and the `mybastion` user must be in the `docker` group. See [VDI Desktop Containers](vdi.md) for full setup.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -442,7 +478,7 @@ enabled = true
 idle_timeout_mins = 60
 # port_range_start = 39000
 # port_range_end = 39999
-# container_hook_script = "/opt/rustguac/vdi-container-hook.sh"
+# container_hook_script = "/opt/mybastion/vdi-container-hook.sh"
 # container_hook_timeout_secs = 10
 home_base = "/vdi-homes"
 # allowed_images = ["myregistry/desktop:latest"]
@@ -454,45 +490,43 @@ home_base = "/vdi-homes"
 |----------|-------------|
 | `OIDC_CLIENT_SECRET` | Override OIDC client secret from config file |
 | `VAULT_SECRET_ID` | Vault AppRole secret ID for `[vault]` |
-| `VAULT_SHARED_SECRET_ID` | Vault AppRole secret ID for `[vault_shared]` (only if configured) |
-| `VAULT_LOCAL_SECRET_ID` | Vault AppRole secret ID for `[vault_local]` (only if configured) |
-| `RUST_LOG` | Log level (e.g., `info`, `debug`, `rustguac=debug`) |
+| `RUST_LOG` | Log level (e.g., `info`, `debug`, `mybastion=debug`) |
 
 ### Setting environment variables for systemd
 
-The shipped systemd unit (`rustguac.service`) does not include an `EnvironmentFile` directive by default. To provide secrets like `VAULT_SECRET_ID` and `OIDC_CLIENT_SECRET`, create a systemd drop-in override:
+The shipped systemd unit (`mybastion.service`) does not include an `EnvironmentFile` directive by default. To provide secrets like `VAULT_SECRET_ID` and `OIDC_CLIENT_SECRET`, create a systemd drop-in override:
 
 **1. Create the env file** with your secrets:
 
 ```bash
-cat > /opt/rustguac/env <<'EOF'
+cat > /etc/mybastion/env <<'EOF'
 VAULT_SECRET_ID=your-vault-secret-id
 OIDC_CLIENT_SECRET=your-oidc-client-secret
 EOF
-chmod 600 /opt/rustguac/env
-chown rustguac:rustguac /opt/rustguac/env
+chmod 600 /etc/mybastion/env
+chown mybastion:mybastion /etc/mybastion/env
 ```
 
 **2. Create a systemd override** to load the env file:
 
 ```bash
-sudo systemctl edit rustguac
+sudo systemctl edit mybastion
 ```
 
 This opens an editor. Add the following:
 
 ```ini
 [Service]
-EnvironmentFile=/opt/rustguac/env
+EnvironmentFile=/etc/mybastion/env
 ```
 
-Save and close. This creates a drop-in file at `/etc/systemd/system/rustguac.service.d/override.conf`.
+Save and close. This creates a drop-in file at `/etc/systemd/system/mybastion.service.d/override.conf`.
 
 **3. Reload and restart:**
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart rustguac
+sudo systemctl restart mybastion
 ```
 
 The override persists across package upgrades — `dpkg` will not overwrite files in the `.d/` directory.
@@ -502,11 +536,11 @@ The override persists across package upgrades — `dpkg` will not overwrite file
 To confirm the env file is loaded:
 
 ```bash
-sudo systemctl show rustguac | grep EnvironmentFile
+sudo systemctl show mybastion | grep EnvironmentFile
 ```
 
 You should see:
 
 ```
-EnvironmentFile=/opt/rustguac/env
+EnvironmentFile=/etc/mybastion/env
 ```

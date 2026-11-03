@@ -1,3 +1,4 @@
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
 # API Reference
 
 All API endpoints are under `/api/`. Authentication is via `Authorization: Bearer <api-key>` header, `X-API-Key: <key>` header, or OIDC session cookie.
@@ -220,7 +221,7 @@ The `jump_hosts` array defines an ordered chain of SSH bastion hops. Each hop co
 | `kerberos_cache` | string | RDP | Path to Kerberos credential cache (advanced) |
 | `color_depth` | integer | RDP | Color depth in bits (8, 16, 24, 32) |
 | `vnc_resize` | boolean | VNC | Ask the VNC server to resize its screen to the browser window (default `false`: the screen is scaled to fit). Only for servers with their own virtual screen (TigerVNC, Xvnc); a physical console such as UltraVNC, RealVNC or x11vnc can't resize, and the session stalls if asked. |
-| `vnc_network` | string | VNC | Network preset for the link between the VNC server and rustguac: `auto` (default), `lan`, `wan` or `slow`. See [VNC network presets](overview.md#vnc-network-presets). |
+| `vnc_network` | string | VNC | Network preset for the link between the VNC server and mybastion: `auto` (default), `lan`, `wan` or `slow`. See [VNC network presets](overview.md#vnc-network-presets). |
 | `enable_drive` | boolean | RDP, SSH | Enable file transfer / drive redirection |
 | `disable_copy` | boolean | All | Disable clipboard copy (server → client) |
 | `disable_paste` | boolean | All | Disable clipboard paste (client → server) |
@@ -278,7 +279,7 @@ Requests from admins, an admin API key included, are used as sent.
 | `proxmox_token_secret` | string | API token secret (the UUID half) |
 | `proxmox_verify_tls` | boolean | Verify the PVE / SPICE-proxy TLS certificate (default false; PVE ships a self-signed cluster cert) |
 
-The token needs `VM.Console` (and `VM.Audit` for node auto-detect) on the target VM. rustguac calls the PVE `spiceproxy` API at connect to fetch a one-time SPICE ticket, so nothing sensitive is stored beyond the token. See [SPICE and Proxmox VE Sessions](spice-and-proxmox.md) for the connect flow, TLS options and troubleshooting.
+The token needs `VM.Console` (and `VM.Audit` for node auto-detect) on the target VM. My Bastion calls the PVE `spiceproxy` API at connect to fetch a one-time SPICE ticket, so nothing sensitive is stored beyond the token. See [SPICE and Proxmox VE Sessions](spice-and-proxmox.md) for the connect flow, TLS options and troubleshooting.
 
 **Jump host object fields:**
 
@@ -372,14 +373,14 @@ Creating a session (`POST /api/sessions`) only opens the connection to the targe
 - The **first** connection to a freshly created session is the **owner** connection. It requires an authenticated identity with the **operator** role or higher that is the session's creator: the caller that created it, or the `owner` it was created for. No other user can make it, admins included.
 - A **share token** (`share_url` or `share_url_readonly`) or an admin **shadow token** only lets another viewer **join** a session that is already active. It is not an identity and cannot open the owner connection.
 
-If the owner connection is not authenticated, or is authenticated as someone other than the creator, rustguac rejects the WebSocket with `403`, no browser attaches, and guacd eventually reports `User is not responding` (its timeout for a session whose client never arrived, roughly 15 seconds after creation). If you see `User is not responding`, the browser did not connect as the session's authenticated owner. A backend that creates sessions with an API key for a user who then connects with their own login must set `owner` (see [Creating a session for someone else](#creating-a-session-for-someone-else)).
+If the owner connection is not authenticated, or is authenticated as someone other than the creator, My Bastion rejects the WebSocket with `403`, no browser attaches, and guacd eventually reports `User is not responding` (its timeout for a session whose client never arrived, roughly 15 seconds after creation). If you see `User is not responding`, the browser did not connect as the session's authenticated owner. A backend that creates sessions with an API key for a user who then connects with their own login must set `owner` (see [Creating a session for someone else](#creating-a-session-for-someone-else)).
 
 ### Authenticating the owner connection
 
 The built-in client (`client_url`) authenticates the owner WebSocket one of three ways:
 
-1. **OIDC session cookie** — the user is logged into rustguac in that browser. Open `client_url` and the cookie authenticates.
-2. **`sessionStorage.rustguac_api_key`** — the client exchanges the key for a single-use ticket before connecting.
+1. **OIDC session cookie** — the user is logged into My Bastion in that browser. Open `client_url` and the cookie authenticates.
+2. **`sessionStorage.mybastion_api_key`** — the client exchanges the key for a single-use ticket before connecting.
 3. **A ws-ticket in the URL** — `client_url?ticket=<ticket>`. Used for headless integrations (below).
 
 ### `POST /api/ws-ticket`
@@ -399,7 +400,7 @@ The ticket is valid for 30 seconds, may be used once, and inherits the caller's 
 
 ### Headless API integration
 
-When the browser has no rustguac login of its own (no OIDC cookie), a backend that holds an API key can still hand off a ready-to-open session without exposing that key to the browser:
+When the browser has no My Bastion login of its own (no OIDC cookie), a backend that holds an API key can still hand off a ready-to-open session without exposing that key to the browser:
 
 1. `POST /api/sessions` (Bearer API key) to create the session.
 2. `POST /api/ws-ticket` (Bearer API key) to mint a ticket. The ticket carries the API key's identity, which is the session's creator, so the owner connection is accepted. Do not set `owner` in this flow: the ticket would then belong to someone other than the owner and be refused.
@@ -782,11 +783,11 @@ The response lists what happened to each entry, plus a count per outcome:
 
 The address book's change log, answered from memory: no Vault or disk read, so clients may poll it often. Requires **operator**. `version` counts every successful change made through this API to entries, folders and folder config (moves, copies and bulk operations included); `changed_at` is unix milliseconds, `0` before the first change since start. With `since`, `changes` lists what moved after that version, one row per folder: `kind` is `entries` (entries in the folder were written), `tree` (the folder itself was created, deleted or its config changed) or `all` (not attributable; refresh everything). It is `null` when `since` is omitted, or when the log no longer reaches back that far (it keeps the last few hundred changes), and the client should refresh what it shows once.
 
-`epoch` identifies the server process the log belongs to. The version counter starts again at 0 when rustguac restarts, so a client should remember the `epoch` that came with its version and, when it changes, refresh what it shows once and ignore `changes`: after a restart they come from a different log, even when the numbers line up.
+`epoch` identifies the server process the log belongs to. The version counter starts again at 0 when My Bastion restarts, so a client should remember the `epoch` that came with its version and, when it changes, refresh what it shows once and ignore `changes`: after a restart they come from a different log, even when the numbers line up.
 
 For callers below **admin**, rows only ever name folders the caller can open. An `entries` row for any other folder is left out, and every `tree` row is replaced by one without a path (`"scope": "*", "folder": ""`), since a folder that was created, deleted or had its access changed may be one the caller cannot see; a client should treat it like `all`. Admins get every row as logged. Filtering reads folder config only when there are changes to answer, so a poll with nothing new still costs no Vault read.
 
-A user's own credential variables (`/api/me/credentials`) are not address-book changes and never appear here. The log is per process: with several rustguac instances on one Vault, each sees only its own changes.
+A user's own credential variables (`/api/me/credentials`) are not address-book changes and never appear here. The log is per process: with several My Bastion instances on one Vault, each sees only its own changes.
 
 The Connections page polls this every 3 seconds while visible and re-reads only the folder it shows, or the folder list when a folder came or went; its search index is rebuilt only when search is next used.
 
@@ -832,7 +833,7 @@ Create a personal API token. Requires **poweruser** role or higher. Only availab
 {
   "id": 1,
   "name": "my-ci-token",
-  "token": "rgu_a1b2c3d4e5f6...",
+  "token": "mbt_a1b2c3d4e5f6...",
   "max_role": "operator",
   "expires_at": "2026-12-31T23:59:59Z"
 }
@@ -895,7 +896,7 @@ No authentication required. Returns whether OIDC is enabled and the site title.
 ```json
 {
   "oidc_enabled": true,
-  "site_title": "rustguac"
+  "site_title": "mybastion"
 }
 ```
 

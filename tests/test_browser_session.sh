@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 #
 # Test that a browser session renders content (not a black screen).
 # Starts Xvnc + Chromium with isolated profile, screenshots the display,
@@ -85,7 +86,7 @@ rm -f /tmp/test_baseline.xwd /tmp/test_baseline.png
 # --- Step 4: Start Chromium with isolated profile ---
 echo ""
 echo "--- Step 4: Starting Chromium ---"
-PROFILE_DIR=$(mktemp -d /tmp/rustguac-test-profile-XXXXXX)
+PROFILE_DIR=$(mktemp -d /tmp/mybastion-test-profile-XXXXXX)
 echo "Profile dir: $PROFILE_DIR"
 
 chromium \

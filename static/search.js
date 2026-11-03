@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 /*
  * Global connection search — a floating, dim overlay available on every page.
  *
@@ -51,7 +52,7 @@
         if (!m) return e(label || '');
         return '<span class="entry-name">' + e(m[1]) + '</span><span class="entry-sub">' + e(m[2]) + '</span>';
     }
-    function apiKey() { try { return sessionStorage.getItem('rustguac_api_key'); } catch (e) { return null; } }
+    function apiKey() { try { return sessionStorage.getItem('mybastion_api_key'); } catch (e) { return null; } }
     function headers(extra) {
         var h = extra || {}; var k = apiKey();
         if (k) h['Authorization'] = 'Bearer ' + k;
@@ -103,8 +104,8 @@
     // doesn't re-index. It is only re-fetched when the address book's version
     // changes (polled), which the connections page bumps when anything is
     // edited. The connections page itself always loads a fresh copy.
-    var IDX_KEY = 'rustguac_search_index_v1', VER_KEY = 'rustguac_search_version_v1',
-        WHO_KEY = 'rustguac_search_user_v1';
+    var IDX_KEY = 'mybastion_search_index_v1', VER_KEY = 'mybastion_search_version_v1',
+        WHO_KEY = 'mybastion_search_user_v1';
     var knownVersion = null, pollTimer = null, versionChecked = false;
 
     function dropCache() {

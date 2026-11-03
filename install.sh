@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 #
-# install.sh — Install rustguac + guacd on Debian 13 (Trixie).
+# install.sh — Install mybastion + guacd on Debian 13 (Trixie).
 #
-# Installs everything to /opt/rustguac with a systemd service.
+# Installs the binary, guacd and static files to /opt/mybastion, config and
+# TLS to /etc/mybastion, data and recordings to /var/lib/mybastion, with
+# systemd services.
 #
 # Usage:
-#   sudo ./install.sh              Full install (build deps, guacd, rustguac)
+#   sudo ./install.sh              Full install (build deps, guacd, mybastion)
 #   sudo ./install.sh --deps-only  Only install system packages
 #   sudo ./install.sh --no-deps    Skip apt install (assume deps already present)
 #
 set -euo pipefail
 
-PREFIX="/opt/rustguac"
+PREFIX="/opt/mybastion"
+CONF_DIR="/etc/mybastion"
+STATE_DIR="/var/lib/mybastion"
 GUACD_SRC_URL="https://github.com/apache/guacamole-server.git"
 GUACD_BRANCH="main"
 GUACD_COMMIT="6719b20d"  # Pin to known-good commit
-BUILD_DIR="/tmp/rustguac-build-$$"
+BUILD_DIR="/tmp/mybastion-build-$$"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RED='\033[0;31m'
@@ -40,9 +45,9 @@ for arg in "$@"; do
         # An alias for the environment variable rather than a second switch
         # reaching the same place, so there is one thing to read when the
         # answer looks wrong. Set here, it also wins over an inherited
-        # RUSTGUAC_DRIVE_SETUP=yes, which is the precedence an explicit flag
+        # MYBASTION_DRIVE_SETUP=yes, which is the precedence an explicit flag
         # should have.
-        --no-drive)    RUSTGUAC_DRIVE_SETUP=no ;;
+        --no-drive)    MYBASTION_DRIVE_SETUP=no ;;
         -h|--help)
             echo "Usage: sudo $0 [--deps-only|--no-deps] [--no-tls] [--no-drive]"
             echo "                        [--hostname=FQDN]"
@@ -52,7 +57,7 @@ for arg in "$@"; do
             echo "  --no-deps         Skip apt install (assume packages already present)"
             echo "  --no-tls          Skip TLS certificate generation (plain HTTP only)"
             echo "  --no-drive        Skip the encrypted drive prompt (same as"
-            echo "                    RUSTGUAC_DRIVE_SETUP=no)"
+            echo "                    MYBASTION_DRIVE_SETUP=no)"
             echo "  --hostname=FQDN   Hostname for TLS certificate (default: system hostname)"
             echo ""
             echo "Environment:"
@@ -61,13 +66,13 @@ for arg in "$@"; do
             echo "  container already exists, when cryptsetup is missing, or when stdin"
             echo "  is not a terminal; these answer it otherwise."
             echo ""
-            echo "  RUSTGUAC_DRIVE_SETUP    yes|no — answer the prompt without a terminal"
-            echo "  RUSTGUAC_DRIVE_SIZE     LUKS container size (default: 4G)"
-            echo "  RUSTGUAC_DRIVE_MOUNT    Mount point (default: /mnt/rustguac-drives)"
-            echo "  RUSTGUAC_LUKS_DEVICE    Container path (default: PREFIX/drives.luks)"
-            echo "  RUSTGUAC_LUKS_NAME      dm-crypt mapper name (default: rustguac-drives)"
+            echo "  MYBASTION_DRIVE_SETUP    yes|no — answer the prompt without a terminal"
+            echo "  MYBASTION_DRIVE_SIZE     LUKS container size (default: 4G)"
+            echo "  MYBASTION_DRIVE_MOUNT    Mount point (default: /mnt/mybastion-drives)"
+            echo "  MYBASTION_LUKS_DEVICE    Container path (default: /var/lib/mybastion/drives.luks)"
+            echo "  MYBASTION_LUKS_NAME      dm-crypt mapper name (default: mybastion-drives)"
             echo ""
-            echo "  Settings for guacd itself belong in PREFIX/guacd.env, which is"
+            echo "  Settings for guacd itself belong in /etc/mybastion/guacd.env, which is"
             echo "  created once and never overwritten; the unit files are rewritten on"
             echo "  every run, so anything set in them directly is lost at the next"
             echo "  install."
@@ -242,24 +247,24 @@ build_guacd() {
 build_guacd
 
 # ---------------------------------------------------------------------------
-# Step 4: Build rustguac
+# Step 4: Build mybastion
 # ---------------------------------------------------------------------------
-build_rustguac() {
-    info "Building rustguac..."
+build_mybastion() {
+    info "Building mybastion..."
     cd "$SCRIPT_DIR"
     sudo -u "$REAL_USER" "$CARGO_BIN" build --release
-    info "rustguac built."
+    info "mybastion built."
 }
 
-build_rustguac
+build_mybastion
 
 # ---------------------------------------------------------------------------
-# Step 5: Install rustguac files
+# Step 5: Install mybastion files
 # ---------------------------------------------------------------------------
-install_rustguac() {
-    info "Installing rustguac to $PREFIX..."
+install_mybastion() {
+    info "Installing mybastion to $PREFIX..."
 
-    mkdir -p "$PREFIX"/{bin,data,recordings,static}
+    mkdir -p "$PREFIX"/{bin,static} "$CONF_DIR" "$STATE_DIR/recordings"
 
     # A running binary cannot be overwritten -- cp fails with "Text file busy"
     # and leaves the old one in place, after the script has already reported
@@ -269,15 +274,18 @@ install_rustguac() {
     # running: a first install should not be started behind the operator's
     # back before there is an admin account.
     WAS_RUNNING=0
-    if systemctl is-active --quiet rustguac 2>/dev/null; then
+    if systemctl is-active --quiet mybastion 2>/dev/null; then
         WAS_RUNNING=1
-        info "Stopping rustguac for the upgrade..."
-        systemctl stop rustguac
+        info "Stopping mybastion for the upgrade..."
+        systemctl stop mybastion
     fi
 
     # Binary
-    cp "$SCRIPT_DIR/target/release/rustguac" "$PREFIX/bin/rustguac"
-    chmod 755 "$PREFIX/bin/rustguac"
+    cp "$SCRIPT_DIR/target/release/mybastion" "$PREFIX/bin/mybastion"
+    chmod 755 "$PREFIX/bin/mybastion"
+
+    # Licence and attribution (Apache-2.0 requires NOTICE to travel with the work)
+    install -m 644 "$SCRIPT_DIR/LICENSE" "$SCRIPT_DIR/NOTICE" "$PREFIX/"
 
     # Static web assets, mirrored rather than copied over the top.
     #
@@ -324,59 +332,77 @@ install_rustguac() {
     rm -f "$new_manifest"
 
     # Default config (don't overwrite existing)
-    if [[ ! -f "$PREFIX/config.toml" ]]; then
+    if [[ ! -f "$CONF_DIR/mybastion.toml" ]]; then
         local LISTEN_PORT="8089"
         if [[ $NO_TLS -eq 0 ]]; then
             LISTEN_PORT="443"
         fi
-        cat > "$PREFIX/config.toml" <<TOMLEOF
+        cat > "$CONF_DIR/mybastion.toml" <<TOMLEOF
 listen_addr = "0.0.0.0:${LISTEN_PORT}"
 guacd_addr = "127.0.0.1:4822"
-recording_path = "/opt/rustguac/recordings"
-static_path = "/opt/rustguac/static"
-db_path = "/opt/rustguac/data/rustguac.db"
+recording_path = "/var/lib/mybastion/recordings"
+static_path = "/opt/mybastion/static"
+db_path = "/var/lib/mybastion/mybastion.db"
 session_pending_timeout_secs = 60
 xvnc_path = "Xvnc"
 chromium_path = "chromium"
 display_range_start = 100
 display_range_end = 199
+
+[storage]
+# backend = "vault" keeps connections in [vault] instead
+path = "/var/lib/mybastion/secrets.db"
+kek_source = "file:/etc/mybastion/kek"
 TOMLEOF
 
         if [[ $NO_TLS -eq 0 ]]; then
-            cat >> "$PREFIX/config.toml" <<'TOMLEOF'
+            cat >> "$CONF_DIR/mybastion.toml" <<'TOMLEOF'
 
 [tls]
-cert_path = "/opt/rustguac/tls/cert.pem"
-key_path = "/opt/rustguac/tls/key.pem"
-guacd_cert_path = "/opt/rustguac/tls/cert.pem"
+cert_path = "/etc/mybastion/tls/cert.pem"
+key_path = "/etc/mybastion/tls/key.pem"
+guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 TOMLEOF
         fi
 
-        info "Created default config at $PREFIX/config.toml"
+        info "Created default config at $CONF_DIR/mybastion.toml"
     else
-        info "Config already exists at $PREFIX/config.toml (not overwritten)"
+        info "Config already exists at $CONF_DIR/mybastion.toml (not overwritten)"
     fi
 
-    # Create rustguac system user (if not exists)
-    if ! id -u rustguac >/dev/null 2>&1; then
-        useradd --system --create-home --home-dir /home/rustguac --shell /usr/sbin/nologin rustguac
-        info "Created system user 'rustguac'"
+    # Create mybastion system user (if not exists)
+    if ! id -u mybastion >/dev/null 2>&1; then
+        useradd --system --create-home --home-dir /home/mybastion --shell /usr/sbin/nologin mybastion
+        info "Created system user 'mybastion'"
     fi
 
-    chown -R rustguac:rustguac "$PREFIX/data" "$PREFIX/recordings"
+    chown -R mybastion:mybastion "$STATE_DIR"
+    # Config can hold secrets (OIDC client secret): root-owned, readable by the service.
+    chown root:mybastion "$CONF_DIR" "$CONF_DIR/mybastion.toml"
+    chmod 750 "$CONF_DIR"
+    chmod 640 "$CONF_DIR/mybastion.toml"
+
+    # Key-encryption key for the SQLite secret store. Created once and never
+    # overwritten: secrets.db can only be opened with it. Keep it out of the
+    # backups of $STATE_DIR.
+    if [[ ! -f "$CONF_DIR/kek" ]]; then
+        (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/kek")
+        chown mybastion:mybastion "$CONF_DIR/kek"
+        info "Created $CONF_DIR/kek"
+    fi
 
     # Chromium policy: web session hardening (block file dialogs, printing, extensions, etc.)
     # DeveloperToolsAvailability=0: DevTools/CDP allowed (needed for login scripts).
     # Users can't reach chrome://devtools anyway — chrome://* is in URLBlocklist.
     mkdir -p /etc/chromium/policies/managed
-    cat > /etc/chromium/policies/managed/rustguac.json <<'POLICY'
+    cat > /etc/chromium/policies/managed/mybastion.json <<'POLICY'
 {"AllowFileSelectionDialogs": false, "PasswordManagerEnabled": true, "ImportSavedPasswords": false, "DeveloperToolsAvailability": 0, "DownloadRestrictions": 3, "PrintingEnabled": false, "EditBookmarksEnabled": false, "BrowserSignin": 0, "SyncDisabled": true, "ExtensionInstallBlocklist": ["*"], "URLBlocklist": ["file://*", "chrome://*", "chrome-extension://*", "view-source:*", "javascript:*"], "URLAllowlist": ["chrome://policy"]}
 POLICY
 
-    info "rustguac installed to $PREFIX"
+    info "mybastion installed to $PREFIX"
 }
 
-install_rustguac
+install_mybastion
 
 # ---------------------------------------------------------------------------
 # Step 6: Generate TLS certificate (unless --no-tls)
@@ -387,25 +413,25 @@ setup_tls() {
         return 0
     fi
 
-    mkdir -p "$PREFIX/tls"
+    mkdir -p "$CONF_DIR/tls"
 
-    if [[ -f "$PREFIX/tls/cert.pem" && -f "$PREFIX/tls/key.pem" ]]; then
-        info "TLS certificates already exist at $PREFIX/tls/ (not overwritten)"
+    if [[ -f "$CONF_DIR/tls/cert.pem" && -f "$CONF_DIR/tls/key.pem" ]]; then
+        info "TLS certificates already exist at $CONF_DIR/tls/ (not overwritten)"
         return 0
     fi
 
     local CERT_HOSTNAME="${TLS_HOSTNAME:-$(hostname -f 2>/dev/null || hostname)}"
 
     info "Generating self-signed TLS certificate for: $CERT_HOSTNAME"
-    "$PREFIX/bin/rustguac" generate-cert \
+    "$PREFIX/bin/mybastion" generate-cert \
         --hostname "$CERT_HOSTNAME" \
-        --out-dir "$PREFIX/tls"
+        --out-dir "$CONF_DIR/tls"
 
-    chown -R rustguac:rustguac "$PREFIX/tls"
-    chmod 600 "$PREFIX/tls/key.pem"
-    chmod 644 "$PREFIX/tls/cert.pem"
+    chown -R mybastion:mybastion "$CONF_DIR/tls"
+    chmod 600 "$CONF_DIR/tls/key.pem"
+    chmod 644 "$CONF_DIR/tls/cert.pem"
 
-    info "TLS certificate generated at $PREFIX/tls/"
+    info "TLS certificate generated at $CONF_DIR/tls/"
     warn "This is a self-signed certificate for dev/testing."
     warn "For production, replace with real certificates from your CA."
 }
@@ -416,17 +442,17 @@ setup_tls
 # Step 6b: Drive / LUKS setup (optional, interactive)
 # ---------------------------------------------------------------------------
 # Env vars for non-interactive / automation:
-#   RUSTGUAC_DRIVE_SETUP=yes|no   — skip the prompt
-#   RUSTGUAC_DRIVE_SIZE=4G        — LUKS container size
-#   RUSTGUAC_DRIVE_MOUNT=/mnt/rustguac-drives
-#   RUSTGUAC_LUKS_DEVICE=/opt/rustguac/drives.luks
-#   RUSTGUAC_LUKS_NAME=rustguac-drives
+#   MYBASTION_DRIVE_SETUP=yes|no   — skip the prompt
+#   MYBASTION_DRIVE_SIZE=4G        — LUKS container size
+#   MYBASTION_DRIVE_MOUNT=/mnt/mybastion-drives
+#   MYBASTION_LUKS_DEVICE=/var/lib/mybastion/drives.luks
+#   MYBASTION_LUKS_NAME=mybastion-drives
 setup_drive() {
-    local SETUP="${RUSTGUAC_DRIVE_SETUP:-}"
-    local DRIVE_SIZE="${RUSTGUAC_DRIVE_SIZE:-4G}"
-    local MOUNT_POINT="${RUSTGUAC_DRIVE_MOUNT:-/mnt/rustguac-drives}"
-    local LUKS_DEVICE="${RUSTGUAC_LUKS_DEVICE:-$PREFIX/drives.luks}"
-    local LUKS_NAME="${RUSTGUAC_LUKS_NAME:-rustguac-drives}"
+    local SETUP="${MYBASTION_DRIVE_SETUP:-}"
+    local DRIVE_SIZE="${MYBASTION_DRIVE_SIZE:-4G}"
+    local MOUNT_POINT="${MYBASTION_DRIVE_MOUNT:-/mnt/mybastion-drives}"
+    local LUKS_DEVICE="${MYBASTION_LUKS_DEVICE:-$STATE_DIR/drives.luks}"
+    local LUKS_NAME="${MYBASTION_LUKS_NAME:-mybastion-drives}"
 
     # If already set up, skip
     if [[ -f "$LUKS_DEVICE" ]]; then
@@ -448,11 +474,11 @@ setup_drive() {
     # completed except for the service coming back -- which is exactly how it
     # presented, repeatedly, before this guard.
     #
-    # RUSTGUAC_DRIVE_SETUP=yes|no answers it without a terminal.
+    # MYBASTION_DRIVE_SETUP=yes|no answers it without a terminal.
     if [[ -z "$SETUP" && ! -t 0 ]]; then
         SETUP="no"
         info "Drive / File Transfer Setup skipped (not interactive)."
-        info "  Set RUSTGUAC_DRIVE_SETUP=yes to enable it from a script."
+        info "  Set MYBASTION_DRIVE_SETUP=yes to enable it from a script."
     fi
 
     if [[ -z "$SETUP" ]]; then
@@ -508,39 +534,39 @@ setup_drive() {
 
     # Create mount point
     mkdir -p "$MOUNT_POINT"
-    chown rustguac:rustguac "$MOUNT_POINT"
+    chown mybastion:mybastion "$MOUNT_POINT"
 
     # Set ownership of LUKS file
-    chown rustguac:rustguac "$LUKS_DEVICE"
+    chown mybastion:mybastion "$LUKS_DEVICE"
     chmod 600 "$LUKS_DEVICE"
 
     # Install sudoers rules
     info "Installing sudoers rules for LUKS management..."
-    cat > /etc/sudoers.d/rustguac-drive <<SUDOERS
-# rustguac LUKS drive management
-rustguac ALL=(root) NOPASSWD: /usr/sbin/cryptsetup open --type luks --key-file=- $LUKS_DEVICE $LUKS_NAME
-rustguac ALL=(root) NOPASSWD: /usr/sbin/cryptsetup close $LUKS_NAME
-rustguac ALL=(root) NOPASSWD: /bin/mount /dev/mapper/$LUKS_NAME $MOUNT_POINT
-rustguac ALL=(root) NOPASSWD: /usr/bin/mount /dev/mapper/$LUKS_NAME $MOUNT_POINT
-rustguac ALL=(root) NOPASSWD: /bin/umount $MOUNT_POINT
-rustguac ALL=(root) NOPASSWD: /usr/bin/umount $MOUNT_POINT
-rustguac ALL=(root) NOPASSWD: /bin/chown rustguac\:rustguac $MOUNT_POINT
-rustguac ALL=(root) NOPASSWD: /usr/bin/chown rustguac\:rustguac $MOUNT_POINT
+    cat > /etc/sudoers.d/mybastion-drive <<SUDOERS
+# mybastion LUKS drive management
+mybastion ALL=(root) NOPASSWD: /usr/sbin/cryptsetup open --type luks --key-file=- $LUKS_DEVICE $LUKS_NAME
+mybastion ALL=(root) NOPASSWD: /usr/sbin/cryptsetup close $LUKS_NAME
+mybastion ALL=(root) NOPASSWD: /bin/mount /dev/mapper/$LUKS_NAME $MOUNT_POINT
+mybastion ALL=(root) NOPASSWD: /usr/bin/mount /dev/mapper/$LUKS_NAME $MOUNT_POINT
+mybastion ALL=(root) NOPASSWD: /bin/umount $MOUNT_POINT
+mybastion ALL=(root) NOPASSWD: /usr/bin/umount $MOUNT_POINT
+mybastion ALL=(root) NOPASSWD: /bin/chown mybastion\:mybastion $MOUNT_POINT
+mybastion ALL=(root) NOPASSWD: /usr/bin/chown mybastion\:mybastion $MOUNT_POINT
 SUDOERS
-    chmod 0440 /etc/sudoers.d/rustguac-drive
+    chmod 0440 /etc/sudoers.d/mybastion-drive
 
     info "LUKS container created and formatted."
     echo ""
     info "IMPORTANT: Store this LUKS key in Vault:"
-    info "  vault kv put -mount=<mount> rustguac/luks-key key='$LUKS_KEY'"
+    info "  vault kv put -mount=<mount> mybastion/luks-key key='$LUKS_KEY'"
     echo ""
-    info "Then add to your config.toml:"
+    info "Then add to your mybastion.toml:"
     info "  [drive]"
     info "  enabled = true"
     info "  drive_path = \"$MOUNT_POINT\""
     info "  luks_device = \"$LUKS_DEVICE\""
     info "  luks_name = \"$LUKS_NAME\""
-    info "  luks_key_path = \"rustguac/luks-key\""
+    info "  luks_key_path = \"mybastion/luks-key\""
     echo ""
     warn "The LUKS key above is shown ONCE. Save it to Vault now."
 }
@@ -551,7 +577,7 @@ setup_drive
 # Step 7: ldconfig for guacd libraries
 # ---------------------------------------------------------------------------
 setup_ldconfig() {
-    echo "$PREFIX/lib" > /etc/ld.so.conf.d/rustguac.conf
+    echo "$PREFIX/lib" > /etc/ld.so.conf.d/mybastion.conf
     ldconfig
     info "Library path configured."
 }
@@ -568,52 +594,54 @@ install_systemd() {
     # are rewritten on every run, so anything set directly in them (or via
     # "systemctl edit") is lost on the next install. Local settings belong
     # here instead, and this file is never overwritten.
-    if [[ ! -f "$PREFIX/guacd.env" ]]; then
-        cat > "$PREFIX/guacd.env" <<'EOF'
-# Environment for rustguac-guacd. Preserved across reinstalls.
-# Uncomment to enable; restart rustguac-guacd after changing.
+    if [[ ! -f "$CONF_DIR/guacd.env" ]]; then
+        cat > "$CONF_DIR/guacd.env" <<'EOF'
+# Environment for mybastion-guacd. Preserved across reinstalls.
+# Uncomment to enable; restart mybastion-guacd after changing.
 
 # guacd log level: trace, debug, info, warning, error. H.264 passthrough logs
 # per-surface-command codec detail at trace and per-frame detail at debug.
 #GUACD_LOG_LEVEL=debug
 EOF
-        chown rustguac:rustguac "$PREFIX/guacd.env" 2>/dev/null || true
-        info "Created $PREFIX/guacd.env (edit to set guacd environment)."
+        chown mybastion:mybastion "$CONF_DIR/guacd.env" 2>/dev/null || true
+        info "Created $CONF_DIR/guacd.env (edit to set guacd environment)."
     else
-        info "Keeping existing $PREFIX/guacd.env"
+        info "Keeping existing $CONF_DIR/guacd.env"
     fi
 
     # guacd service
-    cat > /etc/systemd/system/rustguac-guacd.service <<EOF
+    cat > /etc/systemd/system/mybastion-guacd.service <<EOF
 [Unit]
-Description=Guacamole proxy daemon (guacd) for rustguac
+Description=Guacamole proxy daemon (guacd) for mybastion
 After=network.target
 
 [Service]
 Type=simple
-User=rustguac
-ExecStart=/bin/sh -c 'exec $PREFIX/sbin/guacd -b 127.0.0.1 -l 4822 -L \${GUACD_LOG_LEVEL:-info} -f -C $PREFIX/tls/cert.pem -K $PREFIX/tls/key.pem'
+User=mybastion
+ExecStart=/bin/sh -c 'exec $PREFIX/sbin/guacd -b 127.0.0.1 -l 4822 -L \${GUACD_LOG_LEVEL:-info} -f -C $CONF_DIR/tls/cert.pem -K $CONF_DIR/tls/key.pem'
 Restart=on-failure
 RestartSec=5
 Environment=LD_LIBRARY_PATH=$PREFIX/lib
-EnvironmentFile=-$PREFIX/guacd.env
+EnvironmentFile=-$CONF_DIR/guacd.env
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # rustguac service
-    cat > /etc/systemd/system/rustguac.service <<EOF
+    # mybastion service
+    cat > /etc/systemd/system/mybastion.service <<EOF
 [Unit]
-Description=rustguac web session proxy
-After=network.target rustguac-guacd.service
-Requires=rustguac-guacd.service
+Description=My Bastion access gateway
+After=network.target mybastion-guacd.service
+Requires=mybastion-guacd.service
 
 [Service]
 Type=simple
-User=rustguac
+User=mybastion
+# The TLS default listens on 443; an unprivileged user needs this to bind it.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 WorkingDirectory=$PREFIX
-ExecStart=$PREFIX/bin/rustguac --config $PREFIX/config.toml serve
+ExecStart=$PREFIX/bin/mybastion --config $CONF_DIR/mybastion.toml serve
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
@@ -626,7 +654,7 @@ EOF
     # win, but live in a separate directory this script never touches, so a
     # forgotten "systemctl edit" silently overrides everything here -- including
     # ExecStart, which discards the log-level wrapper and any flags set above.
-    local dropin_dir="/etc/systemd/system/rustguac-guacd.service.d"
+    local dropin_dir="/etc/systemd/system/mybastion-guacd.service.d"
     if compgen -G "$dropin_dir/*.conf" > /dev/null; then
         warn "Systemd drop-in overrides exist and take precedence over the unit"
         warn "just written. They are NOT managed by this installer:"
@@ -634,16 +662,16 @@ EOF
             warn "  $f"
             sed 's/^/      /' "$f" | while read -r line; do warn "$line"; done
         done
-        warn "Review with: systemctl cat rustguac-guacd"
-        warn "Settings belong in $PREFIX/guacd.env instead, which persists."
+        warn "Review with: systemctl cat mybastion-guacd"
+        warn "Settings belong in $CONF_DIR/guacd.env instead, which persists."
     fi
 
     systemctl daemon-reload
-    systemctl enable rustguac-guacd.service
-    systemctl enable rustguac.service
+    systemctl enable mybastion-guacd.service
+    systemctl enable mybastion.service
 
     info "Systemd services installed and enabled."
-    info "  sudo systemctl start rustguac    (starts both guacd + rustguac)"
+    info "  sudo systemctl start mybastion    (starts both guacd + mybastion)"
 }
 
 install_systemd
@@ -658,31 +686,31 @@ rm -rf "$BUILD_DIR"
 # ---------------------------------------------------------------------------
 # guacd first, and whenever it is running. `make install` replaced its binary
 # and libraries above, but a running guacd keeps executing the old ones, and
-# restarting rustguac does not touch it: Requires= starts a stopped guacd and
+# restarting mybastion does not touch it: Requires= starts a stopped guacd and
 # never restarts a running one. So an upgrade otherwise rebuilt guacd and then
 # went on serving the previous build until someone restarted it by hand. Live
-# sessions are not a concern here -- they go through rustguac, which is
+# sessions are not a concern here -- they go through mybastion, which is
 # already stopped for the upgrade or was never running.
-if systemctl is-active --quiet rustguac-guacd 2>/dev/null; then
+if systemctl is-active --quiet mybastion-guacd 2>/dev/null; then
     info "Restarting guacd..."
-    systemctl restart rustguac-guacd
+    systemctl restart mybastion-guacd
     sleep 1
-    if ! systemctl is-active --quiet rustguac-guacd; then
-        error "guacd did not come back up. Check: journalctl -u rustguac-guacd -n 50"
+    if ! systemctl is-active --quiet mybastion-guacd; then
+        error "guacd did not come back up. Check: journalctl -u mybastion-guacd -n 50"
         exit 1
     fi
 fi
 
-# rustguac only when it was already running. A first install leaves it stopped
+# mybastion only when it was already running. A first install leaves it stopped
 # so that an admin account can be created before anything is reachable.
 if [[ "${WAS_RUNNING:-0}" -eq 1 ]]; then
-    info "Restarting rustguac..."
-    systemctl restart rustguac
+    info "Restarting mybastion..."
+    systemctl restart mybastion
     sleep 2
-    if systemctl is-active --quiet rustguac; then
-        info "rustguac is running."
+    if systemctl is-active --quiet mybastion; then
+        info "mybastion is running."
     else
-        error "rustguac did not come back up. Check: journalctl -u rustguac -n 50"
+        error "mybastion did not come back up. Check: journalctl -u mybastion -n 50"
         exit 1
     fi
 fi
@@ -692,18 +720,18 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 info "============================================"
-info "  rustguac installed to $PREFIX"
+info "  mybastion installed to $PREFIX"
 info "============================================"
 echo ""
 info "Next steps:"
 info "  1. Create an admin:"
-info "     $PREFIX/bin/rustguac --config $PREFIX/config.toml add-admin --name admin"
+info "     $PREFIX/bin/mybastion --config $CONF_DIR/mybastion.toml add-admin --name admin"
 info ""
 if [[ "${WAS_RUNNING:-0}" -eq 1 ]]; then
     info "  2. Services were already running and have been restarted."
 else
     info "  2. Start the services:"
-    info "     sudo systemctl start rustguac"
+    info "     sudo systemctl start mybastion"
 fi
 info ""
 if [[ $NO_TLS -eq 0 ]]; then
@@ -711,7 +739,7 @@ if [[ $NO_TLS -eq 0 ]]; then
     info "     https://$(hostname -f 2>/dev/null || hostname)"
     info ""
     info "  Note: Using self-signed cert — browser will show a warning."
-    info "  Replace $PREFIX/tls/cert.pem and key.pem with real certs for production."
+    info "  Replace $CONF_DIR/tls/cert.pem and key.pem with real certs for production."
 else
     info "  3. Open in browser:"
     info "     http://localhost:8089"

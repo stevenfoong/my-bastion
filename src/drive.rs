@@ -154,7 +154,7 @@ async fn do_cleanup(path: &Path, session_id: Uuid) {
 #[cfg(target_os = "linux")]
 pub async fn mount_luks(
     config: &DriveConfig,
-    vault: &crate::vault::VaultClient,
+    vault: &crate::connections::ConnectionStore,
 ) -> Result<(), DriveError> {
     let luks_device = config
         .luks_device

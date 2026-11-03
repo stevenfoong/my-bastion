@@ -1,3 +1,4 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
@@ -11,7 +12,7 @@
     - Desktop composition (DWM) in remote sessions
     - Optimized audio settings
 
-    Run on the Windows RDP target server (not the rustguac server).
+    Run on the Windows RDP target server (not the mybastion server).
     Requires administrator privileges. A reboot is recommended after.
 
 .PARAMETER NoGPU
@@ -20,7 +21,7 @@
     caps the source frame rate and degrades audio sync for every client.
 
 .PARAMETER AVC444
-    Enable AVC 4:4:4. Incompatible with rustguac's H.264 passthrough, which
+    Enable AVC 4:4:4. Incompatible with mybastion's H.264 passthrough, which
     forwards a single bitstream -- use only for mstsc-only hosts.
 
 .PARAMETER Report
@@ -31,7 +32,7 @@
     Don't prompt for reboot after applying settings.
 
 .EXAMPLE
-    # Standard setup (hardware encoding enabled, AVC420 for rustguac)
+    # Standard setup (hardware encoding enabled, AVC420 for mybastion)
     .\setup-rdp-performance.ps1
 
     # Show what is currently configured, change nothing
@@ -41,7 +42,7 @@
     .\setup-rdp-performance.ps1 -NoGPU
 
 .NOTES
-    For rustguac - see docs/rdp-video-performance.md
+    For mybastion - see docs/rdp-video-performance.md
     Tested on: Windows Server 2022, Windows Server 2025, Windows 11
 
     If PowerShell refuses to run this ("not digitally signed"), the file is
@@ -123,15 +124,15 @@ Write-Host "--- Enabling AVC 4:4:4 (H.264 full-colour) ---" -ForegroundColor Yel
 $tsPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
 
 # AVC444 splits the image across two H.264 bitstreams (luma/main plus an
-# auxiliary chroma view). rustguac's passthrough forwards a single bitstream,
+# auxiliary chroma view). mybastion's passthrough forwards a single bitstream,
 # so an AVC444 stream renders as a corrupted luma/chroma split. Windows only
 # offers H.264 at all when guacd advertises the AVC444 capability
 # (GUAC_RDP_H264_AVC444=1), but it must then decline the preference and send
 # AVC420 -- which is what setting this to 0 does.
 #
-# Pass -AVC444 only for hosts used exclusively with mstsc, never with rustguac.
+# Pass -AVC444 only for hosts used exclusively with mstsc, never with mybastion.
 if ($AVC444) {
-    Write-Host "  (AVC444 requested -- incompatible with rustguac H.264 passthrough)" -ForegroundColor Yellow
+    Write-Host "  (AVC444 requested -- incompatible with mybastion H.264 passthrough)" -ForegroundColor Yellow
     Set-RegValue -Path $tsPath -Name "AVC444ModePreferred" -Value 1
 } else {
     Set-RegValue -Path $tsPath -Name "AVC444ModePreferred" -Value 0
@@ -234,9 +235,9 @@ if (-not $NoGPU) {
     Write-Host "  GPU hardware encoding:  Not enabled (-NoGPU)" -ForegroundColor Yellow
 }
 if ($AVC444) {
-    Write-Host "  AVC 4:4:4:              Enabled (breaks rustguac passthrough)" -ForegroundColor Yellow
+    Write-Host "  AVC 4:4:4:              Enabled (breaks mybastion passthrough)" -ForegroundColor Yellow
 } else {
-    Write-Host "  AVC 4:2:0:              Enabled (required for rustguac passthrough)" -ForegroundColor Green
+    Write-Host "  AVC 4:2:0:              Enabled (required for mybastion passthrough)" -ForegroundColor Green
 }
 
 Write-Host "`n=== Done ===" -ForegroundColor Cyan

@@ -1,8 +1,9 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Debian Trixie desktop image example with PulseAudio Support for rustguac VDI
+# Debian Trixie desktop image example with PulseAudio Support for mybastion VDI
 #
 # This follows the same broad shape as contrib/setup-xrdp-gfx.sh:
 # install a desktop, install real PulseAudio, build the xrdp PulseAudio

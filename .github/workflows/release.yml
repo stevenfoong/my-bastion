@@ -1,3 +1,4 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 name: Release
 
 on:
@@ -6,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write  # push images to ghcr.io
 
 env:
   GUACD_REPO: https://github.com/apache/guacamole-server.git
@@ -53,17 +55,17 @@ jobs:
           cd /tmp/guacamole-server && autoreconf -fi
           mkdir /tmp/guacd-build && cd /tmp/guacd-build
           /tmp/guacamole-server/configure \
-            --prefix=/opt/rustguac \
+            --prefix=/opt/mybastion \
             --with-ssh --with-vnc --with-rdp --with-spice \
             --without-telnet --disable-kubernetes \
             --disable-guaclog --disable-static
           make -j"$(nproc)"
           make DESTDIR="$GITHUB_WORKSPACE/debian/staging" install
           # guacd's configure skips a protocol whose library is missing, even
-          # when asked for it, so check every one rustguac needs was built.
-          bash "$GITHUB_WORKSPACE/scripts/check-guacd-plugins.sh" "$GITHUB_WORKSPACE/debian/staging/opt/rustguac/lib"
+          # when asked for it, so check every one mybastion needs was built.
+          bash "$GITHUB_WORKSPACE/scripts/check-guacd-plugins.sh" "$GITHUB_WORKSPACE/debian/staging/opt/mybastion/lib"
 
-      - name: Build rustguac
+      - name: Build mybastion
         run: $HOME/.cargo/bin/cargo build --release
 
       - name: Build .deb package
@@ -72,11 +74,11 @@ jobs:
           GIT_HASH=$(echo "$GITHUB_SHA" | cut -c1-7)
           DEB_VERSION="${VERSION}+g${GIT_HASH}"
           cat > debian/changelog <<EOF
-          rustguac (${DEB_VERSION}) unstable; urgency=medium
+          mybastion (${DEB_VERSION}) unstable; urgency=medium
 
             * Release ${GITHUB_REF_NAME}
 
-           -- rustguac build <rustguac@localhost>  $(date -R)
+           -- mybastion build <mybastion@localhost>  $(date -R)
           EOF
           dpkg-buildpackage -us -uc -b
           # dpkg-buildpackage puts .deb in parent dir; copy to workspace for upload
@@ -94,30 +96,31 @@ jobs:
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          TARBALL_DIR="/tmp/rustguac-${TAG_VERSION}-linux-amd64"
+          TARBALL_DIR="/tmp/mybastion-${TAG_VERSION}-linux-amd64"
           mkdir -p "$TARBALL_DIR/bin" "$TARBALL_DIR/sbin" "$TARBALL_DIR/lib" "$TARBALL_DIR/static" "$TARBALL_DIR/systemd"
 
-          cp target/release/rustguac "$TARBALL_DIR/bin/"
-          cp debian/staging/opt/rustguac/sbin/guacd "$TARBALL_DIR/sbin/"
-          cp debian/staging/opt/rustguac/bin/guacenc "$TARBALL_DIR/bin/"
-          cp -a debian/staging/opt/rustguac/lib/*.so* "$TARBALL_DIR/lib/"
+          cp target/release/mybastion "$TARBALL_DIR/bin/"
+          cp debian/staging/opt/mybastion/sbin/guacd "$TARBALL_DIR/sbin/"
+          cp debian/staging/opt/mybastion/bin/guacenc "$TARBALL_DIR/bin/"
+          cp -a debian/staging/opt/mybastion/lib/*.so* "$TARBALL_DIR/lib/"
           cp -r static/* "$TARBALL_DIR/static/"
-          cp debian/config.toml.default "$TARBALL_DIR/config.toml.default"
-          cp debian/rustguac.service "$TARBALL_DIR/systemd/"
-          cp debian/rustguac-guacd.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion.toml.default "$TARBALL_DIR/mybastion.toml.default"
+          cp debian/mybastion.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion-guacd.service "$TARBALL_DIR/systemd/"
           cp install-release.sh "$TARBALL_DIR/install.sh"
+          cp LICENSE NOTICE "$TARBALL_DIR/"
           chmod +x "$TARBALL_DIR/install.sh"
           [ -d scripts ] && cp -r scripts "$TARBALL_DIR/" || true
 
           cd /tmp
-          tar czf "$GITHUB_WORKSPACE/rustguac-${TAG_VERSION}-linux-amd64.tar.gz" \
-            "rustguac-${TAG_VERSION}-linux-amd64"
+          tar czf "$GITHUB_WORKSPACE/mybastion-${TAG_VERSION}-linux-amd64.tar.gz" \
+            "mybastion-${TAG_VERSION}-linux-amd64"
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v7
         with:
           name: tarball
-          path: rustguac-*-linux-amd64.tar.gz
+          path: mybastion-*-linux-amd64.tar.gz
           if-no-files-found: error
 
 
@@ -162,17 +165,17 @@ jobs:
           cd /tmp/guacamole-server && autoreconf -fi
           mkdir /tmp/guacd-build && cd /tmp/guacd-build
           /tmp/guacamole-server/configure \
-            --prefix=/opt/rustguac \
+            --prefix=/opt/mybastion \
             --with-ssh --with-vnc --with-rdp --with-spice \
             --without-telnet --disable-kubernetes \
             --disable-guaclog --disable-static
           make -j"$(nproc)"
           make DESTDIR="$GITHUB_WORKSPACE/debian/staging" install
           # guacd's configure skips a protocol whose library is missing, even
-          # when asked for it, so check every one rustguac needs was built.
-          bash "$GITHUB_WORKSPACE/scripts/check-guacd-plugins.sh" "$GITHUB_WORKSPACE/debian/staging/opt/rustguac/lib"
+          # when asked for it, so check every one mybastion needs was built.
+          bash "$GITHUB_WORKSPACE/scripts/check-guacd-plugins.sh" "$GITHUB_WORKSPACE/debian/staging/opt/mybastion/lib"
 
-      - name: Build rustguac
+      - name: Build mybastion
         run: $HOME/.cargo/bin/cargo build --release
 
       - name: Build .deb package
@@ -181,11 +184,11 @@ jobs:
           GIT_HASH=$(echo "$GITHUB_SHA" | cut -c1-7)
           DEB_VERSION="${VERSION}+g${GIT_HASH}"
           cat > debian/changelog <<EOF
-          rustguac (${DEB_VERSION}) unstable; urgency=medium
+          mybastion (${DEB_VERSION}) unstable; urgency=medium
 
             * Release ${GITHUB_REF_NAME}
 
-           -- rustguac build <rustguac@localhost>  $(date -R)
+           -- mybastion build <mybastion@localhost>  $(date -R)
           EOF
           dpkg-buildpackage -us -uc -b
           cp ../*.deb .
@@ -200,30 +203,31 @@ jobs:
       - name: Build release tarball
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          TARBALL_DIR="/tmp/rustguac-${TAG_VERSION}-linux-arm64"
+          TARBALL_DIR="/tmp/mybastion-${TAG_VERSION}-linux-arm64"
           mkdir -p "$TARBALL_DIR/bin" "$TARBALL_DIR/sbin" "$TARBALL_DIR/lib" "$TARBALL_DIR/static" "$TARBALL_DIR/systemd"
 
-          cp target/release/rustguac "$TARBALL_DIR/bin/"
-          cp debian/staging/opt/rustguac/sbin/guacd "$TARBALL_DIR/sbin/"
-          cp debian/staging/opt/rustguac/bin/guacenc "$TARBALL_DIR/bin/"
-          cp -a debian/staging/opt/rustguac/lib/*.so* "$TARBALL_DIR/lib/"
+          cp target/release/mybastion "$TARBALL_DIR/bin/"
+          cp debian/staging/opt/mybastion/sbin/guacd "$TARBALL_DIR/sbin/"
+          cp debian/staging/opt/mybastion/bin/guacenc "$TARBALL_DIR/bin/"
+          cp -a debian/staging/opt/mybastion/lib/*.so* "$TARBALL_DIR/lib/"
           cp -r static/* "$TARBALL_DIR/static/"
-          cp debian/config.toml.default "$TARBALL_DIR/config.toml.default"
-          cp debian/rustguac.service "$TARBALL_DIR/systemd/"
-          cp debian/rustguac-guacd.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion.toml.default "$TARBALL_DIR/mybastion.toml.default"
+          cp debian/mybastion.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion-guacd.service "$TARBALL_DIR/systemd/"
           cp install-release.sh "$TARBALL_DIR/install.sh"
+          cp LICENSE NOTICE "$TARBALL_DIR/"
           chmod +x "$TARBALL_DIR/install.sh"
           [ -d scripts ] && cp -r scripts "$TARBALL_DIR/" || true
 
           cd /tmp
-          tar czf "$GITHUB_WORKSPACE/rustguac-${TAG_VERSION}-linux-arm64.tar.gz" \
-            "rustguac-${TAG_VERSION}-linux-arm64"
+          tar czf "$GITHUB_WORKSPACE/mybastion-${TAG_VERSION}-linux-arm64.tar.gz" \
+            "mybastion-${TAG_VERSION}-linux-arm64"
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v7
         with:
           name: tarball-arm64
-          path: rustguac-*-linux-arm64.tar.gz
+          path: mybastion-*-linux-arm64.tar.gz
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -241,11 +245,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4.6.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -256,7 +261,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: sol1/rustguac:${{ steps.version.outputs.version }}-amd64
+          tags: ghcr.io/stevenfoong/mybastion:${{ steps.version.outputs.version }}-amd64
           cache-from: type=gha,scope=docker-amd64
           cache-to: type=gha,mode=max,scope=docker-amd64
 
@@ -269,11 +274,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4.6.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -284,7 +290,7 @@ jobs:
           context: .
           platforms: linux/arm64
           push: true
-          tags: sol1/rustguac:${{ steps.version.outputs.version }}-arm64
+          tags: ghcr.io/stevenfoong/mybastion:${{ steps.version.outputs.version }}-arm64
           cache-from: type=gha,scope=docker-arm64
           cache-to: type=gha,mode=max,scope=docker-arm64
 
@@ -295,11 +301,12 @@ jobs:
     needs: [build-docker-amd64, build-docker-arm64]
     runs-on: ubuntu-latest
     steps:
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4.6.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
@@ -307,10 +314,10 @@ jobs:
         run: |
           VER="${{ steps.version.outputs.version }}"
           docker buildx imagetools create \
-            -t "sol1/rustguac:${VER}" \
-            -t "sol1/rustguac:latest" \
-            "sol1/rustguac:${VER}-amd64" \
-            "sol1/rustguac:${VER}-arm64"
+            -t "ghcr.io/stevenfoong/mybastion:${VER}" \
+            -t "ghcr.io/stevenfoong/mybastion:latest" \
+            "ghcr.io/stevenfoong/mybastion:${VER}-amd64" \
+            "ghcr.io/stevenfoong/mybastion:${VER}-arm64"
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release

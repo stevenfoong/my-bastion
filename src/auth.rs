@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Authentication middleware — supports API key, OIDC session cookie, and
 //! single-use WebSocket tickets.
 
@@ -99,13 +100,13 @@ impl AuthIdentity {
 
     /// Return OIDC group memberships. Empty for API key identities.
     /// The identity as folder access sees it: login email and groups.
-    pub fn folder_subject(&self) -> crate::vault::FolderSubject<'_> {
+    pub fn folder_subject(&self) -> crate::connections::FolderSubject<'_> {
         match self {
-            AuthIdentity::ApiKey(_) => crate::vault::FolderSubject {
+            AuthIdentity::ApiKey(_) => crate::connections::FolderSubject {
                 email: None,
                 groups: &[],
             },
-            AuthIdentity::User { email, groups, .. } => crate::vault::FolderSubject {
+            AuthIdentity::User { email, groups, .. } => crate::connections::FolderSubject {
                 email: Some(email),
                 groups,
             },
@@ -372,7 +373,7 @@ pub async fn require_auth(
     }
 
     // Path 2: Session cookie
-    let session_token = extract_cookie(&request, "rustguac_session");
+    let session_token = extract_cookie(&request, "mybastion_session");
     if let Some(token) = session_token {
         let db_clone = db.clone();
         let result =
@@ -545,7 +546,7 @@ pub async fn optional_auth(
     }
 
     // Path 2: Session cookie
-    let session_token = extract_cookie(&request, "rustguac_session");
+    let session_token = extract_cookie(&request, "mybastion_session");
     if let Some(token) = session_token {
         let db_clone = db.clone();
         let result =

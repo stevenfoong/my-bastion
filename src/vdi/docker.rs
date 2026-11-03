@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Docker-based VDI driver using bollard (unix socket).
 
 use super::{ContainerInfo, ContainerSpec, VdiDriver, VdiError};
@@ -89,8 +90,8 @@ impl DockerDriver {
     fn container_name(spec: &ContainerSpec) -> String {
         let username = Self::sanitize_name_suffix(&spec.username);
         match Self::entry_name(spec.entry_key.as_deref()) {
-            Some(entry_name) => format!("rustguac-vdi-{}-{}", username, entry_name),
-            None => format!("rustguac-vdi-{}", username),
+            Some(entry_name) => format!("mybastion-vdi-{}-{}", username, entry_name),
+            None => format!("mybastion-vdi-{}", username),
         }
     }
 
@@ -151,10 +152,10 @@ impl DockerDriver {
             .arg(port.to_string())
             .arg(container_id)
             .arg(container_name)
-            .env("RUSTGUAC_VDI_HOOK_ACTION", action)
-            .env("RUSTGUAC_VDI_PORT", port.to_string())
-            .env("RUSTGUAC_VDI_CONTAINER_ID", container_id)
-            .env("RUSTGUAC_VDI_CONTAINER_NAME", container_name);
+            .env("MYBASTION_VDI_HOOK_ACTION", action)
+            .env("MYBASTION_VDI_PORT", port.to_string())
+            .env("MYBASTION_VDI_CONTAINER_ID", container_id)
+            .env("MYBASTION_VDI_CONTAINER_NAME", container_name);
 
         let output = tokio::time::timeout(self.container_hook_timeout, child.output())
             .await
@@ -532,18 +533,18 @@ impl DockerDriver {
 
                 // Labels
                 let mut labels = HashMap::new();
-                labels.insert("rustguac.managed".to_string(), "true".to_string());
-                labels.insert("rustguac.username".to_string(), spec.username.clone());
+                labels.insert("mybastion.managed".to_string(), "true".to_string());
+                labels.insert("mybastion.username".to_string(), spec.username.clone());
                 if let Some(ref entry_key) = spec.entry_key {
-                    labels.insert("rustguac.entry".to_string(), entry_key.clone());
+                    labels.insert("mybastion.entry".to_string(), entry_key.clone());
                 }
                 if let Some(timeout) = spec.idle_timeout_mins {
                     labels.insert(
-                        "rustguac.idle_timeout_mins".to_string(),
+                        "mybastion.idle_timeout_mins".to_string(),
                         timeout.to_string(),
                     );
                 }
-                labels.insert("rustguac.image".to_string(), spec.image.clone());
+                labels.insert("mybastion.image".to_string(), spec.image.clone());
 
                 // Resource limits
                 let nano_cpus = if spec.cpu_limit > 0.0 {
@@ -782,7 +783,7 @@ impl DockerDriver {
         let mut filters = HashMap::new();
         filters.insert(
             "label".to_string(),
-            vec!["rustguac.managed=true".to_string()],
+            vec!["mybastion.managed=true".to_string()],
         );
 
         let opts = ListContainersOptions {
@@ -806,7 +807,7 @@ impl DockerDriver {
         let mut filters = HashMap::new();
         filters.insert(
             "label".to_string(),
-            vec!["rustguac.managed=true".to_string()],
+            vec!["mybastion.managed=true".to_string()],
         );
 
         let opts = ListContainersOptions {
@@ -833,17 +834,20 @@ impl DockerDriver {
                 super::ManagedContainer {
                     container_id: c.id.unwrap_or_default(),
                     container_name,
-                    username: labels.get("rustguac.username").cloned().unwrap_or_default(),
+                    username: labels
+                        .get("mybastion.username")
+                        .cloned()
+                        .unwrap_or_default(),
                     image: labels
-                        .get("rustguac.image")
+                        .get("mybastion.image")
                         .cloned()
                         .or_else(|| c.image.clone())
                         .unwrap_or_default(),
-                    entry_key: labels.get("rustguac.entry").cloned(),
+                    entry_key: labels.get("mybastion.entry").cloned(),
                     thumbnail_url: None,       // populated by API layer
                     has_active_session: false, // populated by API layer
                     idle_timeout_mins: labels
-                        .get("rustguac.idle_timeout_mins")
+                        .get("mybastion.idle_timeout_mins")
                         .and_then(|v| v.parse().ok()),
                 }
             })
@@ -921,7 +925,7 @@ mod tests {
     #[test]
     fn sanitize_username_collapses_to_empty() {
         // Pathological input: nothing ascii-alphanumeric. Output is empty
-        // (which would produce `rustguac-vdi-` — an invalid Docker name).
+        // (which would produce `mybastion-vdi-` — an invalid Docker name).
         // Documented here so the caller knows to reject empty output if it
         // ever matters (currently login requires a non-empty OIDC `sub`).
         assert_eq!(san("@@@"), "");
@@ -949,11 +953,11 @@ mod tests {
     fn container_name_prefix_enforced() {
         // Container name must always start with the fixed prefix so a
         // hostile username can't pretend to be someone else's container.
-        assert!(DockerDriver::container_name(&spec("alice", None)).starts_with("rustguac-vdi-"));
-        assert!(DockerDriver::container_name(&spec("@@@", None)).starts_with("rustguac-vdi-"));
+        assert!(DockerDriver::container_name(&spec("alice", None)).starts_with("mybastion-vdi-"));
+        assert!(DockerDriver::container_name(&spec("@@@", None)).starts_with("mybastion-vdi-"));
         assert_eq!(
             DockerDriver::container_name(&spec("alice", None)),
-            "rustguac-vdi-alice"
+            "mybastion-vdi-alice"
         );
     }
 
@@ -961,11 +965,11 @@ mod tests {
     fn container_name_appends_sanitized_entry_name() {
         assert_eq!(
             DockerDriver::container_name(&spec("user", Some("shared/desktops/Dev Desktop"))),
-            "rustguac-vdi-user-dev-desktop"
+            "mybastion-vdi-user-dev-desktop"
         );
         assert_eq!(
             DockerDriver::container_name(&spec("user", Some("shared/desktops/accounting_vdi"))),
-            "rustguac-vdi-user-accounting-vdi"
+            "mybastion-vdi-user-accounting-vdi"
         );
     }
 
@@ -973,7 +977,7 @@ mod tests {
     fn container_name_uses_final_entry_key_segment() {
         assert_eq!(
             DockerDriver::container_name(&spec("user", Some("team-a/folder/vdi.one"))),
-            "rustguac-vdi-user-vdi-one"
+            "mybastion-vdi-user-vdi-one"
         );
     }
 

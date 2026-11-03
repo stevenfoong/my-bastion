@@ -1,3 +1,4 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 // One global connection search on every page: '/' opens a floating overlay
 // listing every connection, typing narrows it, Escape or the backdrop
 // closes it, and on the connections page the folder view underneath is
@@ -71,7 +72,7 @@ test('results show the folder display name and a Connect button; Connect posts t
 // anonymous or viewer caller, or for a different login than the one that
 // cached it.
 
-const IDX_KEY = 'rustguac_search_index_v1', VER_KEY = 'rustguac_search_version_v1', WHO_KEY = 'rustguac_search_user_v1';
+const IDX_KEY = 'mybastion_search_index_v1', VER_KEY = 'mybastion_search_version_v1', WHO_KEY = 'mybastion_search_user_v1';
 
 // A leftover index from an earlier login in this tab: one entry no fixture has.
 async function seedStaleCache(page, who = 'someone-else@example.com|admin|everyone') {

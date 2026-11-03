@@ -1,6 +1,7 @@
+// Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 //! Virtual Desktop Infrastructure (VDI) — ephemeral container sessions.
 //!
-//! The `VdiDriver` trait abstracts container backends. rustguac ships a Docker
+//! The `VdiDriver` trait abstracts container backends. mybastion ships a Docker
 //! driver; downstream forks (JumpboxVDI) can add Nomad, Proxmox, etc.
 
 pub mod docker;
@@ -119,7 +120,7 @@ pub trait VdiDriver: Send + Sync {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), VdiError>> + Send + '_>>;
 
-    /// List container IDs managed by rustguac (label `rustguac.managed=true`).
+    /// List container IDs managed by mybastion (label `mybastion.managed=true`).
     #[allow(dead_code)]
     fn list_managed_containers(
         &self,

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 #
 # Build the guacd parser fuzzer.
 #
@@ -14,7 +15,7 @@ GUAC_SRC="${SCRIPT_DIR}/../../guacamole-server/src/libguac"
 
 if [ ! -f "${GUAC_SRC}/parser.c" ]; then
     echo "ERROR: guacamole-server source not found at ${GUAC_SRC}" >&2
-    echo "Expected: ../guacamole-server relative to rustguac root" >&2
+    echo "Expected: ../guacamole-server relative to mybastion root" >&2
     exit 1
 fi
 

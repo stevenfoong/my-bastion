@@ -678,7 +678,7 @@
 					"op": "SCMP_CMP_MASKED_EQ"
 				}
 			],
-			"comment": "rustguac: also allow CLONE_NEWUSER, CLONE_NEWPID and CLONE_NEWNET for Chromium's namespace sandbox",
+			"comment": "mybastion: also allow CLONE_NEWUSER, CLONE_NEWPID and CLONE_NEWNET for Chromium's namespace sandbox",
 			"excludes": {
 				"caps": [
 					"CAP_SYS_ADMIN"
@@ -701,7 +701,7 @@
 					"op": "SCMP_CMP_MASKED_EQ"
 				}
 			],
-			"comment": "s390 parameter ordering for clone is different; rustguac: also allow CLONE_NEWUSER, CLONE_NEWPID and CLONE_NEWNET for Chromium's namespace sandbox",
+			"comment": "s390 parameter ordering for clone is different; mybastion: also allow CLONE_NEWUSER, CLONE_NEWPID and CLONE_NEWNET for Chromium's namespace sandbox",
 			"includes": {
 				"arches": [
 					"s390",
@@ -726,7 +726,7 @@
 					"op": "SCMP_CMP_MASKED_EQ"
 				}
 			],
-			"comment": "rustguac: allow unshare of user, PID and network namespaces for Chromium's namespace sandbox",
+			"comment": "mybastion: allow unshare of user, PID and network namespaces for Chromium's namespace sandbox",
 			"excludes": {
 				"caps": [
 					"CAP_SYS_ADMIN"

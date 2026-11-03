@@ -1,13 +1,14 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 
 Files: *
-Copyright: 2024-2026 rustguac contributors
+Copyright: 2026 Steven Foong and the My Bastion contributors
+           2024-2026 rustguac contributors (https://github.com/sol1/rustguac)
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0.
  See /usr/share/common-licenses/Apache-2.0
 
-Files: debian/staging/opt/rustguac/sbin/guacd
-       debian/staging/opt/rustguac/lib/*
+Files: debian/staging/opt/mybastion/sbin/guacd
+       debian/staging/opt/mybastion/lib/*
 Copyright: 2010-2026 Apache Software Foundation
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0.

@@ -1,0 +1,17 @@
+[Unit]
+Description=mybastion web session proxy
+After=network.target mybastion-guacd.service
+Requires=mybastion-guacd.service
+
+[Service]
+Type=simple
+User=mybastion
+WorkingDirectory=/opt/mybastion
+ExecStart=/opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml serve
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+EnvironmentFile=-/etc/mybastion/env
+
+[Install]
+WantedBy=multi-user.target

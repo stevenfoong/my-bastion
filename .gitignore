@@ -1,3 +1,4 @@
+# Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE.
 # Rust build artifacts
 /target/
 **/*.rs.bk
@@ -32,14 +33,14 @@ config.local.toml
 
 # Debian packaging (build artifacts)
 debian/.debhelper/
-debian/rustguac/
+debian/mybastion/
 debian/staging/
 debian/changelog
 debian/debhelper-build-stamp
 debian/files
-debian/rustguac.debhelper.log
-debian/rustguac.postrm.debhelper
-debian/rustguac.substvars
+debian/mybastion.debhelper.log
+debian/mybastion.postrm.debhelper
+debian/mybastion.substvars
 
 # RPM packaging (build artifacts)
 rpm/staging/
@@ -50,3 +51,6 @@ rpm/staging/
 
 # Claude Code project memory
 .claude/
+
+# Local EC2 test machine start/stop script (account-specific)
+ec2-test.bat
