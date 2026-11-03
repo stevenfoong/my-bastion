@@ -293,6 +293,9 @@ pub fn init_db(path: &Path) -> rusqlite::Result<Db> {
         )?;
     }
 
+    // Policies, approval requests and their audit log.
+    crate::policy::store::migrate(&conn)?;
+
     Ok(Arc::new(Mutex::new(conn)))
 }
 

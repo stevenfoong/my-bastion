@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<!-- Changed for My Bastion (2026). Derived from sol1/rustguac, Apache-2.0; see NOTICE. -->
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>My Bastion - Approvals</title>
+    <link rel="stylesheet" href="/mybastion.css">
+    <style>
+        .approval-comment { width: 12em; }
+        .approval-approved { color: var(--success, #3c9); }
+        .approval-denied, .approval-expired { color: var(--text-muted); }
+        .approval-pending { color: var(--accent); }
+    </style>
+    <script>(function(){var c=localStorage.getItem('mybastion_theme_colors');if(c){try{var o=JSON.parse(c),r=document.documentElement.style;for(var k in o)r.setProperty('--'+k.replace(/_/g,'-'),o[k]);if(o.bg_pattern&&o.bg_pattern!=='none'){var s=document.createElement('style');s.id='bg-pattern-style';s.textContent='body{background-image:'+o.bg_pattern+';background-attachment:fixed}';document.head.appendChild(s)}}catch(e){}}})();</script>
+</head>
+<body>
+    <div class="brand-row">
+        <img id="site-logo" src="/logo.svg" alt="">
+        <h1>My Bastion</h1>
+    </div>
+    <nav>
+        <a href="/connections.html">Connections</a>
+        <a href="/sessions.html" id="sessions-link" data-min-role="poweruser">Sessions</a>
+        <a href="/recordings.html">Recordings</a>
+        <a href="/reports.html" id="reports-link" data-min-role="poweruser">Reports</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/approvals.html" class="active" id="approvals-link">Approvals</a>
+        <a href="/tokens.html" id="tokens-link" data-min-role="operator">Tokens</a>
+        <a href="/admin.html" id="admin-link" data-min-role="admin">Admin</a>
+        <a href="/connections.html#my-credentials" id="my-creds-nav" title="Manage your saved credential variables"><span class="nav-key">&#128273;</span> Credentials</a>
+        <span id="user-menu-wrapper"><a href="#" id="logout-item">Logout</a><span id="user-menu-btn" title="Preferences">&#9881; Settings</span><div id="user-menu"><div class="um-section-label">Theme</div><div id="um-theme-list"></div></div></span>
+    </nav>
+
+    <div id="loading">Loading...</div>
+
+    <div id="decide-section" style="display:none">
+        <h2>Waiting for your decision</h2>
+        <table>
+            <thead><tr>
+                <th>Requester</th><th>Connect to</th><th>Policy</th><th>Reason</th><th>Requested</th><th>Expires</th><th>Comment</th><th></th>
+            </tr></thead>
+            <tbody id="decide-body"></tbody>
+        </table>
+        <div id="decide-empty" style="display:none;color:var(--text-muted);margin-top:0.5em;">Nothing is waiting for you.</div>
+    </div>
+
+    <div id="mine-section" style="display:none">
+        <h2>Your requests</h2>
+        <table>
+            <thead><tr>
+                <th>Connect to</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Comment</th><th>Requested</th><th>Access until</th>
+            </tr></thead>
+            <tbody id="mine-body"></tbody>
+        </table>
+        <div id="mine-empty" style="display:none;color:var(--text-muted);margin-top:0.5em;">You have made no requests.</div>
+    </div>
+
+    <div id="recent-section" style="display:none">
+        <h2>All recent requests</h2>
+        <table>
+            <thead><tr>
+                <th>Requester</th><th>Connect to</th><th>Policy</th><th>Status</th><th>Decided by</th><th>Requested</th>
+            </tr></thead>
+            <tbody id="recent-body"></tbody>
+        </table>
+    </div>
+
+    <div id="error"></div>
+
+    <script>
+        function applyThemeColors(colors){var r=document.documentElement.style;for(var k in colors)r.setProperty('--'+k.replace(/_/g,'-'),colors[k]);var s=document.getElementById('bg-pattern-style');if(!s){s=document.createElement('style');s.id='bg-pattern-style';document.head.appendChild(s)}s.textContent=colors.bg_pattern&&colors.bg_pattern!=='none'?'body{background-image:'+colors.bg_pattern+';background-attachment:fixed}':'';localStorage.setItem('mybastion_theme_colors',JSON.stringify(colors))}
+        var _themePresets={},_adminPreset='aurora';
+        var _themeDescriptions={dark:'Navy & cyan \u2014 the default',light:'Clean white & blue','high-contrast':'Maximum readability',terminal:'Retro green-on-black',nord:'Arctic, muted blues',corporate:'Slate & steel blue',aurora:'Midnight blue with ambient glow',jaguar:'Racing green & gold'};
+        function initTheme(t){if(!t)return;_themePresets=t.presets||{};_adminPreset=t.admin_preset||'aurora';var u=localStorage.getItem('mybastion_theme'),active=u&&_themePresets[u]?u:_adminPreset,colors=(active===_adminPreset)?t.admin_colors:_themePresets[active];if(colors)applyThemeColors(colors);if(t.logo_url){var l=document.getElementById('site-logo');if(l){if(l.src!==t.logo_url&&!l.src.endsWith(t.logo_url))l.src=t.logo_url;l.style.display=''}}var menu=document.getElementById('um-theme-list');if(menu){menu.innerHTML='';Object.keys(_themePresets).forEach(function(name){var item=document.createElement('div');item.className='um-item'+(name===active?' active':'');var sw=document.createElement('span');sw.className='um-swatch';var p=_themePresets[name];sw.style.background='linear-gradient(135deg,'+p.primary+' 50%,'+p.accent+' 50%)';item.appendChild(sw);var info=document.createElement('div');info.className='um-theme-info';var nm=document.createElement('span');nm.className='um-theme-name';nm.textContent=name;info.appendChild(nm);var desc=document.createElement('span');desc.className='um-theme-desc';desc.textContent=_themeDescriptions[name]||'';info.appendChild(desc);item.appendChild(info);item.addEventListener('click',function(){localStorage.setItem('mybastion_theme',name);applyThemeColors(_themePresets[name]);menu.querySelectorAll('.um-item').forEach(function(el){el.classList.remove('active')});item.classList.add('active');document.getElementById('user-menu').style.display='none'});menu.appendChild(item)})}}
+        var _ub=document.getElementById('user-menu-btn');if(_ub)_ub.addEventListener('click',function(e){e.stopPropagation();var m=document.getElementById('user-menu');m.style.display=m.style.display==='block'?'none':'block'});document.addEventListener('click',function(){var m=document.getElementById('user-menu');if(m)m.style.display='none'});
+        fetch('/api/auth/status').then(function(r){return r.json()}).then(function(d){
+            if(d.site_title){document.title=d.site_title+' - Approvals';document.querySelector('h1').textContent=d.site_title;}
+            initTheme(d.theme);
+        });
+
+        var apiKey = sessionStorage.getItem('mybastion_api_key');
+        var roleLevel = { admin: 4, poweruser: 3, operator: 2, viewer: 1 };
+
+        function apiHeaders(extra) {
+            var h = {};
+            if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+            if (extra) { for (var k in extra) h[k] = extra[k]; }
+            return h;
+        }
+
+        var errorEl = document.getElementById('error');
+        function showError(msg) { errorEl.textContent = msg; setTimeout(function(){ errorEl.textContent = ''; }, 5000); }
+
+        document.getElementById('logout-item').addEventListener('click', function() {
+            sessionStorage.removeItem('mybastion_api_key');
+            fetch('/auth/logout', { credentials: 'same-origin' })
+            .finally(function() { window.location.href = '/'; });
+        });
+
+        // ── Approvals ──
+        // Requests a connection policy is holding: the ones this user may
+        // decide, their own, and (for admins) all recent ones.
+        function fmtTime(secs) {
+            return secs ? new Date(secs * 1000).toLocaleString() : '';
+        }
+        function cell(text) {
+            var td = document.createElement('td');
+            td.textContent = text == null ? '' : String(text);
+            return td;
+        }
+        function statusCell(s) {
+            var td = cell(s);
+            td.className = 'approval-status approval-' + s;
+            return td;
+        }
+
+        function decide(id, approve, comment, btns) {
+            btns.forEach(function(b) { b.disabled = true; });
+            fetch('/api/approvals/' + encodeURIComponent(id) + (approve ? '/approve' : '/deny'), {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify({ comment: comment })
+            })
+            .then(function(r) {
+                if (r.ok) return loadApprovals();
+                return r.json().then(function(j) { throw new Error(j.error || 'Failed'); });
+            })
+            .catch(function(e) {
+                showError(e.message);
+                btns.forEach(function(b) { b.disabled = false; });
+            });
+        }
+
+        function renderDecide(list) {
+            var body = document.getElementById('decide-body');
+            body.innerHTML = '';
+            document.getElementById('decide-empty').style.display = list.length ? 'none' : '';
+            list.forEach(function(r) {
+                var tr = document.createElement('tr');
+                tr.setAttribute('data-approval-id', r.id);
+                [r.requester_display, r.target_label, r.policy_name, r.reason || '—',
+                 fmtTime(r.created_at), fmtTime(r.expires_at)].forEach(function(v) { tr.appendChild(cell(v)); });
+                var ctd = document.createElement('td');
+                var comment = document.createElement('input');
+                comment.type = 'text';
+                comment.placeholder = 'optional';
+                comment.maxLength = 500;
+                comment.className = 'approval-comment';
+                ctd.appendChild(comment);
+                tr.appendChild(ctd);
+                var atd = document.createElement('td');
+                atd.style.whiteSpace = 'nowrap';
+                var ok = document.createElement('button');
+                ok.className = 'btn-small btn-action approval-approve';
+                ok.textContent = 'Approve';
+                var no = document.createElement('button');
+                no.className = 'btn-small approval-deny';
+                no.textContent = 'Deny';
+                ok.onclick = function() { decide(r.id, true, comment.value, [ok, no]); };
+                no.onclick = function() { decide(r.id, false, comment.value, [ok, no]); };
+                atd.appendChild(ok);
+                atd.appendChild(no);
+                tr.appendChild(atd);
+                body.appendChild(tr);
+            });
+        }
+
+        function renderMine(list) {
+            var body = document.getElementById('mine-body');
+            body.innerHTML = '';
+            document.getElementById('mine-empty').style.display = list.length ? 'none' : '';
+            list.forEach(function(r) {
+                var tr = document.createElement('tr');
+                tr.appendChild(cell(r.target_label));
+                tr.appendChild(cell(r.policy_name));
+                tr.appendChild(statusCell(r.status));
+                tr.appendChild(cell(r.decided_by || ''));
+                tr.appendChild(cell(r.comment || ''));
+                tr.appendChild(cell(fmtTime(r.created_at)));
+                tr.appendChild(cell(r.status === 'approved' ? fmtTime(r.grant_until) : ''));
+                body.appendChild(tr);
+            });
+        }
+
+        function renderRecent(list) {
+            var body = document.getElementById('recent-body');
+            body.innerHTML = '';
+            list.forEach(function(r) {
+                var tr = document.createElement('tr');
+                tr.appendChild(cell(r.requester_display));
+                tr.appendChild(cell(r.target_label));
+                tr.appendChild(cell(r.policy_name));
+                tr.appendChild(statusCell(r.status));
+                tr.appendChild(cell(r.decided_by || ''));
+                tr.appendChild(cell(fmtTime(r.created_at)));
+                body.appendChild(tr);
+            });
+        }
+
+        function loadApprovals() {
+            return fetch('/api/approvals', { headers: apiHeaders(), credentials: 'same-origin' })
+                .then(function(r) {
+                    if (r.status === 401) { window.location.href = '/'; return null; }
+                    return r.ok ? r.json() : null;
+                })
+                .then(function(d) {
+                    if (!d) return;
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('decide-section').style.display = '';
+                    document.getElementById('mine-section').style.display = '';
+                    renderDecide(d.to_decide || []);
+                    renderMine(d.mine || []);
+                    var recent = d.recent || [];
+                    document.getElementById('recent-section').style.display = recent.length ? '' : 'none';
+                    renderRecent(recent);
+                })
+                .catch(function() {});
+        }
+
+        function initPage() {
+            fetch('/api/me', { headers: apiHeaders(), credentials: 'same-origin' })
+                .then(function(res) {
+                    if (res.status === 401 || res.status === 403) { if (!apiKey) window.location.href = '/'; return null; }
+                    return res.ok ? res.json() : null;
+                })
+                .then(function(data) {
+                    var level = apiKey ? 4 : (data ? (roleLevel[data.role] || 0) : 0);
+                    document.documentElement.setAttribute('data-role-level', String(level));
+                    loadApprovals();
+                    // Keep the list current while someone waits on a decision.
+                    setInterval(function() {
+                        var active = document.activeElement;
+                        if (active && active.classList.contains('approval-comment')) return;
+                        loadApprovals();
+                    }, 10000);
+                })
+                .catch(function() {});
+        }
+        initPage();
+    </script>
+    <script src="/search.js"></script>
+    <script src="/ui.js"></script>
+</body>
+</html>

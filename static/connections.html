@@ -660,6 +660,7 @@
         <a href="/recordings.html">Recordings</a>
         <a href="/reports.html" id="reports-link" data-min-role="poweruser">Reports</a>
         <a href="/docs.html">Docs</a>
+        <a href="/approvals.html" id="approvals-link">Approvals</a>
         <a href="/tokens.html" id="tokens-link" data-min-role="operator">Tokens</a>
         <a href="/admin.html" id="admin-link" data-min-role="admin">Admin</a>
         <a href="#" id="my-creds-nav" title="Manage your saved credential variables"><span class="nav-key">&#128273;</span> Credentials</a>
@@ -1825,6 +1826,10 @@
             })
             .then(function(res) { return res.json(); })
             .then(function(data) {
+                if (data && data.approval_required) {
+                    showApprovalWait(data.approval, function(b) { doConnect(scope, path, name, b, {}, false); });
+                    return;
+                }
                 if (data && data.session_id) {
                     // Browsers block window.open after an async fetch
                     // (no user gesture), so replace the current tab.
@@ -2133,6 +2138,10 @@
                                     credentials: 'same-origin',
                                     body: JSON.stringify({ width: window.innerWidth, height: window.innerHeight, screen_width: screen.width, screen_height: screen.height, keyboard_layout: rgKeyboardLayout() })
                                 }).then(function(res) { return res.json(); }).then(function(data) {
+                                    if (data.approval_required) {
+                                        showApprovalWait(data.approval, function(b) { doConnect(scope, folder, entry, b, {}, false); });
+                                        return;
+                                    }
                                     if (data.session_id) window.open('/client/' + data.session_id, '_blank');
                                     else showError(data.error || 'Failed to reconnect');
                                 }).catch(function(e) { showError('Reconnect failed: ' + e.message); });
@@ -3435,6 +3444,126 @@
         // Connect to an entry (with optional credential prompt)
         var pendingConnect = null; // { scope, folder, name, btn }
 
+        // ── Approval requests (policy) ──
+        // A connect a policy holds for approval answers 202 with the request.
+        // This dialog shows it, lets the requester give a reason, and polls
+        // until someone decides. "Connect now" retries from a click, because a
+        // window opened outside a click is popup-blocked.
+        var approvalPoll = null;
+        function approvalRequired(res) {
+            return res.json().then(function(j) {
+                var e = new Error('approval_required');
+                e.approval = j.approval;
+                throw e;
+            });
+        }
+        function closeApprovalWait() {
+            if (approvalPoll) { clearInterval(approvalPoll); approvalPoll = null; }
+            var m = document.getElementById('approval-modal');
+            if (m) m.remove();
+        }
+        function showApprovalWait(approval, retry) {
+            closeApprovalWait();
+            var overlay = document.createElement('div');
+            overlay.className = 'modal-overlay active';
+            overlay.id = 'approval-modal';
+            var box = document.createElement('div');
+            box.className = 'modal';
+            box.style.maxWidth = '480px';
+            var h = document.createElement('h3');
+            h.textContent = 'Approval required';
+            var p = document.createElement('p');
+            p.style.cssText = 'color:var(--text-muted);font-size:0.9em;margin-top:0';
+            p.textContent = 'Policy "' + approval.policy_name + '" requires approval to connect to '
+                + approval.target_label + '. The approvers have been asked.';
+            var status = document.createElement('div');
+            status.id = 'approval-status';
+            status.style.cssText = 'margin:0.6em 0;font-weight:600';
+            var label = document.createElement('label');
+            label.textContent = 'Reason (shown to the approvers)';
+            label.style.cssText = 'display:block;font-size:0.85em;color:var(--text-muted)';
+            var reason = document.createElement('textarea');
+            reason.id = 'approval-reason';
+            reason.rows = 2;
+            reason.maxLength = 500;
+            reason.style.width = '100%';
+            reason.value = approval.reason || '';
+            var actions = document.createElement('div');
+            actions.className = 'modal-actions';
+            var send = document.createElement('button');
+            send.className = 'btn-cancel';
+            send.textContent = 'Send reason';
+            var go = document.createElement('button');
+            go.className = 'btn-connect';
+            go.id = 'approval-connect';
+            go.textContent = 'Connect now';
+            go.style.display = 'none';
+            var cancel = document.createElement('button');
+            cancel.className = 'btn-cancel';
+            cancel.id = 'approval-cancel';
+            cancel.textContent = 'Withdraw request';
+            actions.appendChild(send);
+            actions.appendChild(go);
+            actions.appendChild(cancel);
+            [h, p, status, label, reason, actions].forEach(function(el) { box.appendChild(el); });
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+
+            var base = '/api/approvals/' + encodeURIComponent(approval.id);
+            function post(path, body) {
+                return fetch(base + path, {
+                    method: 'POST',
+                    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                    credentials: 'same-origin',
+                    body: JSON.stringify(body || {})
+                });
+            }
+            function render(a) {
+                var until = a.expires_at ? new Date(a.expires_at * 1000).toLocaleTimeString() : '';
+                if (a.status === 'pending') {
+                    status.textContent = 'Waiting for an approver' + (until ? ' (until ' + until + ')' : '') + '…';
+                    return;
+                }
+                if (approvalPoll) { clearInterval(approvalPoll); approvalPoll = null; }
+                send.style.display = 'none';
+                reason.disabled = true;
+                cancel.textContent = 'Close';
+                if (a.status === 'approved') {
+                    status.textContent = 'Approved by ' + (a.decided_by || 'an approver')
+                        + (a.comment ? ': "' + a.comment + '"' : '') + '.';
+                    if (retry) go.style.display = '';
+                    else status.textContent += ' Connect again to start the session.';
+                } else if (a.status === 'denied') {
+                    status.textContent = 'Denied by ' + (a.decided_by || 'an approver')
+                        + (a.comment ? ': "' + a.comment + '"' : '') + '.';
+                } else {
+                    status.textContent = 'The request ' + a.status + '.';
+                }
+            }
+            function refresh() {
+                fetch(base, { headers: apiHeaders(), credentials: 'same-origin' })
+                    .then(function(r) { return r.ok ? r.json() : null; })
+                    .then(function(a) { if (a) render(a); })
+                    .catch(function() {});
+            }
+            send.onclick = function() {
+                post('/reason', { reason: reason.value }).then(function(r) {
+                    status.textContent = r.ok ? 'Reason sent. Waiting for an approver…' : 'Could not send the reason.';
+                });
+            };
+            go.onclick = function() {
+                closeApprovalWait();
+                retry(go);
+            };
+            cancel.onclick = function() {
+                if (cancel.textContent === 'Withdraw request') post('/cancel');
+                closeApprovalWait();
+            };
+            render(approval);
+            approvalPoll = setInterval(refresh, 3000);
+        }
+        window.showApprovalWait = showApprovalWait;
+
         function doConnect(scope, folder, name, btn, extraBody, newWindow) {
             var isWinBtn = !!(btn.getAttribute && btn.getAttribute('data-connect-win'));
             btn.disabled = true;
@@ -3481,6 +3610,7 @@
                 });
             })
             .then(function(res) {
+                if (res.status === 202) return approvalRequired(res);
                 if (!res.ok) {
                     if (res.status === 412) {
                         return res.json().then(function(j) {
@@ -3507,7 +3637,11 @@
             })
             .catch(function(err) {
                 if (targetWin && !targetWin.closed) targetWin.close();
-                if (err.message === 'missing_credentials') {
+                if (err.message === 'approval_required') {
+                    showApprovalWait(err.approval, function(b) {
+                        doConnect(scope, folder, name, b, extraBody, newWindow);
+                    });
+                } else if (err.message === 'missing_credentials') {
                     // Guided, resumable flow: prompt only the missing variables,
                     // then re-run this exact connect on save instead of
                     // dead-ending the user in the full credential editor.
@@ -5326,6 +5460,7 @@
                 body: JSON.stringify(body)
             })
             .then(function(res) {
+                if (res.status === 202) return approvalRequired(res);
                 if (res.status === 412) {
                     return res.json().then(function(j) {
                         var names = (j.missing_variables || []).map(function(n) { return '$' + n; });
@@ -5345,6 +5480,11 @@
             })
             .catch(function(err) {
                 if (targetWin && !targetWin.closed) targetWin.close();
+                if (err.message === 'approval_required') {
+                    document.getElementById('entry-modal').classList.remove('active');
+                    showApprovalWait(err.approval, null);
+                    return;
+                }
                 errEl.textContent = err.message;
             })
             .finally(function() {
@@ -6317,6 +6457,21 @@
         if (location.hash === '#my-credentials') {
             history.replaceState(null, '', location.pathname + location.search);
             setTimeout(function() { openMyCredentials(); }, 250);
+        }
+        // A quick-connect link a policy held for approval lands here.
+        var _approvalHash = /^#approval=([0-9a-f-]+)$/.exec(location.hash || '');
+        if (_approvalHash) {
+            history.replaceState(null, '', location.pathname + location.search);
+            fetch('/api/approvals/' + _approvalHash[1], { headers: apiHeaders(), credentials: 'same-origin' })
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(a) {
+                    if (!a) return;
+                    var res = a.resource || {};
+                    showApprovalWait(a, res.kind === 'entry' ? function(b) {
+                        doConnect(res.scope, res.folder, res.entry, b, {}, false);
+                    } : null);
+                })
+                .catch(function() {});
         }
     </script>
     <script src="/ui.js"></script>

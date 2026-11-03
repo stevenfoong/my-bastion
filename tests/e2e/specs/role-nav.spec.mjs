@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
 import { installApi, settle } from '../lib/api.mjs';
 
 const PAGES = ['/connections.html', '/sessions.html', '/recordings.html', '/reports.html'];
-const ALL = ['Connections', 'Sessions', 'Recordings', 'Reports', 'Docs', 'Tokens', 'Admin'];
+const ALL = ['Connections', 'Sessions', 'Recordings', 'Reports', 'Docs', 'Approvals', 'Tokens', 'Admin'];
 
 async function visibleNav(page) {
     return page.locator('nav a:visible').evaluateAll(as => as.map(a => a.textContent.trim()).filter(t => /^[A-Z][a-z]+$/.test(t)));

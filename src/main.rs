@@ -9,6 +9,7 @@ mod drive;
 mod guacd;
 mod import;
 mod oidc;
+mod policy;
 mod protocol;
 mod pve;
 mod recording;
@@ -1031,6 +1032,7 @@ async fn run_server(config: Config, database: Db) {
             "reports.html",
             "admin.html",
             "tokens.html",
+            "approvals.html",
             "docs.html",
         ] {
             let path = std::path::Path::new(&static_path).join(name);
@@ -1049,6 +1051,9 @@ async fn run_server(config: Config, database: Db) {
 
     // Periodically clean up expired auth sessions from the database
     let history_retention_days = config.session_history_retention_days;
+    // Approval requests nobody decided in time.
+    policy::spawn_expiry(database.clone());
+
     let cleanup_db = database.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -1383,6 +1388,21 @@ async fn run_server(config: Config, database: Db) {
             "/api/admin/addressbook-audit",
             get(api::admin_addressbook_audit),
         )
+        // Policies and approvals
+        .route("/api/admin/policies", get(policy::api::list_policies))
+        .route("/api/admin/policies", post(policy::api::create_policy))
+        .route("/api/admin/policies/{id}", put(policy::api::update_policy))
+        .route(
+            "/api/admin/policies/{id}",
+            delete(policy::api::delete_policy),
+        )
+        .route("/api/admin/policy-audit", get(policy::api::policy_audit))
+        .route("/api/approvals", get(policy::api::list_approvals))
+        .route("/api/approvals/{id}", get(policy::api::get_approval))
+        .route("/api/approvals/{id}/reason", post(policy::api::set_reason))
+        .route("/api/approvals/{id}/approve", post(policy::api::approve))
+        .route("/api/approvals/{id}/deny", post(policy::api::deny))
+        .route("/api/approvals/{id}/cancel", post(policy::api::cancel))
         // Login scripts listing
         .route("/api/login-scripts", get(api::list_login_scripts))
         .route("/api/ws-ticket", post(api::create_ws_ticket))
@@ -1535,6 +1555,7 @@ async fn run_server(config: Config, database: Db) {
         .route("/reports.html", get(serve_branded_page))
         .route("/admin.html", get(serve_branded_page))
         .route("/tokens.html", get(serve_branded_page))
+        .route("/approvals.html", get(serve_branded_page))
         .route("/docs.html", get(serve_branded_page))
         // Optional auth only: an anonymous request still gets the page (the
         // page itself sends the user to log in), but a logged-in one gets
