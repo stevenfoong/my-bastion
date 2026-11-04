@@ -36,6 +36,31 @@ type OidcClient = CoreClient<
 type PendingFlows =
     Arc<Mutex<std::collections::HashMap<String, (PkceCodeVerifier, Nonce, Instant)>>>;
 
+/// Refresh tokens from logins made for an OAuth grant (`/auth/login?offline=1`),
+/// by the hash of the session they created, until the consent step takes
+/// them: `None` when the provider gave none.
+type KeptRefresh = Arc<Mutex<std::collections::HashMap<String, (Option<String>, Instant)>>>;
+
+/// How long a kept refresh token waits for its consent step.
+const KEEP_SECS: u64 = 600;
+
+/// What a refresh at the identity provider said about the user.
+pub struct IdpRefresh {
+    /// The groups in the new ID token, if it came with one.
+    pub groups: Option<Vec<String>>,
+    pub email: Option<String>,
+    /// A rotated refresh token, if the provider sent one.
+    pub refresh_token: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum IdpError {
+    /// The provider refused the refresh token: the user's access is gone.
+    Revoked(String),
+    /// The provider could not be asked; try again later.
+    Unavailable(String),
+}
+
 /// Lazily-discovered OIDC client. `None` until provider metadata is fetched
 /// successfully; populated on first use (or by best-effort startup discovery)
 /// and re-attempted on the next use after a discovery failure.
@@ -62,6 +87,7 @@ pub struct OidcState {
     pub session_ttl_secs: u64,
     /// Pending OIDC flows: state -> (pkce_verifier, nonce, created_at)
     pub pending: PendingFlows,
+    kept: KeptRefresh,
     /// Set while a background discovery started by `warm_in_background` runs,
     /// so polling the unauthenticated status endpoint cannot pile them up.
     discovering: Arc<std::sync::atomic::AtomicBool>,
@@ -122,6 +148,61 @@ impl OidcState {
             let _ = state.discovered().await;
             state.discovering.store(false, Ordering::Release);
         });
+    }
+
+    /// The refresh token kept from the login that made session `token` for
+    /// an OAuth grant: `Some(None)` when the provider gave none, `None` when
+    /// that session was not made for one (or too long ago).
+    pub async fn take_kept_refresh(&self, session_token: &str) -> Option<Option<String>> {
+        let mut kept = self.kept.lock().await;
+        let cutoff = Instant::now() - std::time::Duration::from_secs(KEEP_SECS);
+        kept.retain(|_, (_, at)| *at > cutoff);
+        kept.remove(&db::hash_key(session_token)).map(|(t, _)| t)
+    }
+
+    /// Ask the provider again about the user behind `refresh_token` (for an
+    /// OAuth grant's refresh): their groups now, and a rotated token.
+    pub async fn refresh_identity(&self, refresh_token: &str) -> Result<IdpRefresh, IdpError> {
+        use openidconnect::core::CoreErrorResponseType;
+        use openidconnect::{OAuth2TokenResponse, RefreshToken, RequestTokenError};
+        let client = self.client().await.map_err(IdpError::Unavailable)?;
+        let token = RefreshToken::new(refresh_token.to_string());
+        let request = client
+            .exchange_refresh_token(&token)
+            .map_err(|e| IdpError::Unavailable(e.to_string()))?;
+        let resp = match request.request_async(&self.http_client).await {
+            Ok(r) => r,
+            Err(RequestTokenError::ServerResponse(r))
+                if matches!(r.error(), CoreErrorResponseType::InvalidGrant) =>
+            {
+                return Err(IdpError::Revoked(
+                    r.error_description()
+                        .cloned()
+                        .unwrap_or_else(|| "invalid_grant".into()),
+                ))
+            }
+            Err(RequestTokenError::ServerResponse(r)) => {
+                return Err(IdpError::Revoked(format!("{:?}", r.error())))
+            }
+            Err(e) => return Err(IdpError::Unavailable(error_chain(&e))),
+        };
+        let mut out = IdpRefresh {
+            groups: None,
+            email: None,
+            refresh_token: resp.refresh_token().map(|t| t.secret().clone()),
+        };
+        if let Some(id_token) = resp.id_token() {
+            // A refreshed ID token carries no nonce.
+            let claims = id_token
+                .claims(&client.id_token_verifier(), |_: Option<&Nonce>| Ok(()))
+                .map_err(|e| IdpError::Revoked(format!("ID token verification failed: {}", e)))?;
+            out.email = claims.email().map(|e| e.to_string());
+            out.groups = Some(extract_groups_from_jwt(
+                &id_token.to_string(),
+                &self.config.groups_claim,
+            ));
+        }
+        Ok(out)
     }
 
     /// Whether provider metadata has already been discovered and cached.
@@ -222,6 +303,7 @@ pub async fn init_oidc(config: &OidcConfig, session_ttl_secs: u64) -> Result<Oid
         config: config.clone(),
         session_ttl_secs,
         pending: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        kept: Arc::new(Mutex::new(std::collections::HashMap::new())),
         discovering: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
@@ -243,6 +325,9 @@ pub async fn init_oidc(config: &OidcConfig, session_ttl_secs: u64) -> Result<Oid
 #[derive(Deserialize)]
 pub struct LoginParams {
     pub next: Option<String>,
+    /// `1`: a login for an OAuth grant, which asks the provider for a
+    /// refresh token (`offline_access`) and keeps it for the consent step.
+    pub offline: Option<String>,
 }
 
 /// GET /auth/login — redirect user to OIDC provider.
@@ -274,6 +359,16 @@ pub async fn login(State(oidc): State<OidcState>, Query(params): Query<LoginPara
     for scope in &oidc.config.extra_scopes {
         auth_request = auth_request.add_scope(Scope::new(scope.clone()));
     }
+    let offline = params.offline.as_deref() == Some("1");
+    if offline
+        && !oidc
+            .config
+            .extra_scopes
+            .iter()
+            .any(|s| s == "offline_access")
+    {
+        auth_request = auth_request.add_scope(Scope::new("offline_access".to_string()));
+    }
 
     let (auth_url, csrf_token, nonce) = auth_request.url();
 
@@ -300,6 +395,12 @@ pub async fn login(State(oidc): State<OidcState>, Query(params): Query<LoginPara
             next
         );
         cookies.push((header::SET_COOKIE, next_cookie));
+    }
+    if offline {
+        cookies.push((
+            header::SET_COOKIE,
+            "mybastion_idp_keep=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600".to_string(),
+        ));
     }
 
     (
@@ -638,6 +739,18 @@ pub async fn callback(
 
     tracing::info!(email = %email, role = %effective_role, "OIDC login successful");
 
+    // A login for an OAuth grant: keep the provider's refresh token for the
+    // consent step that follows.
+    let keep = extract_cookie_from_headers(&headers, "mybastion_idp_keep").as_deref() == Some("1");
+    if keep {
+        use openidconnect::OAuth2TokenResponse;
+        let refresh = token_response.refresh_token().map(|t| t.secret().clone());
+        oidc.kept
+            .lock()
+            .await
+            .insert(db::hash_key(&session_token), (refresh, Instant::now()));
+    }
+
     // Check for post-login redirect cookie
     let redirect_to = extract_cookie_from_headers(&headers, "mybastion_next")
         .and_then(|n| safe_next(&n).map(str::to_string))
@@ -652,12 +765,15 @@ pub async fn callback(
         "mybastion_oidc_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
     let clear_next_cookie =
         "mybastion_next=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
+    let clear_keep_cookie =
+        "mybastion_idp_keep=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0".to_string();
 
     (
         AppendHeaders([
             (header::SET_COOKIE, session_cookie),
             (header::SET_COOKIE, clear_state_cookie),
             (header::SET_COOKIE, clear_next_cookie),
+            (header::SET_COOKIE, clear_keep_cookie),
         ]),
         Redirect::temporary(&redirect_to),
     )

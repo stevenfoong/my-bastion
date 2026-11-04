@@ -154,6 +154,43 @@ impl ConnectionStore {
             .map_err(write_failed("put user credentials"))
     }
 
+    /// The identity provider's refresh token kept for an OAuth grant, at
+    /// `<base_path>/oauth/<grant_id>` (encrypted like every secret).
+    pub async fn get_oauth_secret(
+        &self,
+        grant_id: &str,
+    ) -> Result<Option<String>, ConnectionError> {
+        let path = format!("{}/oauth/{}", self.base_path, grant_id);
+        let doc = self
+            .store
+            .get(&path)
+            .await
+            .map_err(failed("get oauth secret"))?;
+        Ok(doc.and_then(|d| d.data["refresh_token"].as_str().map(str::to_string)))
+    }
+
+    pub async fn put_oauth_secret(
+        &self,
+        grant_id: &str,
+        refresh_token: &str,
+    ) -> Result<(), ConnectionError> {
+        let path = format!("{}/oauth/{}", self.base_path, grant_id);
+        let doc = serde_json::json!({ "refresh_token": refresh_token });
+        self.store
+            .put(&path, &doc, None)
+            .await
+            .map(|_| ())
+            .map_err(write_failed("put oauth secret"))
+    }
+
+    pub async fn delete_oauth_secret(&self, grant_id: &str) -> Result<(), ConnectionError> {
+        let path = format!("{}/oauth/{}", self.base_path, grant_id);
+        match self.store.delete(&path).await {
+            Ok(()) | Err(StoreError::NotFound) => Ok(()),
+            Err(e) => Err(failed("delete oauth secret")(e)),
+        }
+    }
+
     /// Delete a user's credential variables.
     #[allow(dead_code)] // Will be used by admin endpoint
     pub async fn delete_user_credentials(&self, email: &str) -> Result<(), ConnectionError> {

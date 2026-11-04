@@ -9,6 +9,7 @@ mod drive;
 mod guacd;
 mod import;
 mod mcp;
+mod oauth;
 mod oidc;
 mod policy;
 mod protocol;
@@ -1170,6 +1171,13 @@ async fn run_server(config: Config, database: Db) {
                 Ok(Err(e)) => tracing::warn!("Failed to clean up the SSH command log: {}", e),
                 _ => {}
             }
+            let pruned = cleanup_db
+                .lock()
+                .map(|c| oauth::store::prune(&c, oauth::now()))
+                .map_err(|_| ());
+            if let Ok(Err(e)) = pruned {
+                tracing::warn!("Failed to clean up OAuth codes and tokens: {}", e);
+            }
         }
     });
 
@@ -1500,6 +1508,28 @@ async fn run_server(config: Config, database: Db) {
         .route("/api/admin/ai-agents/{name}/enable", post(mcp::api::enable))
         .route("/api/admin/ai-sessions", get(mcp::api::sessions))
         .route("/api/admin/ai-sessions/kill", post(mcp::api::kill))
+        .route("/api/me/ai-grants", get(oauth::routes::my_grants))
+        .route(
+            "/api/me/ai-grants/{id}",
+            delete(oauth::routes::revoke_my_grant),
+        )
+        .route("/api/admin/ai-grants", get(oauth::routes::admin_grants))
+        .route(
+            "/api/admin/ai-grants/{id}",
+            delete(oauth::routes::admin_revoke_grant),
+        )
+        .route(
+            "/api/admin/oauth-clients",
+            get(oauth::routes::admin_clients),
+        )
+        .route(
+            "/api/admin/oauth-clients/{name}/approve",
+            post(oauth::routes::approve_client),
+        )
+        .route(
+            "/api/admin/oauth-clients/{name}/deny",
+            post(oauth::routes::deny_client),
+        )
         .route("/api/approvals", get(policy::api::list_approvals))
         .route("/api/approvals/{id}", get(policy::api::get_approval))
         .route("/api/approvals/{id}/reason", post(policy::api::set_reason))
@@ -1644,9 +1674,9 @@ async fn run_server(config: Config, database: Db) {
         .layer(Extension(oidc_enabled.clone()))
         .layer(Extension(database.clone()));
 
-    // MCP for AI agents: its own authentication (agent keys only), never
-    // the REST middleware, so REST credentials do not work here and agent
-    // keys do not work there.
+    // MCP for AI agents: its own authentication (agent keys, and OAuth
+    // tokens with [mcp.oauth]), never the REST middleware, so REST
+    // credentials do not work here and these do not work there.
     let mut mcp_route: Router<()> = Router::new();
     if let Some(mcp_cfg) = manager.config().mcp.clone().filter(|m| m.enabled) {
         let service = mcp::server::service(mcp::server::McpServer::new(
@@ -1655,10 +1685,56 @@ async fn run_server(config: Config, database: Db) {
             manager.clone(),
             mcp_cfg.log_typed_text,
         ));
+        // OAuth needs the OIDC login to sign people in.
+        let oauth_cfg = mcp_cfg.oauth.clone().filter(|o| o.enabled);
+        let oauth = match (&oauth_cfg, &oidc_state) {
+            (Some(o), Some(oidc)) => Some(oauth::routes::OAuthState::new(
+                o.clone(),
+                database.clone(),
+                vault_client.clone(),
+                oidc.clone(),
+            )),
+            (Some(_), None) => {
+                tracing::error!(
+                    "[mcp.oauth] is enabled but [oidc] is not configured: OAuth is off"
+                );
+                None
+            }
+            _ => None,
+        };
         mcp_route = Router::new()
             .route_service("/mcp", service)
-            .layer(middleware::from_fn(mcp::auth::require_agent))
+            .layer(middleware::from_fn(mcp::auth::require_mcp_caller))
+            .layer(Extension(mcp::auth::OAuthHint(
+                oauth.as_ref().map(|o| o.cfg.clone()),
+            )))
             .layer(Extension(database.clone()));
+        if let Some(state) = oauth {
+            mcp_route = mcp_route.merge(
+                Router::new()
+                    .route(
+                        "/.well-known/oauth-protected-resource",
+                        get(oauth::routes::protected_resource),
+                    )
+                    .route(
+                        "/.well-known/oauth-protected-resource/mcp",
+                        get(oauth::routes::protected_resource),
+                    )
+                    .route(
+                        "/.well-known/oauth-authorization-server",
+                        get(oauth::routes::authorization_server),
+                    )
+                    .route("/oauth/register", post(oauth::routes::register))
+                    .route(
+                        "/oauth/authorize",
+                        get(oauth::routes::authorize).post(oauth::routes::decide),
+                    )
+                    .route("/oauth/token", post(oauth::routes::token))
+                    .route("/oauth/revoke", post(oauth::routes::revoke_token))
+                    .layer(Extension(state)),
+            );
+            tracing::info!("MCP OAuth enabled");
+        }
         if rate_limit_enabled {
             let conf = GovernorConfigBuilder::default()
                 .per_second(10)

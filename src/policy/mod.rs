@@ -520,12 +520,29 @@ impl Requester {
                 role: "ai_agent".into(),
                 groups: Vec::new(),
             },
+            // The person's rules and the AI client's both apply.
+            AuthIdentity::AiUser {
+                email,
+                role,
+                groups,
+                client,
+                ..
+            } => Requester {
+                email: Some(email.clone()),
+                api_key: None,
+                ai_agent: Some(format!("ai:{}", client)),
+                role: role.clone(),
+                groups: groups.clone(),
+            },
         }
     }
 
-    /// The identity a request and its grant belong to.
+    /// The identity a request and its grant belong to. A person acting
+    /// through an AI client is `user:<email> via ai:<client>`, so their own
+    /// approvals never cover what their AI does, nor the other way round.
     pub fn id(&self) -> String {
         match (&self.email, &self.api_key, &self.ai_agent) {
+            (Some(e), _, Some(a)) => format!("user:{} via {}", e.to_ascii_lowercase(), a),
             (Some(e), _, _) => e.to_ascii_lowercase(),
             (None, Some(k), _) => format!("api-key:{}", k),
             (None, None, Some(a)) => a.clone(),
@@ -618,7 +635,8 @@ pub fn may_decide(
     if who.email.is_none() {
         return Err("an API key cannot decide approval requests".into());
     }
-    if who.id() == requester_id {
+    // Nor what their own AI client asks for.
+    if who.id() == requester_id || requester_id.starts_with(&format!("user:{} via ", who.id())) {
         return Err("you cannot approve or deny your own request".into());
     }
     let eligible = approvers.iter().any(|a| match a {

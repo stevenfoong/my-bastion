@@ -674,6 +674,55 @@ pub struct McpConfig {
     /// what kind of input it was (and how many characters).
     #[serde(default)]
     pub log_typed_text: bool,
+    /// `[mcp.oauth]`: people using an AI client sign in with OAuth 2.1.
+    pub oauth: Option<OAuthConfig>,
+}
+
+/// `[mcp.oauth]`: the bastion as an OAuth 2.1 authorization server for MCP
+/// clients, on top of the `[oidc]` login. Needs `[oidc]`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct OAuthConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// The bastion's public URL, e.g. `https://bastion.example.com`: the
+    /// issuer, and `<public_url>/mcp` is the resource tokens are for.
+    pub public_url: String,
+    /// Client names approved up front (e.g. `["Claude"]`); others wait for
+    /// an admin when they first register.
+    #[serde(default)]
+    pub approved_clients: Vec<String>,
+    #[serde(default = "default_access_minutes")]
+    pub access_token_minutes: u32,
+    #[serde(default = "default_refresh_days")]
+    pub refresh_token_days: u32,
+    /// When the identity provider gives no refresh token, a grant must be
+    /// renewed through a new sign-in after this many hours.
+    #[serde(default = "default_reauth_hours")]
+    pub reauth_hours: u32,
+}
+
+impl OAuthConfig {
+    /// The issuer: the public URL without a trailing slash.
+    pub fn issuer(&self) -> String {
+        self.public_url.trim_end_matches('/').to_string()
+    }
+
+    /// The protected resource: `<issuer>/mcp`.
+    pub fn resource(&self) -> String {
+        format!("{}/mcp", self.issuer())
+    }
+}
+
+fn default_access_minutes() -> u32 {
+    15
+}
+
+fn default_refresh_days() -> u32 {
+    30
+}
+
+fn default_reauth_hours() -> u32 {
+    12
 }
 
 /// `[ssh_log]`: interactive SSH command log, rebuilt from keystrokes

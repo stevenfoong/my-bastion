@@ -253,6 +253,21 @@
     <div id="agent-key" style="display:none;margin-top:0.5em;padding:0.6em;border:1px solid var(--border);border-radius:4px;font-size:0.9em;">
         Key for <strong id="agent-key-name"></strong>, shown once: <code id="agent-key-value" style="user-select:all"></code>
     </div>
+    <h3 style="margin-top:1.2em">AI clients (OAuth)</h3>
+    <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
+        AI clients people connect with their own account (<code>[mcp.oauth]</code>). A client name must be approved once before anyone can sign it in; denying it also ends every grant it holds.
+    </div>
+    <table id="oauth-clients-table">
+        <thead><tr><th>Client name</th><th>Status</th><th>Registrations</th><th>Live grants</th><th>First seen</th><th></th></tr></thead>
+        <tbody id="oauth-clients-body"></tbody>
+    </table>
+    <div id="no-oauth-clients" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No AI client has registered.</div>
+    <h3 style="margin-top:1.2em">People's AI access</h3>
+    <table id="ai-grants-table">
+        <thead><tr><th>Person</th><th>Client</th><th>Scopes</th><th>Allowed</th><th>Last used</th><th>Status</th><th></th></tr></thead>
+        <tbody id="ai-grants-body"></tbody>
+    </table>
+    <div id="no-ai-grants" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">Nobody has allowed an AI client.</div>
     <h3 style="margin-top:1.2em">Open AI sessions</h3>
     <table id="ai-sessions-table">
         <thead><tr>
@@ -507,6 +522,75 @@
             })
             .catch(function() {});
         }
+        function when(t) { return t ? new Date(t * 1000).toLocaleString() : 'never'; }
+        function smallButton(label, cls, onclick) {
+            var b = document.createElement('button');
+            b.className = 'btn-small ' + cls;
+            b.textContent = label;
+            b.onclick = onclick;
+            return b;
+        }
+        function loadOauthClients() {
+            fetch('/api/admin/oauth-clients', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('oauth-clients-body');
+                body.innerHTML = '';
+                document.getElementById('no-oauth-clients').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(c) {
+                    var tr = document.createElement('tr');
+                    tr.setAttribute('data-client', c.name);
+                    [c.name, c.status, String(c.clients), String(c.grants), when(c.first_seen)].forEach(function(v) {
+                        var td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    });
+                    var act = document.createElement('td');
+                    var decide = function(verb) {
+                        return function() {
+                            fetch('/api/admin/oauth-clients/' + encodeURIComponent(c.name) + '/' + verb, {
+                                method: 'POST', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadOauthClients(); loadAiGrants(); loadPolicyAudit(); });
+                        };
+                    };
+                    if (c.status !== 'approved') act.appendChild(smallButton('Approve', 'btn-action oauth-approve', decide('approve')));
+                    if (c.status !== 'denied') act.appendChild(smallButton('Deny', 'oauth-deny', decide('deny')));
+                    tr.appendChild(act);
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+        function loadAiGrants() {
+            fetch('/api/admin/ai-grants', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('ai-grants-body');
+                body.innerHTML = '';
+                document.getElementById('no-ai-grants').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(g) {
+                    var tr = document.createElement('tr');
+                    [g.email, g.client_name, g.scopes, when(g.created_at), when(g.last_used_at),
+                     g.revoked_at ? 'revoked' + (g.revoked_why ? ' (' + g.revoked_why + ')' : '') : 'active'].forEach(function(v) {
+                        var td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    });
+                    var act = document.createElement('td');
+                    if (!g.revoked_at) {
+                        act.appendChild(smallButton('Revoke', 'ai-grant-revoke', function() {
+                            fetch('/api/admin/ai-grants/' + encodeURIComponent(g.id), {
+                                method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadAiGrants(); loadPolicyAudit(); });
+                        }));
+                    }
+                    tr.appendChild(act);
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+
         function loadAiSessions() {
             fetch('/api/admin/ai-sessions', { headers: apiHeaders(), credentials: 'same-origin' })
             .then(function(r) { return r.ok ? r.json() : []; })
@@ -611,6 +695,8 @@
                 loadPolicyAudit();
                 loadSshCommands();
                 loadAgents();
+                loadOauthClients();
+                loadAiGrants();
                 loadAiSessions();
                 loadSystemStatus();
             })

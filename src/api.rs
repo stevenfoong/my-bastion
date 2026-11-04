@@ -2455,6 +2455,26 @@ impl Connections {
             .await
     }
 
+    /// The identity provider's refresh token kept for an OAuth grant.
+    pub async fn get_oauth_secret(
+        &self,
+        grant_id: &str,
+    ) -> Result<Option<String>, ConnectionError> {
+        self.store().await?.get_oauth_secret(grant_id).await
+    }
+
+    pub async fn put_oauth_secret(
+        &self,
+        grant_id: &str,
+        token: &str,
+    ) -> Result<(), ConnectionError> {
+        self.store().await?.put_oauth_secret(grant_id, token).await
+    }
+
+    pub async fn delete_oauth_secret(&self, grant_id: &str) -> Result<(), ConnectionError> {
+        self.store().await?.delete_oauth_secret(grant_id).await
+    }
+
     /// A folder's AI mode, inherited from the nearest parent that sets one.
     pub async fn resolve_ai_mode(
         &self,
@@ -6376,7 +6396,7 @@ pub async fn create_my_token(
     // Must be an OIDC user (not an API key admin)
     let email = match &id {
         AuthIdentity::User { email, .. } => email.clone(),
-        AuthIdentity::ApiKey(_) | AuthIdentity::AiAgent(_) => {
+        AuthIdentity::ApiKey(_) | AuthIdentity::AiAgent(_) | AuthIdentity::AiUser { .. } => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "API key admins cannot create user tokens — use the admin endpoint"})),
