@@ -9,6 +9,9 @@
 //!   policies, approvals, the network check, the audit log). The folder's AI
 //!   mode must allow acting: `approve` holds every command for a person's
 //!   approval, `auto` lets the policies decide, `observe` refuses.
+//! - `open_session`, `screenshot`, `wait`, `list_sessions`,
+//!   `close_session`: desktop sessions the bastion renders itself
+//!   (`sessions.rs`); any AI mode but `none` may look.
 //!
 //! A refusal or a wait for approval is a tool error the model can read.
 
@@ -43,6 +46,21 @@ pub struct McpServer {
     pub db: Db,
     pub conns: ConnectionsState,
     pub manager: AppState,
+    pub(super) sessions: Arc<super::sessions::Registry>,
+}
+
+impl McpServer {
+    /// The server, with the task that closes idle agent sessions.
+    pub fn new(db: Db, conns: ConnectionsState, manager: AppState) -> Self {
+        let server = McpServer {
+            db,
+            conns,
+            manager,
+            sessions: Arc::default(),
+        };
+        super::sessions::spawn_reaper(server.clone());
+        server
+    }
 }
 
 /// The `/mcp` service, to mount behind `auth::require_agent`.
@@ -67,7 +85,7 @@ fn connection_id(scope: &str, folder: &str, entry: &str) -> String {
 }
 
 /// `scope/folder/path/entry` back into its parts.
-fn parse_connection_id(id: &str) -> Option<(&str, &str, &str)> {
+pub(super) fn parse_connection_id(id: &str) -> Option<(&str, &str, &str)> {
     let (scope, rest) = id.trim().trim_matches('/').split_once('/')?;
     let (folder, entry) = rest.rsplit_once('/')?;
     (matches!(scope, "shared" | "instance") && !folder.is_empty() && !entry.is_empty())
@@ -135,15 +153,89 @@ fn tools() -> Vec<Tool> {
                 "required": ["connection", "command"]
             })),
         ),
+        Tool::new(
+            "open_session",
+            "Open a desktop or terminal session (RDP, VNC or SSH) on a connection. The bastion \
+             renders it: look at it with screenshot, and close it with close_session when done. \
+             Sessions are recorded.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "Connection id from list_connections" },
+                    "width": { "type": "integer", "minimum": 320, "maximum": 4096, "description": "Screen width (default 1280)" },
+                    "height": { "type": "integer", "minimum": 320, "maximum": 4096, "description": "Screen height (default 800)" }
+                },
+                "required": ["connection"]
+            })),
+        ),
+        Tool::new(
+            "screenshot",
+            "The session's screen as a PNG, scaled down to max_width (default 1280).",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "max_width": { "type": "integer", "minimum": 64, "maximum": 4096 }
+                },
+                "required": ["session_id"]
+            })),
+        ),
+        Tool::new(
+            "wait",
+            "Wait until the screen next changes (or ms milliseconds pass, at most 10000).",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
+                },
+                "required": ["session_id"]
+            })),
+        ),
+        Tool::new(
+            "list_sessions",
+            "The sessions this agent has open.",
+            schema(json!({ "type": "object", "properties": {} })),
+        ),
+        Tool::new(
+            "close_session",
+            "End a session this agent opened.",
+            schema(json!({
+                "type": "object",
+                "properties": { "session_id": { "type": "string" } },
+                "required": ["session_id"]
+            })),
+        ),
     ]
 }
 
-fn ok(v: Value) -> CallToolResponse {
+pub(super) fn ok(v: Value) -> CallToolResponse {
     CallToolResult::success(vec![ContentBlock::text(v.to_string())]).into()
 }
 
-fn fail(msg: impl Into<String>) -> CallToolResponse {
+pub(super) fn fail(msg: impl Into<String>) -> CallToolResponse {
     CallToolResult::error(vec![ContentBlock::text(msg.into())]).into()
+}
+
+/// A REST answer that is not a success, as a tool error: a wait for
+/// approval (202) says what to do next.
+pub(super) fn refusal(status: StatusCode, body: &Value, tool: &str) -> CallToolResponse {
+    if status == StatusCode::ACCEPTED {
+        let a = &body["approval"];
+        return fail(format!(
+            "Waiting for approval (request {}, policy '{}'). A person must approve it on the \
+             Approvals page; then call {} again with exactly the same arguments.",
+            a["id"].as_str().unwrap_or("?"),
+            a["policy_name"].as_str().unwrap_or("?"),
+            tool
+        ));
+    }
+    fail(
+        body["error"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("refused ({})", status)),
+    )
 }
 
 /// The caller, as `auth::require_agent` left it on the HTTP request.
@@ -299,21 +391,7 @@ impl McpServer {
         };
         match status {
             StatusCode::OK => ok(body),
-            StatusCode::ACCEPTED => {
-                let a = &body["approval"];
-                fail(format!(
-                    "Waiting for approval (request {}, policy '{}'). A person must approve it on \
-                     the Approvals page; then call run_ssh again with exactly the same command.",
-                    a["id"].as_str().unwrap_or("?"),
-                    a["policy_name"].as_str().unwrap_or("?")
-                ))
-            }
-            _ => fail(
-                body["error"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("refused ({})", status)),
-            ),
+            _ => refusal(status, &body, "run_ssh"),
         }
     }
 }
@@ -350,6 +428,11 @@ impl ServerHandler for McpServer {
         Ok(match request.name.as_ref() {
             "list_connections" => self.list_connections(&agent, &args).await,
             "run_ssh" => self.run_ssh(&id, &agent, ip, &args).await,
+            "open_session" => self.open_session(&id, &agent, ip, &args).await,
+            "screenshot" => self.screenshot(&id, &args).await,
+            "wait" => self.wait(&id, &args).await,
+            "list_sessions" => self.list_sessions(&id),
+            "close_session" => self.close_session(&id, &args).await,
             other => {
                 return Err(McpError::invalid_params(
                     format!("unknown tool '{}'", other),
@@ -384,7 +467,15 @@ mod tests {
         let t = tools();
         assert_eq!(
             t.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>(),
-            vec!["list_connections", "run_ssh"]
+            vec![
+                "list_connections",
+                "run_ssh",
+                "open_session",
+                "screenshot",
+                "wait",
+                "list_sessions",
+                "close_session"
+            ]
         );
         assert!(t
             .iter()

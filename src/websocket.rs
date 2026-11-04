@@ -252,58 +252,7 @@ async fn handle_ws(
 
     // Set up recording file (only for owner connections, and only if recording is enabled)
     let is_recording_enabled = manager.is_recording_enabled(session_id).await;
-    let recording_path = manager
-        .recording_path()
-        .join(format!("{}.guac", session_id));
-    let recording_file = if is_recording_enabled && !recording_path.exists() {
-        match tokio::fs::File::create(&recording_path).await {
-            Ok(f) => {
-                // Set restrictive permissions on recording file
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = tokio::fs::set_permissions(
-                        &recording_path,
-                        std::fs::Permissions::from_mode(0o640),
-                    )
-                    .await;
-                }
-
-                // Write sidecar .meta file with session context
-                {
-                    let session_info = manager.get_session(session_id).await;
-                    let ab_entry = session_info
-                        .as_ref()
-                        .and_then(|s| s.address_book_entry.clone());
-                    let meta = crate::recording::RecordingMeta {
-                        address_book_entry: ab_entry,
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                        user: session_info.as_ref().map(|s| s.created_by.clone()),
-                        folder: session_info
-                            .as_ref()
-                            .and_then(|s| s.address_book_folder.clone()),
-                        entry_display_name: session_info
-                            .as_ref()
-                            .and_then(|s| s.entry_display_name.clone()),
-                        session_type: session_info
-                            .as_ref()
-                            .map(|s| format!("{:?}", s.session_type).to_lowercase()),
-                    };
-                    if let Err(e) = crate::recording::write_meta(&recording_path, &meta) {
-                        tracing::warn!(session_id = %session_id, error = %e, "Failed to write recording .meta");
-                    }
-                }
-
-                Some(f)
-            }
-            Err(e) => {
-                tracing::error!(session_id = %session_id, error = %e, "Failed to create recording file");
-                None
-            }
-        }
-    } else {
-        None // Viewer connections don't record, or recording is disabled
-    };
+    let recording_file = open_recording(&manager, session_id).await;
 
     // Run the bidirectional proxy, filtered by the session's clipboard and
     // file transfer controls; in SSH, what is typed is logged.
@@ -328,8 +277,6 @@ async fn handle_ws(
     let elapsed = start.elapsed();
     let server_disconnected = proxy_outcome.server_disconnected;
     let proxy_result = proxy_outcome.result;
-
-    manager.disconnect_viewer(session_id).await;
 
     // Log termination direction and timing
     let mark_error = match &proxy_result {
@@ -369,6 +316,88 @@ async fn handle_ws(
             false
         }
     };
+
+    finish_connection(
+        &manager,
+        session_id,
+        mark_error,
+        server_disconnected,
+        elapsed,
+        is_recording_enabled,
+    )
+    .await;
+    tracing::info!(session_id = %session_id, client_ip = %client_addr, "Session disconnected");
+}
+
+/// The recording file for a session's owner connection (with its `.meta`
+/// sidecar), when the session records and no file exists yet.
+pub(crate) async fn open_recording(
+    manager: &SessionManager,
+    session_id: Uuid,
+) -> Option<tokio::fs::File> {
+    if !manager.is_recording_enabled(session_id).await {
+        return None;
+    }
+    let recording_path = manager
+        .recording_path()
+        .join(format!("{}.guac", session_id));
+    if recording_path.exists() {
+        return None;
+    }
+    match tokio::fs::File::create(&recording_path).await {
+        Ok(f) => {
+            // Set restrictive permissions on recording file
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = tokio::fs::set_permissions(
+                    &recording_path,
+                    std::fs::Permissions::from_mode(0o640),
+                )
+                .await;
+            }
+
+            // Write sidecar .meta file with session context
+            let session_info = manager.get_session(session_id).await;
+            let meta = crate::recording::RecordingMeta {
+                address_book_entry: session_info
+                    .as_ref()
+                    .and_then(|s| s.address_book_entry.clone()),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                user: session_info.as_ref().map(|s| s.created_by.clone()),
+                folder: session_info
+                    .as_ref()
+                    .and_then(|s| s.address_book_folder.clone()),
+                entry_display_name: session_info
+                    .as_ref()
+                    .and_then(|s| s.entry_display_name.clone()),
+                session_type: session_info
+                    .as_ref()
+                    .map(|s| format!("{:?}", s.session_type).to_lowercase()),
+            };
+            if let Err(e) = crate::recording::write_meta(&recording_path, &meta) {
+                tracing::warn!(session_id = %session_id, error = %e, "Failed to write recording .meta");
+            }
+            Some(f)
+        }
+        Err(e) => {
+            tracing::error!(session_id = %session_id, error = %e, "Failed to create recording file");
+            None
+        }
+    }
+}
+
+/// After an owner connection ends: the session's status, VDI container,
+/// history row and recording rotation. `mark_error`: it failed early.
+pub(crate) async fn finish_connection(
+    manager: &SessionManager,
+    session_id: Uuid,
+    mark_error: bool,
+    server_disconnected: bool,
+    elapsed: std::time::Duration,
+    is_recording_enabled: bool,
+) {
+    manager.disconnect_viewer(session_id).await;
 
     let status_str;
     if mark_error {
@@ -432,8 +461,6 @@ async fn handle_ws(
             }
         }
     }
-
-    tracing::info!(session_id = %session_id, client_ip = %client_addr, "Session disconnected");
 }
 
 /// What the bridge enforces and audits for a session: its clipboard and

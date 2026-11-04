@@ -4291,7 +4291,6 @@ pub async fn ab_connect_entry(
         return resp;
     }
 
-    // Policy: before anything is read or a session exists.
     let gate_ip = {
         let proxies = trusted
             .as_ref()
@@ -4299,12 +4298,37 @@ pub async fn ab_connect_entry(
             .unwrap_or_default();
         client_ip(&headers, addr.ip(), &proxies).to_string()
     };
+    connect_entry(
+        &manager, &database, &vault, &id, &scope, &folder, &entry, req, gate_ip,
+    )
+    .await
+}
+
+/// Create a session from an entry for `id`, who may already reach the
+/// folder: the connect policy gate, credentials, the session request and
+/// reuse of a Pending session. 201 with the session, or the refusal.
+/// Shared by the REST route and MCP.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn connect_entry(
+    manager: &SessionManager,
+    database: &Db,
+    vault: &ConnectionsState,
+    id: &AuthIdentity,
+    scope: &str,
+    folder: &str,
+    entry: &str,
+    req: ConnectRequest,
+    gate_ip: String,
+) -> Response {
+    let (scope, folder, entry) = (scope.to_string(), folder.to_string(), entry.to_string());
+    // Policy: before anything is read or a session exists.
     let res = crate::policy::Resource::Entry {
         scope: scope.clone(),
         folder: folder.clone(),
         entry: entry.clone(),
     };
-    let controls = match crate::policy::api::connect_gate(&database, &id, res, gate_ip).await {
+    let controls = match crate::policy::api::connect_gate(database, id, res, gate_ip.clone()).await
+    {
         Ok(c) => c,
         Err(resp) => return resp,
     };
@@ -4331,7 +4355,7 @@ pub async fn ab_connect_entry(
     let ab_entry = lend_folder_defaults(vault.as_ref(), &scope, &folder, &entry, ab_entry).await;
 
     // Resolve credential variable references ($domain_user, $domain_password, etc.)
-    let ab_entry = match resolve_entry_credentials(&vault, &id, ab_entry).await {
+    let ab_entry = match resolve_entry_credentials(vault, id, ab_entry).await {
         Ok(e) => e,
         Err(resp) => return resp,
     };
@@ -4345,13 +4369,11 @@ pub async fn ab_connect_entry(
     };
     create_req.policy = controls;
 
-    let proxies = trusted.map(|Extension(t)| t.0).unwrap_or_default();
-    let client_ip_addr = client_ip(&headers, addr.ip(), &proxies);
     let admin_name = id.display_name().to_string();
 
     tracing::info!(
         user = %admin_name,
-        client_ip = %client_ip_addr,
+        client_ip = %gate_ip,
         folder = %folder,
         entry = %entry,
         scope = %scope,

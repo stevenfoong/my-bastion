@@ -15,6 +15,7 @@ mod protocol;
 mod pve;
 mod recording;
 mod recording_mp4;
+mod render;
 mod session;
 mod ssh_exec;
 mod store;
@@ -951,7 +952,7 @@ async fn run_server(config: Config, database: Db) {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,rmcp=warn")),
         )
         .init();
 
@@ -1646,11 +1647,11 @@ async fn run_server(config: Config, database: Db) {
     // keys do not work there.
     let mut mcp_route: Router<()> = Router::new();
     if manager.config().mcp.as_ref().is_some_and(|m| m.enabled) {
-        let service = mcp::server::service(mcp::server::McpServer {
-            db: database.clone(),
-            conns: vault_client.clone(),
-            manager: manager.clone(),
-        });
+        let service = mcp::server::service(mcp::server::McpServer::new(
+            database.clone(),
+            vault_client.clone(),
+            manager.clone(),
+        ));
         mcp_route = Router::new()
             .route_service("/mcp", service)
             .layer(middleware::from_fn(mcp::auth::require_agent))

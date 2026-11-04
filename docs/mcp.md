@@ -59,8 +59,29 @@ A deny still wins.
 |---|---|
 | `list_connections(folder?)` | Connections in the folders the agent reaches: id (`scope/folder/entry`), type, host, port, the folder's AI mode. Never credentials. |
 | `run_ssh(connection, command, timeout_secs?)` | One command on an SSH connection, with the same checks as the REST `run` route: `ssh_command` policies, approvals, `ssh_allowed_networks`, jump hosts. Needs mode `approve` or `auto`. |
+| `open_session(connection, width?, height?)` | Open an RDP, VNC or SSH session (default 1280×800). Connect policies and approvals apply; any mode but `none` may open one to look. Waits for the first frame; answers the `session_id` and screen size. |
+| `screenshot(session_id, max_width?)` | The screen as a PNG, scaled down to `max_width` (default 1280), with the screen's and the image's size. |
+| `wait(session_id, ms?)` | Returns when the screen next changes, or after `ms` (at most 10000). |
+| `list_sessions()` | The agent's open sessions. |
+| `close_session(session_id)` | Ends the session. |
 
-Desktop tools (open a session, screenshot, click, type) come next.
+Input (click, type, keys) comes next.
+
+### Sessions
+
+The bastion is the session's Guacamole client: it takes the guacd connection
+as the owner the moment the session is created, keeps the screen from
+guacd's drawing instructions (images, rectangles, copies, layers), answers
+its frame syncs, and draws a screenshot from that. Nothing on the screen
+leaves the bastion except as a screenshot the agent asks for.
+
+- A session is like any other: it shows on the Sessions page with
+  `created_by` `ai:<name>`, admins can share, shadow or terminate it, it is
+  recorded under `ai:<name>` when recording is on, and it ends with
+  `close_session`, a terminate, or the remote side.
+- Only the agent that opened a session can use it. An agent has at most 5
+  sessions open; one left unused for 15 minutes is closed.
+- The mouse pointer is not drawn in screenshots.
 
 A refusal (policy, AI mode, unknown connection) or a wait for approval is a
 tool error the model reads, with the reason. Everything is in the policy
