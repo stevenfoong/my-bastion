@@ -661,6 +661,15 @@ pub struct Config {
     /// `[ssh_log]`: the lines typed in interactive SSH sessions. On unless
     /// turned off.
     pub ssh_log: Option<SshLogConfig>,
+    /// `[mcp]`: the MCP endpoint for AI agents. Off unless enabled.
+    pub mcp: Option<McpConfig>,
+}
+
+/// `[mcp]`: AI agents on `/mcp` (agent keys; folders opt in with `ai_mode`).
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// `[ssh_log]`: interactive SSH command log, rebuilt from keystrokes
@@ -1446,6 +1455,7 @@ impl Default for Config {
             rdp: None,
             telegram: None,
             ssh_log: None,
+            mcp: None,
         }
     }
 }

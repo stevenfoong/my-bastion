@@ -8,6 +8,7 @@ mod db;
 mod drive;
 mod guacd;
 mod import;
+mod mcp;
 mod oidc;
 mod policy;
 mod protocol;
@@ -99,6 +100,23 @@ enum Command {
     DeleteAdmin {
         #[arg(long)]
         name: String,
+    },
+
+    /// Create an AI agent key for /mcp (acts as ai:<name>; works on /mcp only)
+    AddAiAgent {
+        /// Agent name (unique; letters, digits, '-', '_', '.')
+        #[arg(long)]
+        name: String,
+        /// Only these folders (comma-separated scope/path, e.g. "shared/lab");
+        /// default: every folder whose AI mode is not none
+        #[arg(long, value_delimiter = ',')]
+        folders: Vec<String>,
+        /// Comma-separated allowed IP CIDRs
+        #[arg(long)]
+        allowed_ips: Option<String>,
+        /// Expiry date in ISO 8601 format
+        #[arg(long)]
+        expires: Option<String>,
     },
 
     /// Map an OIDC group to a role (admin, poweruser, operator, viewer)
@@ -283,6 +301,18 @@ async fn main() {
         Some(Command::DisableAdmin { name }) => cmd_disable_admin(&database, &name),
         Some(Command::EnableAdmin { name }) => cmd_enable_admin(&database, &name),
         Some(Command::DeleteAdmin { name }) => cmd_delete_admin(&database, &name),
+        Some(Command::AddAiAgent {
+            name,
+            folders,
+            allowed_ips,
+            expires,
+        }) => cmd_add_ai_agent(
+            &database,
+            &name,
+            folders,
+            allowed_ips.as_deref(),
+            expires.as_deref(),
+        ),
         Some(Command::MapGroup { group, role, force }) => {
             cmd_map_group(&database, &group, &role, force)
         }
@@ -350,6 +380,46 @@ fn audit_cli(database: &Db, action: &str, target: &str, details: Option<&str>) {
             "Warning: action succeeded but audit log write failed: {}",
             e
         );
+    }
+}
+
+fn cmd_add_ai_agent(
+    database: &Db,
+    name: &str,
+    folders: Vec<String>,
+    allowed_ips: Option<&str>,
+    expires: Option<&str>,
+) {
+    let result = mcp::agents::normalize_folders(folders).and_then(|folders| {
+        let conn = database.lock().unwrap();
+        let key = mcp::agents::create(&conn, name, &folders, allowed_ips, expires, &cli_actor())?;
+        let detail = serde_json::json!({ "folders": folders, "via": "cli" }).to_string();
+        let target = format!("ai:{}", name);
+        let _ = policy::store::audit(
+            &conn,
+            &policy::store::AuditEvent {
+                event: "ai_agent_created",
+                actor: &cli_actor(),
+                target: &target,
+                detail: Some(&detail),
+                ..Default::default()
+            },
+            policy::store::now_secs(),
+        );
+        Ok(key)
+    });
+    match result {
+        Ok(key) => {
+            println!("AI agent '{}' created (acts as ai:{}).", name, name);
+            println!("Agent Key: {}", key);
+            println!();
+            println!("Use it as \"Authorization: Bearer <key>\" on /mcp; it works nowhere else.");
+            println!("Store this key securely — it cannot be retrieved again.");
+        }
+        Err(e) => {
+            eprintln!("Error creating AI agent: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -1417,6 +1487,16 @@ async fn run_server(config: Config, database: Db) {
         )
         .route("/api/admin/policy-audit", get(policy::api::policy_audit))
         .route("/api/admin/ssh-commands", get(policy::api::ssh_commands))
+        .route(
+            "/api/admin/ai-agents",
+            get(mcp::api::list).post(mcp::api::create),
+        )
+        .route("/api/admin/ai-agents/{name}", delete(mcp::api::delete))
+        .route(
+            "/api/admin/ai-agents/{name}/disable",
+            post(mcp::api::disable),
+        )
+        .route("/api/admin/ai-agents/{name}/enable", post(mcp::api::enable))
         .route("/api/approvals", get(policy::api::list_approvals))
         .route("/api/approvals/{id}", get(policy::api::get_approval))
         .route("/api/approvals/{id}/reason", post(policy::api::set_reason))
@@ -1561,6 +1641,32 @@ async fn run_server(config: Config, database: Db) {
         .layer(Extension(oidc_enabled.clone()))
         .layer(Extension(database.clone()));
 
+    // MCP for AI agents: its own authentication (agent keys only), never
+    // the REST middleware, so REST credentials do not work here and agent
+    // keys do not work there.
+    let mut mcp_route: Router<()> = Router::new();
+    if manager.config().mcp.as_ref().is_some_and(|m| m.enabled) {
+        let service = mcp::server::service(mcp::server::McpServer {
+            db: database.clone(),
+            conns: vault_client.clone(),
+            manager: manager.clone(),
+        });
+        mcp_route = Router::new()
+            .route_service("/mcp", service)
+            .layer(middleware::from_fn(mcp::auth::require_agent))
+            .layer(Extension(database.clone()));
+        if rate_limit_enabled {
+            let conf = GovernorConfigBuilder::default()
+                .per_second(10)
+                .burst_size(50)
+                .key_extractor(rate_key.clone())
+                .finish()
+                .expect("Failed to build MCP rate limit config");
+            mcp_route = mcp_route.layer(GovernorLayer::new(conf));
+        }
+        tracing::info!("MCP endpoint enabled at /mcp");
+    }
+
     // Unauthenticated stateful routes
     let unauth_routes = Router::new()
         .route("/api/health", get(api::health))
@@ -1600,6 +1706,7 @@ async fn run_server(config: Config, database: Db) {
         .route("/api/auth/status", get(api::auth_status))
         .merge(api_routes)
         .merge(ws_route)
+        .merge(mcp_route)
         .merge(connect_route)
         .merge(unauth_routes)
         .merge(html_routes);

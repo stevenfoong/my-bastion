@@ -132,6 +132,7 @@
             <option value="user">user</option>
             <option value="role">role</option>
             <option value="api_key">API key</option>
+            <option value="ai_agent" title="An AI agent key by name, or * for every agent">AI agent</option>
             <option value="any">anyone</option>
         </select>
         <input type="text" id="pol-subject-value" placeholder="contractors" style="width:9em">
@@ -230,6 +231,28 @@
     </table>
     <div id="no-cmd" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No SSH commands logged.</div>
 
+    <h2>AI Agents</h2>
+    <div style="margin-bottom:0.5em;color:var(--text-muted);font-size:0.9em;">
+        Keys for unattended AI agents on the MCP endpoint (<code>/mcp</code>, when <code>[mcp] enabled</code>). An agent acts as <code>ai:&lt;name&gt;</code>, only in folders whose AI mode is not <em>none</em> (set it when editing a folder), and its key works nowhere else.
+    </div>
+    <table id="agents-table">
+        <thead><tr>
+            <th>Name</th><th>Folders</th><th>Allowed IPs</th><th>Expires</th><th>Last used</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="agents-body"></tbody>
+    </table>
+    <div id="no-agents" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No AI agents.</div>
+    <div class="add-form">
+        <input type="text" id="agent-name" placeholder="Agent name" style="width:10em">
+        <input type="text" id="agent-folders" placeholder="shared/lab, shared/dev (blank: all AI folders)" style="width:20em">
+        <input type="text" id="agent-ips" placeholder="Allowed IPs (CIDRs)" style="width:11em">
+        <input type="date" id="agent-expires" title="Expires (optional)">
+        <button class="btn-primary" id="agent-add-btn">Add agent</button>
+    </div>
+    <div id="agent-key" style="display:none;margin-top:0.5em;padding:0.6em;border:1px solid var(--border);border-radius:4px;font-size:0.9em;">
+        Key for <strong id="agent-key-name"></strong>, shown once: <code id="agent-key-value" style="user-select:all"></code>
+    </div>
+
     <div id="error"></div>
 
     <script>
@@ -255,7 +278,7 @@
 
         // ── Policies ──
         function polWho(s) {
-            return s.kind === 'any' ? 'anyone' : (s.kind === 'api_key' ? 'API key' : s.kind) + ' ' + s.value;
+            return s.kind === 'any' ? 'anyone' : ({ api_key: 'API key', ai_agent: 'AI agent' }[s.kind] || s.kind) + ' ' + s.value;
         }
         function polTarget(t) {
             if (t.kind === 'any') return 'anything';
@@ -434,6 +457,77 @@
             })
             .catch(function() {});
         }
+        function loadAgents() {
+            fetch('/api/admin/ai-agents', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('agents-body');
+                body.innerHTML = '';
+                document.getElementById('no-agents').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(a) {
+                    var tr = document.createElement('tr');
+                    tr.setAttribute('data-agent', a.name);
+                    ['ai:' + a.name, (a.folders || []).join(', ') || 'all AI folders', a.allowed_ips || '',
+                     a.expires_at || '', a.last_used_at || 'never', a.disabled ? 'disabled' : 'active'].forEach(function(v) {
+                        var cell = document.createElement('td');
+                        cell.textContent = v;
+                        tr.appendChild(cell);
+                    });
+                    var actions = document.createElement('td');
+                    var toggle = document.createElement('button');
+                    toggle.className = 'btn-small btn-action agent-toggle';
+                    toggle.textContent = a.disabled ? 'Enable' : 'Disable';
+                    toggle.onclick = function() { agentAction(a.name, a.disabled ? 'enable' : 'disable', 'POST'); };
+                    var del = document.createElement('button');
+                    del.className = 'btn-small agent-delete';
+                    del.textContent = 'Delete';
+                    del.onclick = function() {
+                        if (confirm('Delete AI agent ai:' + a.name + '? Its key stops working at once.')) agentAction(a.name, '', 'DELETE');
+                    };
+                    actions.appendChild(toggle);
+                    actions.appendChild(del);
+                    tr.appendChild(actions);
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+        function agentAction(name, verb, method) {
+            fetch('/api/admin/ai-agents/' + encodeURIComponent(name) + (verb ? '/' + verb : ''), {
+                method: method, headers: apiHeaders(), credentials: 'same-origin'
+            })
+            .then(function(r) { if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || 'failed'); }); })
+            .then(function() { loadAgents(); loadPolicyAudit(); })
+            .catch(function(e) { showError(e.message); });
+        }
+        document.getElementById('agent-add-btn').addEventListener('click', function() {
+            var name = document.getElementById('agent-name').value.trim();
+            if (!name) { showError('Agent name is required'); return; }
+            var folders = document.getElementById('agent-folders').value.split(',')
+                .map(function(s) { return s.trim(); }).filter(Boolean);
+            var body = { name: name, folders: folders };
+            var ips = document.getElementById('agent-ips').value.trim();
+            var exp = document.getElementById('agent-expires').value;
+            if (ips) body.allowed_ips = ips;
+            if (exp) body.expires = exp;
+            fetch('/api/admin/ai-agents', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify(body)
+            })
+            .then(function(r) { return r.json().then(function(j) { if (!r.ok) throw new Error(j.error || 'failed'); return j; }); })
+            .then(function(j) {
+                document.getElementById('agent-key-name').textContent = 'ai:' + name;
+                document.getElementById('agent-key-value').textContent = j.key;
+                document.getElementById('agent-key').style.display = '';
+                ['agent-name', 'agent-folders', 'agent-ips', 'agent-expires'].forEach(function(id) { document.getElementById(id).value = ''; });
+                loadAgents();
+                loadPolicyAudit();
+            })
+            .catch(function(e) { showError(e.message); });
+        });
+
         document.getElementById('cmd-filter-btn').addEventListener('click', loadSshCommands);
         document.getElementById('cmd-search').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') loadSshCommands();
@@ -461,6 +555,7 @@
                 loadPolicies();
                 loadPolicyAudit();
                 loadSshCommands();
+                loadAgents();
                 loadSystemStatus();
             })
             .catch(function() {});

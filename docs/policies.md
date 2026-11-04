@@ -14,7 +14,7 @@ A rule has:
 
 | Part | Values |
 |---|---|
-| **Who** | `anyone`, a `user` (login email), a `group` (OIDC group), a `role` (exactly that role), or an `api_key` (by name) |
+| **Who** | `anyone`, a `user` (login email), a `group` (OIDC group), a `role` (exactly that role), an `api_key` (by name), or an `ai_agent` (an MCP agent key by name, or `*` for every agent; see `docs/mcp.md`) |
 | **Target** | `anything`, a `folder` (and everything under it), or one `entry`, each in the `shared` or `instance` scope |
 | **Action** | `connect`; `ssh_command` (one command run through the bastion, see below); `clipboard` or `file_transfer` (in a session, see below) |
 | **Direction** | for `clipboard` and `file_transfer`: `in` (paste, upload to the target), `out` (copy, download from it), or both (unset) |

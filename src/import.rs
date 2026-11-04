@@ -316,6 +316,7 @@ pub async fn cmd_import_guacamole(
         description: "Imported from Guacamole".to_string(),
         display_name: String::new(),
         inherit_from_parent: false,
+        ai_mode: None,
     };
     if let Err(e) = client.put_folder_config(scope, folder, &root_config).await {
         eprintln!("Error creating folder \"{}\": {}", folder, e);
@@ -347,6 +348,7 @@ pub async fn cmd_import_guacamole(
             description: format!("Imported from Guacamole: {}", sub),
             display_name: String::new(),
             inherit_from_parent: true,
+            ai_mode: None,
         };
         if let Err(e) = client.put_folder_config(scope, &full, &cfg).await {
             eprintln!("  Warning: failed to create subfolder \"{}\": {}", full, e);

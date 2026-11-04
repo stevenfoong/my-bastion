@@ -510,6 +510,7 @@ mod tests {
             description: "d".into(),
             display_name: String::new(),
             inherit_from_parent: inherit,
+            ai_mode: None,
         }
     }
 

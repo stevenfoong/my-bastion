@@ -30,6 +30,51 @@ pub struct FolderConfig {
     /// per-folder-only semantics until an admin opts in.
     #[serde(default)]
     pub inherit_from_parent: bool,
+    /// What AI agents may do in this folder (over MCP). Unset: as the
+    /// nearest parent folder that sets it, else `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_mode: Option<AiMode>,
+}
+
+/// What AI agents may do in a folder, through `/mcp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiMode {
+    /// Not reachable by AI at all.
+    #[default]
+    None,
+    /// Listing and screenshots only.
+    Observe,
+    /// Each action waits for a person's approval.
+    Approve,
+    /// Allowed (still subject to policies), and fully recorded.
+    Auto,
+}
+
+impl AiMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AiMode::None => "none",
+            AiMode::Observe => "observe",
+            AiMode::Approve => "approve",
+            AiMode::Auto => "auto",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(AiMode::None),
+            "observe" => Some(AiMode::Observe),
+            "approve" => Some(AiMode::Approve),
+            "auto" => Some(AiMode::Auto),
+            _ => None,
+        }
+    }
+
+    /// Whether an agent may act (run commands, give input), not just look.
+    pub fn may_act(self) -> bool {
+        matches!(self, AiMode::Approve | AiMode::Auto)
+    }
 }
 
 /// Who is asking for access to a folder: their login email (absent for API
@@ -690,6 +735,7 @@ mod tests {
             description: String::new(),
             display_name: String::new(),
             inherit_from_parent: false,
+            ai_mode: None,
         }
     }
 
