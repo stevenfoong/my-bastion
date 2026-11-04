@@ -4299,7 +4299,7 @@ pub async fn ab_connect_entry(
         client_ip(&headers, addr.ip(), &proxies).to_string()
     };
     connect_entry(
-        &manager, &database, &vault, &id, &scope, &folder, &entry, req, gate_ip,
+        &manager, &database, &vault, &id, &scope, &folder, &entry, req, gate_ip, false,
     )
     .await
 }
@@ -4319,6 +4319,7 @@ pub(crate) async fn connect_entry(
     entry: &str,
     req: ConnectRequest,
     gate_ip: String,
+    force_recording: bool,
 ) -> Response {
     let (scope, folder, entry) = (scope.to_string(), folder.to_string(), entry.to_string());
     // Policy: before anything is read or a session exists.
@@ -4368,6 +4369,9 @@ pub(crate) async fn connect_entry(
         }
     };
     create_req.policy = controls;
+    if force_recording {
+        create_req.enable_recording = Some(true);
+    }
 
     let admin_name = id.display_name().to_string();
 

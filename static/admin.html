@@ -151,6 +151,7 @@
             <option value="ssh_command">SSH command</option>
             <option value="clipboard">clipboard</option>
             <option value="file_transfer">file transfer</option>
+            <option value="input" title="An AI agent's clicks, typing and keys over MCP">AI input</option>
         </select>
         <select id="pol-direction" style="display:none" title="In: paste and upload to the target. Out: copy and download from it.">
             <option value="">both ways</option>
@@ -252,6 +253,19 @@
     <div id="agent-key" style="display:none;margin-top:0.5em;padding:0.6em;border:1px solid var(--border);border-radius:4px;font-size:0.9em;">
         Key for <strong id="agent-key-name"></strong>, shown once: <code id="agent-key-value" style="user-select:all"></code>
     </div>
+    <h3 style="margin-top:1.2em">Open AI sessions</h3>
+    <table id="ai-sessions-table">
+        <thead><tr>
+            <th>Agent</th><th>Connection</th><th>Type</th><th>Idle</th><th>State</th><th>Session</th>
+        </tr></thead>
+        <tbody id="ai-sessions-body"></tbody>
+    </table>
+    <div id="no-ai-sessions" style="display:none;color:var(--text-muted);margin-top:0.5em;font-size:0.9em;">No AI sessions open.</div>
+    <div style="margin-top:0.6em;display:flex;gap:0.6em;align-items:center;flex-wrap:wrap">
+        <button class="btn-primary" id="ai-kill-btn" style="background:var(--danger, #c0392b)">End all AI sessions</button>
+        <label><input type="checkbox" id="ai-kill-disable"> and disable every agent key</label>
+        <span id="ai-kill-result" style="font-size:0.9em;color:var(--text-muted)"></span>
+    </div>
 
     <div id="error"></div>
 
@@ -318,6 +332,7 @@
                         ? 'SSH command' + ((p.commands || []).length ? ': ' + p.commands.join(' | ') : '')
                         : p.action === 'clipboard' || p.action === 'file_transfer'
                         ? p.action.replace(/_/g, ' ') + (p.direction ? ' (' + p.direction + ')' : '')
+                        : p.action === 'input' ? 'AI input'
                         : 'connect';
                     [p.name, polWho(p.subject), polTarget(p.target), act, p.effect.replace(/_/g, ' '),
                      p.effect === 'require_approval' ? polApprovers(p.approvers) + (p.web_only ? ' (web only)' : '') : '',
@@ -492,6 +507,46 @@
             })
             .catch(function() {});
         }
+        function loadAiSessions() {
+            fetch('/api/admin/ai-sessions', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('ai-sessions-body');
+                body.innerHTML = '';
+                document.getElementById('no-ai-sessions').style.display = rows.length ? 'none' : '';
+                rows.forEach(function(s) {
+                    var tr = document.createElement('tr');
+                    [s.agent, s.connection, s.type, Math.round(s.idle_secs / 60) + ' min',
+                     s.ended ? 'ended: ' + s.ended : 'open', s.session_id].forEach(function(v) {
+                        var cell = document.createElement('td');
+                        cell.textContent = v;
+                        tr.appendChild(cell);
+                    });
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
+        }
+        document.getElementById('ai-kill-btn').addEventListener('click', function() {
+            var disable = document.getElementById('ai-kill-disable').checked;
+            if (!confirm('End every AI agent session now' + (disable ? ' and disable every agent key' : '') + '?')) return;
+            fetch('/api/admin/ai-sessions/kill', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: JSON.stringify({ disable_agents: disable })
+            })
+            .then(function(r) { return r.json().then(function(j) { if (!r.ok) throw new Error(j.error || 'failed'); return j; }); })
+            .then(function(j) {
+                document.getElementById('ai-kill-result').textContent =
+                    j.sessions_ended + ' session(s) ended' + (disable ? ', ' + j.agents_disabled + ' key(s) disabled' : '') + '.';
+                loadAiSessions();
+                loadAgents();
+                loadPolicyAudit();
+            })
+            .catch(function(e) { showError(e.message); });
+        });
+
         function agentAction(name, verb, method) {
             fetch('/api/admin/ai-agents/' + encodeURIComponent(name) + (verb ? '/' + verb : ''), {
                 method: method, headers: apiHeaders(), credentials: 'same-origin'
@@ -556,6 +611,7 @@
                 loadPolicyAudit();
                 loadSshCommands();
                 loadAgents();
+                loadAiSessions();
                 loadSystemStatus();
             })
             .catch(function() {});

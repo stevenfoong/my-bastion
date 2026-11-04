@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{role_level, AuthIdentity};
 
-/// What is being done. AI input comes with the MCP endpoint.
+/// What is being done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
@@ -53,6 +53,8 @@ pub enum Action {
     Clipboard,
     /// Download (out) and upload (in): RDP drive and SFTP.
     FileTransfer,
+    /// An AI agent's input to a session over MCP: click, type, keys, scroll.
+    Input,
 }
 
 impl Action {
@@ -62,6 +64,7 @@ impl Action {
             Action::SshCommand => "ssh_command",
             Action::Clipboard => "clipboard",
             Action::FileTransfer => "file_transfer",
+            Action::Input => "input",
         }
     }
 
@@ -71,6 +74,7 @@ impl Action {
             "ssh_command" => Some(Action::SshCommand),
             "clipboard" => Some(Action::Clipboard),
             "file_transfer" => Some(Action::FileTransfer),
+            "input" => Some(Action::Input),
             _ => None,
         }
     }

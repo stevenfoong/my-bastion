@@ -128,7 +128,6 @@ impl Display {
     }
 
     /// The size of the screen (layer 0).
-    #[cfg(test)]
     pub fn size(&self) -> (u32, u32) {
         self.layers
             .get(&0)

@@ -1498,6 +1498,8 @@ async fn run_server(config: Config, database: Db) {
             post(mcp::api::disable),
         )
         .route("/api/admin/ai-agents/{name}/enable", post(mcp::api::enable))
+        .route("/api/admin/ai-sessions", get(mcp::api::sessions))
+        .route("/api/admin/ai-sessions/kill", post(mcp::api::kill))
         .route("/api/approvals", get(policy::api::list_approvals))
         .route("/api/approvals/{id}", get(policy::api::get_approval))
         .route("/api/approvals/{id}/reason", post(policy::api::set_reason))
@@ -1646,11 +1648,12 @@ async fn run_server(config: Config, database: Db) {
     // the REST middleware, so REST credentials do not work here and agent
     // keys do not work there.
     let mut mcp_route: Router<()> = Router::new();
-    if manager.config().mcp.as_ref().is_some_and(|m| m.enabled) {
+    if let Some(mcp_cfg) = manager.config().mcp.clone().filter(|m| m.enabled) {
         let service = mcp::server::service(mcp::server::McpServer::new(
             database.clone(),
             vault_client.clone(),
             manager.clone(),
+            mcp_cfg.log_typed_text,
         ));
         mcp_route = Router::new()
             .route_service("/mcp", service)

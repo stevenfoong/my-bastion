@@ -228,7 +228,13 @@
                     tr.appendChild(tdType);
                     tr.appendChild(h('td', hostCol));
                     tr.appendChild(h('td', s.username));
-                    tr.appendChild(h('td', s.created_by || '', { 'class': isOwn ? 'owner-self' : 'owner-other' }));
+                    var tdOwner = h('td', s.created_by || '', { 'class': isOwn ? 'owner-self' : 'owner-other' });
+                    if ((s.created_by || '').indexOf('ai:') === 0) {
+                        // An AI agent's session (MCP): admins may shadow or terminate it.
+                        tdOwner.appendChild(document.createTextNode(' '));
+                        tdOwner.appendChild(h('span', 'AI', { 'class': 'type-badge ai-badge', 'title': 'Opened by an AI agent over MCP' }));
+                    }
+                    tr.appendChild(tdOwner);
                     tr.appendChild(h('td', s.status, { 'class': 'status-' + s.status }));
                     tr.appendChild(h('td', String(s.active_connections)));
 

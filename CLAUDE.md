@@ -23,9 +23,10 @@ a phase. Status:
   2e (interactive SSH command log from keystrokes, alerts) done
 - Phase 3 (MCP): 3a (`/mcp` with AI agent keys, folder `ai_mode`,
   `list_connections`, `run_ssh`, approve mode) and 3b (headless renderer,
-  `open_session`/`screenshot`/`wait`/`list_sessions`/`close_session`) done.
-  Next: 3c input tools + kill switch + forced recording + rate limits,
-  3d OAuth 2.1
+  `open_session`/`screenshot`/`wait`/`list_sessions`/`close_session`) and 3c
+  (`click`/`type_text`/`key`/`scroll` with the `input` policy action,
+  approve mode per input, kill switch, forced recording, rate limits) done.
+  Next: 3d OAuth 2.1
 - Phase 4 (DB proxy): not started
 
 ## Architecture
@@ -84,7 +85,8 @@ a phase. Status:
   `policy::gate_forced`. Docs: `docs/mcp.md`
 - `src/render/` — headless Guacamole client for AI sessions: `client.rs`
   (owns the guacd stream as owner, answers `sync`, tees the recording),
-  `display.rs` (layers/buffers, `img`/`copy`/`rect`+`cfill`, screenshots).
+  `display.rs` (layers/buffers, `img`/`copy`/`rect`+`cfill`, screenshots),
+  `input.rs` (mouse/key instructions, key combos).
   Owner-connection setup and teardown shared with the browser path:
   `websocket::open_recording`, `websocket::finish_connection`
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
@@ -185,6 +187,9 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_mcp_session.sh` — live: `open_session` on a local Xvnc and SSH
   through its own guacd; screenshots checked pixel for pixel
   (`tests/png_pixels.py`), ownership, recording, terminate, policies
+- `tests/test_mcp_input.sh` — live: typing into an SSH terminal the bastion
+  renders runs on the target; approve mode per input, `input` policies,
+  audit without typed text, rate limits, kill switch
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels

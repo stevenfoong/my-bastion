@@ -95,7 +95,7 @@ check "$(curl -s -o /dev/null -w '%{http_code}' -H "X-API-Key: $AGENT" "$U/api/a
 echo "== tools"
 R=$(mcp "$AGENT" initialize)
 check "$(echo "$R" | json 'd["body"]["result"]["serverInfo"]["name"]')" mybastion "initialize"
-check "$(mcp "$AGENT" tools/list | json '[t["name"] for t in d["body"]["result"]["tools"]]')" "['list_connections', 'run_ssh', 'open_session', 'screenshot', 'wait', 'list_sessions', 'close_session']" "tools/list"
+check "$(mcp "$AGENT" tools/list | json '[t["name"] for t in d["body"]["result"]["tools"]]')" "['list_connections', 'run_ssh', 'open_session', 'screenshot', 'wait', 'list_sessions', 'close_session', 'click', 'type_text', 'key', 'scroll']" "tools/list"
 L=$(tool "$AGENT" list_connections '{}')
 conns() { echo "$1" | json 'sorted((c["id"], c["ai_mode"]) for c in __import__("json").loads(d["body"]["result"]["content"][0]["text"])["connections"])'; }
 check "$(conns "$L")" "[('shared/lab/web01', 'auto'), ('shared/obs/web01', 'observe'), ('shared/prod/web01', 'approve')]" "list_connections: AI folders only"

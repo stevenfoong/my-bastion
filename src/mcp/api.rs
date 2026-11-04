@@ -3,14 +3,17 @@
 //! - `POST /api/admin/ai-agents`: `{"name", "folders"?, "allowed_ips"?,
 //!   "expires"?}`, answering the key once;
 //! - `POST /api/admin/ai-agents/{name}/disable`, `/enable`;
-//! - `DELETE /api/admin/ai-agents/{name}`.
+//! - `DELETE /api/admin/ai-agents/{name}`;
+//! - `GET /api/admin/ai-sessions`: the sessions agents have open;
+//! - `POST /api/admin/ai-sessions/kill`: the kill switch, ending every agent
+//!   session; `{"disable_agents": true}` also disables every agent key.
 //!
 //! Each change goes to the policy audit log.
 
 // Handlers return a `Response` as their error: that is the answer they give.
 #![allow(clippy::result_large_err)]
 
-use axum::extract::Path;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
@@ -177,6 +180,62 @@ pub async fn disable(
         agents::set_disabled(c, n, true)
     })
     .await
+}
+
+pub async fn sessions(identity: Option<Extension<AuthIdentity>>) -> Response {
+    if let Err(r) = admin(identity) {
+        return r;
+    }
+    Json(json!(super::sessions::registry().all())).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub struct KillBody {
+    #[serde(default)]
+    disable_agents: bool,
+}
+
+/// The kill switch: end every AI agent session at once.
+pub async fn kill(
+    State(manager): State<crate::api::AppState>,
+    identity: Option<Extension<AuthIdentity>>,
+    Extension(db): Extension<Db>,
+    body: Option<Json<KillBody>>,
+) -> Response {
+    let id = match admin(identity) {
+        Ok(id) => id,
+        Err(r) => return r,
+    };
+    let disable = body.map(|Json(b)| b.disable_agents).unwrap_or(false);
+    let ended = super::sessions::registry().kill_all(&manager).await;
+    let by = id.display_name().to_string();
+    let disabled = match with_db(&db, move |c| {
+        let mut n = 0;
+        if disable {
+            n = c
+                .execute("UPDATE ai_agents SET disabled = 1 WHERE disabled = 0", [])
+                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        let detail = json!({ "sessions_ended": ended, "agents_disabled": n }).to_string();
+        let row = AuditEvent {
+            event: "ai_kill_switch",
+            actor: &by,
+            target: "ai:*",
+            detail: Some(&detail),
+            ..Default::default()
+        };
+        if let Err(e) = store::audit(c, &row, store::now_secs()) {
+            tracing::warn!(error = %e, "Failed to audit the AI kill switch");
+        }
+        Ok(n)
+    })
+    .await
+    {
+        Ok(n) => n,
+        Err(r) => return r,
+    };
+    tracing::warn!(admin = %id.display_name(), ended, disabled, "AI kill switch used");
+    Json(json!({ "sessions_ended": ended, "agents_disabled": disabled })).into_response()
 }
 
 pub async fn enable(
