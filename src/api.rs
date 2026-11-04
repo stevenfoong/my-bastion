@@ -2580,7 +2580,7 @@ pub async fn get_docs() -> impl IntoResponse {
 // The Err variant is an axum `Response` on purpose (callers `?` it straight
 // into a handler result), so its size is inherent, not a mistake.
 #[allow(clippy::result_large_err)]
-async fn check_folder_access(
+pub(crate) async fn check_folder_access(
     vault: &Connections,
     scope: &str,
     folder: &str,
@@ -2997,7 +2997,7 @@ pub async fn ab_delete_folder_defaults(
 /// defaults, so an entry behaves the same from either. An entry with its own
 /// secret, or set to prompt, is returned untouched; a Vault error leaves it
 /// as it was, and the caller then prompts as it did before defaults existed.
-async fn lend_folder_defaults<S: DefaultsSource>(
+pub(crate) async fn lend_folder_defaults<S: DefaultsSource>(
     src: &S,
     scope: &str,
     folder: &str,
@@ -4064,7 +4064,7 @@ pub fn can_connect_adhoc(id: &AuthIdentity) -> bool {
 /// failed read leaves the references as they are (logged).
 // The Err variant is the handler response, as for `check_folder_access`.
 #[allow(clippy::result_large_err)]
-async fn resolve_entry_credentials(
+pub(crate) async fn resolve_entry_credentials(
     vault: &ConnectionsState,
     id: &AuthIdentity,
     ab_entry: AddressBookEntry,

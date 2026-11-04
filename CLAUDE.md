@@ -28,7 +28,9 @@ a phase. Status:
   approve mode per input, kill switch, forced recording, rate limits) and
   3d (OAuth 2.1 for people's own AI clients, `[mcp.oauth]`) done. Left
   from its done-when: a real Windows RDP target and a real Claude client
-- Phase 4 (DB proxy): not started
+- Phase 4 (DB proxy): 4a done (Go `dbproxy/` for PostgreSQL, DB tokens,
+  `db_query` policies with statement classes, internal API, audit). Next:
+  Connections UI for database entries, MySQL/MariaDB, packaging
 
 ## Architecture
 
@@ -76,6 +78,11 @@ a phase. Status:
 - `src/telegram.rs` — Telegram bot (long polling, link codes, Approve/Deny
   buttons, message edits); `telegram::notify(request_id)` after any request
   change. Decisions from the web and the bot share `policy::decide_request`
+- `dbproxy/` — `mybastion-dbproxy` (Go 1.25, `pgx`/`pgproto3`,
+  `pg_query_go`): `proxy.go` (TLS, token as password, relay; checks Query
+  and Parse), `classify.go` (statement classes), `core.go` (internal API
+  client). Core side: `src/dbgate.rs` (DB tokens, `/internal/db/*` with the
+  shared secret, audit). Docs: `docs/database-proxy.md`
 - `src/oauth/` — OAuth 2.1 authorization server for MCP (`[mcp.oauth]`, on
   top of `[oidc]`): `store.rs` (clients, client names, grants, codes,
   tokens, all hashed), `routes.rs` (metadata, register, authorize +
@@ -196,6 +203,10 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_mcp_session.sh` — live: `open_session` on a local Xvnc and SSH
   through its own guacd; screenshots checked pixel for pixel
   (`tests/png_pixels.py`), ownership, recording, terminate, policies
+- `tests/test_dbproxy.sh` — live: a throwaway PostgreSQL cluster, the proxy
+  and psql: read-only user, unbounded DELETE, prod approval, extended
+  protocol, TLS, audit (needs `go`, `initdb`, `psql`)
+- `cd dbproxy && go test ./...` — statement classification
 - `tests/test_mcp_oauth.sh` — live: OAuth against a fake OIDC provider
   (`tests/fake_oidc.py`, RS256 via openssl) with a scripted client/browser
   (`tests/oauth_client.py`): approval, consent, PKCE, refresh rotation and
