@@ -21,10 +21,11 @@ a phase. Status:
   rules with regex patterns), 2c (Telegram approvals, web-only policies
   with fresh sign-in), 2d (clipboard/file transfer rules, break-glass) and
   2e (interactive SSH command log from keystrokes, alerts) done
-- Phase 3 (MCP): slice 3a done (`/mcp` with AI agent keys, folder
-  `ai_mode`, `list_connections`, `run_ssh`, approve mode). Next: 3b headless
-  renderer + `open_session`/`screenshot`/`close_session`, 3c input tools +
-  kill switch + forced recording, 3d OAuth 2.1
+- Phase 3 (MCP): 3a (`/mcp` with AI agent keys, folder `ai_mode`,
+  `list_connections`, `run_ssh`, approve mode) and 3b (headless renderer,
+  `open_session`/`screenshot`/`wait`/`list_sessions`/`close_session`) done.
+  Next: 3c input tools + kill switch + forced recording + rate limits,
+  3d OAuth 2.1
 - Phase 4 (DB proxy): not started
 
 ## Architecture
@@ -76,10 +77,16 @@ a phase. Status:
 - `src/mcp/` — MCP endpoint (`[mcp] enabled`): `agents.rs` (AI agent keys,
   `ai_agents` table, `ai:<name>` = `AuthIdentity::AiAgent`), `auth.rs`
   (`/mcp` takes agent keys only; REST never does), `server.rs` (rmcp
-  `ServerHandler`, stateless; tools reuse `api::run_command`), `api.rs`
-  (admin endpoints). Folder `ai_mode` (none/observe/approve/auto) lives in
+  `ServerHandler`, stateless; tools reuse `api::run_command` and
+  `api::connect_entry`), `sessions.rs` (agent sessions: registry, idle
+  reaper), `api.rs` (admin endpoints). Folder `ai_mode` (none/observe/approve/auto) lives in
   `FolderConfig`, inherited down; `approve` forces approval via
   `policy::gate_forced`. Docs: `docs/mcp.md`
+- `src/render/` — headless Guacamole client for AI sessions: `client.rs`
+  (owns the guacd stream as owner, answers `sync`, tees the recording),
+  `display.rs` (layers/buffers, `img`/`copy`/`rect`+`cfill`, screenshots).
+  Owner-connection setup and teardown shared with the browser path:
+  `websocket::open_recording`, `websocket::finish_connection`
 - `src/db.rs` — main SQLite database (users, sessions, tokens, audit)
 - `src/guacd.rs`, `src/protocol.rs`, `src/websocket.rs` — guacd handshake,
   wire format, WebSocket <-> guacd bridge with recording tee
@@ -175,6 +182,9 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_mcp_agent.sh` — live: `/mcp` with agent keys (`tests/mcp_call.py`
   as the client): key isolation, AI modes, `run_ssh` on the machine's own
   sshd, approve mode, agent policies, audit
+- `tests/test_mcp_session.sh` — live: `open_session` on a local Xvnc and SSH
+  through its own guacd; screenshots checked pixel for pixel
+  (`tests/png_pixels.py`), ownership, recording, terminate, policies
 - `tests/test_storage_openbao.sh` — live: Vault → SQLite → Vault migration
   against a dev-mode OpenBao (`bao` on PATH); documents must match
 - `tests/test_browser_session.sh` — Xvnc + Chromium renders non-black pixels
