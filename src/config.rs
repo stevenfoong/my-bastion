@@ -670,6 +670,10 @@ pub struct Config {
 pub struct McpConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Keep the text an agent types in the policy audit log. Off: only
+    /// what kind of input it was (and how many characters).
+    #[serde(default)]
+    pub log_typed_text: bool,
 }
 
 /// `[ssh_log]`: interactive SSH command log, rebuilt from keystrokes

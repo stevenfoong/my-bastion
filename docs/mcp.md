@@ -64,8 +64,40 @@ A deny still wins.
 | `wait(session_id, ms?)` | Returns when the screen next changes, or after `ms` (at most 10000). |
 | `list_sessions()` | The agent's open sessions. |
 | `close_session(session_id)` | Ends the session. |
+| `click(session_id, x, y, button?, double?)` | Click at x, y in the coordinates of the agent's last screenshot of that session (mapped back to the screen). |
+| `type_text(session_id, text)` | Types the text (up to 4000 characters; `\n` is Enter). |
+| `key(session_id, combo)` | A key or combination: `enter`, `esc`, `f5`, `ctrl+c`, `alt+f4`, `win+r`, `ctrl+alt+del`, … |
+| `scroll(session_id, x, y, dy)` | Turns the wheel at x, y; `dy` > 0 scrolls down. |
 
-Input (click, type, keys) comes next.
+### Input
+
+Every input is checked when it is sent, not when the session opened:
+
+- The folder's AI mode must be `approve` or `auto` now: `observe` refuses
+  input, and an admin who changes a folder's mode changes what agents
+  already in a session may do.
+- Policies with the action `input` apply (for example: deny `ai_agent *`
+  input in `prod`, while still letting agents look).
+- In `approve` mode each input becomes an approval request showing exactly
+  what will be typed, clicked or pressed; the approval covers that exact
+  input for an hour, and the agent sends it again once approved.
+- Each input is in the policy audit log as `ai_input`: the kind, where it
+  clicked, which keys, how many characters were typed, but not the text
+  (`[mcp] log_typed_text = true` keeps it). The session recording shows
+  everything.
+
+## Safety
+
+- **Recording** is always on for AI sessions, whatever the entry says.
+- **Rate limits** per agent: input at 5 per second (bursts of 20),
+  screenshots at 2 per second (bursts of 10).
+- **Clipboard**: agents have none; the bastion never sends or reads the
+  session clipboard for them.
+- **Kill switch**: Admin page → AI Agents → *End all AI sessions*
+  (`POST /api/admin/ai-sessions/kill`), optionally disabling every agent key
+  too. It is audited (`ai_kill_switch`). `GET /api/admin/ai-sessions`
+  lists what agents have open; the Sessions page marks their sessions
+  **AI**, and admins can shadow or terminate them like any other.
 
 ### Sessions
 

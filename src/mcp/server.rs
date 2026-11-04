@@ -47,16 +47,19 @@ pub struct McpServer {
     pub conns: ConnectionsState,
     pub manager: AppState,
     pub(super) sessions: Arc<super::sessions::Registry>,
+    /// Keep what an agent types in the audit log (`[mcp] log_typed_text`).
+    pub(super) log_typed_text: bool,
 }
 
 impl McpServer {
     /// The server, with the task that closes idle agent sessions.
-    pub fn new(db: Db, conns: ConnectionsState, manager: AppState) -> Self {
+    pub fn new(db: Db, conns: ConnectionsState, manager: AppState, log_typed_text: bool) -> Self {
         let server = McpServer {
             db,
             conns,
             manager,
-            sessions: Arc::default(),
+            sessions: super::sessions::registry(),
+            log_typed_text,
         };
         super::sessions::spawn_reaper(server.clone());
         server
@@ -93,13 +96,13 @@ pub(super) fn parse_connection_id(id: &str) -> Option<(&str, &str, &str)> {
 }
 
 /// The rule that holds an agent's every action in an `approve` folder.
-pub fn approve_mode_rule(folder: &str) -> crate::policy::Rule {
+pub fn approve_mode_rule(folder: &str, action: crate::policy::Action) -> crate::policy::Rule {
     crate::policy::Rule {
         id: 0,
         name: format!("AI approve mode ({})", folder),
         subject: crate::policy::Subject::Any,
         target: crate::policy::Target::Any,
-        action: crate::policy::Action::SshCommand,
+        action,
         effect: crate::policy::Effect::RequireApproval,
         approvers: vec![crate::policy::Approver::Role("admin".into())],
         grant_minutes: 60,
@@ -204,6 +207,62 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": { "session_id": { "type": "string" } },
                 "required": ["session_id"]
+            })),
+        ),
+        Tool::new(
+            "click",
+            "Click at x, y in the coordinates of your last screenshot of the session. In an \
+             approve folder each input waits for a person's approval: call again with the same \
+             arguments once approved.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "x": { "type": "integer", "minimum": 0 },
+                    "y": { "type": "integer", "minimum": 0 },
+                    "button": { "type": "string", "enum": ["left", "middle", "right"] },
+                    "double": { "type": "boolean" }
+                },
+                "required": ["session_id", "x", "y"]
+            })),
+        ),
+        Tool::new(
+            "type_text",
+            "Type text into the session, as if on its keyboard (\\n is Enter).",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "text": { "type": "string", "maxLength": 4000 }
+                },
+                "required": ["session_id", "text"]
+            })),
+        ),
+        Tool::new(
+            "key",
+            "Press a key or a combination: enter, esc, tab, f5, ctrl+c, alt+f4, win+r, \
+             ctrl+alt+del, shift+tab, …",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "combo": { "type": "string" }
+                },
+                "required": ["session_id", "combo"]
+            })),
+        ),
+        Tool::new(
+            "scroll",
+            "Turn the mouse wheel at x, y (screenshot coordinates): dy > 0 scrolls down, < 0 up.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "x": { "type": "integer", "minimum": 0 },
+                    "y": { "type": "integer", "minimum": 0 },
+                    "dy": { "type": "integer", "minimum": -50, "maximum": 50 }
+                },
+                "required": ["session_id", "x", "y", "dy"]
             })),
         ),
     ]
@@ -365,8 +424,12 @@ impl McpServer {
                 scope, folder
             ));
         }
-        let forced =
-            (mode == AiMode::Approve).then(|| approve_mode_rule(&format!("{}/{}", scope, folder)));
+        let forced = (mode == AiMode::Approve).then(|| {
+            approve_mode_rule(
+                &format!("{}/{}", scope, folder),
+                crate::policy::Action::SshCommand,
+            )
+        });
         let req = crate::api::RunCommandRequest {
             command: command.to_string(),
             timeout_secs,
@@ -428,6 +491,10 @@ impl ServerHandler for McpServer {
         Ok(match request.name.as_ref() {
             "list_connections" => self.list_connections(&agent, &args).await,
             "run_ssh" => self.run_ssh(&id, &agent, ip, &args).await,
+            "click" | "scroll" | "type_text" | "key" => {
+                self.input(request.name.as_ref(), &id, &agent, ip, &args)
+                    .await
+            }
             "open_session" => self.open_session(&id, &agent, ip, &args).await,
             "screenshot" => self.screenshot(&id, &args).await,
             "wait" => self.wait(&id, &args).await,
@@ -474,7 +541,11 @@ mod tests {
                 "screenshot",
                 "wait",
                 "list_sessions",
-                "close_session"
+                "close_session",
+                "click",
+                "type_text",
+                "key",
+                "scroll"
             ]
         );
         assert!(t

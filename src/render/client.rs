@@ -167,6 +167,14 @@ impl Headless {
         self.ended.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    /// The screen's size now; (0, 0) before guacd has sized it.
+    pub fn screen_size(&self) -> (u32, u32) {
+        self.display
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .size()
+    }
+
     pub fn frames(&self) -> u64 {
         *self.frames.borrow()
     }
@@ -219,7 +227,6 @@ impl Headless {
     }
 
     /// Send instructions to guacd (input, from the tools that act).
-    #[allow(dead_code)]
     pub async fn send(&self, data: &str) -> Result<(), String> {
         self.writer
             .lock()
