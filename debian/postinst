@@ -16,6 +16,13 @@ if [ ! -f /etc/mybastion/kek ]; then
     chown mybastion:mybastion /etc/mybastion/kek
 fi
 
+# Shared secret between the core and the database proxy ([dbproxy]
+# shared_secret_file). Created once; both run as mybastion.
+if [ ! -f /etc/mybastion/dbproxy-secret ]; then
+    (umask 227; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/mybastion/dbproxy-secret)
+    chown root:mybastion /etc/mybastion/dbproxy-secret
+fi
+
 # Chromium policy: web session hardening.
 # DeveloperToolsAvailability=0: CDP needed for login scripts. Users can't reach DevTools
 # through the UI anyway — chrome://* is in URLBlocklist.

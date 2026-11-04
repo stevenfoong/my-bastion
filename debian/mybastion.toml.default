@@ -63,3 +63,13 @@ guacd_cert_path = "/etc/mybastion/tls/cert.pem"
 # enabled = true    # headless-Chromium web sessions
 # [spice]
 # enabled = true    # SPICE and Proxmox VE consoles
+
+# Database proxy (mybastion-dbproxy): psql & co through the bastion with a
+# short-lived token; every statement checked and audited. Turn it on here,
+# then: sudo systemctl enable --now mybastion-dbproxy
+# See /usr/share/doc/mybastion/database-proxy.md.
+# [dbproxy]
+# enabled = true
+# shared_secret_file = "/etc/mybastion/dbproxy-secret"
+# address = "bastion.example.com:5433"   # shown to users
+# allowed_networks = ["10.0.0.0/8"]      # where databases may be

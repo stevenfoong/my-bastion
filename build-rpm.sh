@@ -120,6 +120,12 @@ cd "$SCRIPT_DIR"
 cargo build --release
 info "mybastion built."
 
+# The database proxy (Go; its go.mod may fetch a newer Go toolchain).
+command -v go >/dev/null || { error "go is needed to build the database proxy (dnf install golang)"; exit 1; }
+info "Building mybastion-dbproxy..."
+(cd "$SCRIPT_DIR/dbproxy" && go build -trimpath -ldflags "-s -w" -o mybastion-dbproxy .)
+info "mybastion-dbproxy built."
+
 # ---------------------------------------------------------------------------
 # Step 4: Build the RPM
 # ---------------------------------------------------------------------------

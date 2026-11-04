@@ -42,6 +42,18 @@ type session struct {
 	queue    []pending       // statements sent, waiting for their result
 	txStatus byte
 	skipSync bool // an extended-protocol error: drop messages until Sync
+	// Audit calls in flight: the session ends (core.Disconnect) only after
+	// them, or the core would drop the last statements' rows.
+	audits sync.WaitGroup
+}
+
+// audit sends a statement's outcome without holding up the relay.
+func (s *session) audit(st Stmt, status string, rows int64, tag, errMsg string) {
+	s.audits.Add(1)
+	go func() {
+		defer s.audits.Done()
+		s.core.Audit(s.id, st, status, rows, tag, errMsg)
+	}()
 }
 
 func quote(v string) string {
@@ -184,6 +196,8 @@ func handle(raw net.Conn, core *Core, tlsCfg *tls.Config) {
 	conn.Close()
 	hc.Conn.Close()
 	<-done
+	// The deferred core.Disconnect runs after this: let the audits land first.
+	s.audits.Wait()
 }
 
 func (s *session) toClient(msgs ...pgproto3.BackendMessage) error {
@@ -371,11 +385,11 @@ func (s *session) fromServer() {
 		case *pgproto3.CommandComplete:
 			tag := string(m.CommandTag)
 			if st, ok := s.pop(); ok {
-				go s.core.Audit(s.id, st, "ok", rowsFromTag(tag), tag, "")
+				s.audit(st, "ok", rowsFromTag(tag), tag, "")
 			}
 		case *pgproto3.ErrorResponse:
 			if st, ok := s.pop(); ok {
-				go s.core.Audit(s.id, st, "error", -1, "", m.Code+" "+m.Message)
+				s.audit(st, "error", -1, "", m.Code+" "+m.Message)
 			}
 		case *pgproto3.ReadyForQuery:
 			s.mu.Lock()

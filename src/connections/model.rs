@@ -393,6 +393,9 @@ pub struct EntryInfo {
     pub name: String,
     pub session_type: String,
     pub hostname: Option<String>,
+    /// A database entry's database name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
     pub port: Option<u16>,
     pub username: Option<String>,
     pub url: Option<String>,
@@ -609,6 +612,7 @@ impl From<(&str, &AddressBookEntry)> for EntryInfo {
             name: name.to_string(),
             session_type: e.session_type.clone(),
             hostname: e.hostname.clone(),
+            database: e.database.clone(),
             port: e.port,
             username: e.username.clone(),
             url: e.url.clone(),

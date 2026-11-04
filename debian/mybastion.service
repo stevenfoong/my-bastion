@@ -6,6 +6,8 @@ Requires=mybastion-guacd.service
 [Service]
 Type=simple
 User=mybastion
+# An unprivileged user needs this to bind a port below 1024 (443 with TLS).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 WorkingDirectory=/opt/mybastion
 ExecStart=/opt/mybastion/bin/mybastion --config /etc/mybastion/mybastion.toml serve
 Restart=on-failure

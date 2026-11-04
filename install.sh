@@ -254,6 +254,16 @@ build_mybastion() {
     cd "$SCRIPT_DIR"
     sudo -u "$REAL_USER" "$CARGO_BIN" build --release
     info "mybastion built."
+    # The database proxy is optional: built when Go is installed
+    # (apt install golang-go; its go.mod may fetch a newer Go toolchain).
+    if command -v go >/dev/null 2>&1; then
+        info "Building mybastion-dbproxy..."
+        (cd "$SCRIPT_DIR/dbproxy" && sudo -u "$REAL_USER" go build -trimpath -ldflags "-s -w" -o mybastion-dbproxy .) \
+            && info "mybastion-dbproxy built." \
+            || warn "mybastion-dbproxy did not build; the database proxy is left out."
+    else
+        info "Go is not installed: skipping the database proxy (apt install golang-go to include it)."
+    fi
 }
 
 build_mybastion
@@ -283,6 +293,9 @@ install_mybastion() {
     # Binary
     cp "$SCRIPT_DIR/target/release/mybastion" "$PREFIX/bin/mybastion"
     chmod 755 "$PREFIX/bin/mybastion"
+    if [[ -f "$SCRIPT_DIR/dbproxy/mybastion-dbproxy" ]]; then
+        install -m 755 "$SCRIPT_DIR/dbproxy/mybastion-dbproxy" "$PREFIX/bin/mybastion-dbproxy"
+    fi
 
     # Licence and attribution (Apache-2.0 requires NOTICE to travel with the work)
     install -m 644 "$SCRIPT_DIR/LICENSE" "$SCRIPT_DIR/NOTICE" "$PREFIX/"
@@ -389,6 +402,12 @@ TOMLEOF
         (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/kek")
         chown mybastion:mybastion "$CONF_DIR/kek"
         info "Created $CONF_DIR/kek"
+    fi
+
+    # Shared secret between the core and the database proxy (created once).
+    if [[ ! -f "$CONF_DIR/dbproxy-secret" ]]; then
+        (umask 227; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/dbproxy-secret")
+        chown root:mybastion "$CONF_DIR/dbproxy-secret"
     fi
 
     # Chromium policy: web session hardening (block file dialogs, printing, extensions, etc.)
@@ -664,6 +683,19 @@ EOF
         done
         warn "Review with: systemctl cat mybastion-guacd"
         warn "Settings belong in $CONF_DIR/guacd.env instead, which persists."
+    fi
+
+    # The database proxy: installed, not enabled. It reaches the core where
+    # the config says the core listens.
+    if [[ -f "$PREFIX/bin/mybastion-dbproxy" ]]; then
+        install -m 644 "$SCRIPT_DIR/debian/mybastion-dbproxy.service" /etc/systemd/system/
+        sed -i "s#/opt/mybastion#$PREFIX#g; s#/etc/mybastion#$CONF_DIR#g" /etc/systemd/system/mybastion-dbproxy.service
+        if [[ ! -f "$CONF_DIR/dbproxy.env" ]]; then
+            local core_port core_scheme=http
+            core_port=$(sed -n 's/^listen_addr *= *".*:\([0-9]*\)".*/\1/p' "$CONF_DIR/mybastion.toml" | head -1)
+            grep -q '^\[tls\]' "$CONF_DIR/mybastion.toml" && core_scheme=https
+            echo "DBPROXY_CORE=${core_scheme}://127.0.0.1:${core_port:-8089}" > "$CONF_DIR/dbproxy.env"
+        fi
     fi
 
     systemctl daemon-reload

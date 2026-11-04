@@ -85,18 +85,46 @@ allowed_networks = ["10.0.0.0/8"]                       # where databases may be
 # token_minutes = 15
 ```
 
+The packages and installers ship `/opt/mybastion/bin/mybastion-dbproxy` and
+a `mybastion-dbproxy` systemd unit, **installed but not enabled**, and
+create the shared secret (`/etc/mybastion/dbproxy-secret`). To turn it on:
+
+1. Uncomment `[dbproxy]` in `/etc/mybastion/mybastion.toml` (set `address`
+   and `allowed_networks`) and restart `mybastion`.
+2. `sudo systemctl enable --now mybastion-dbproxy`
+
+The unit listens on `:5433`, uses the bastion's TLS certificate
+(`/etc/mybastion/tls/`) for clients, and reaches the core at
+`https://127.0.0.1:8089`, trusting the core's own certificate
+(`-core-ca`). The installers write the core's real address to
+`/etc/mybastion/dbproxy.env`; change `DBPROXY_LISTEN`, `DBPROXY_CORE` or
+`DBPROXY_CORE_CA` there. By hand:
+
 ```
-mybastion-dbproxy -listen :5433 -core http://127.0.0.1:8089 \
+mybastion-dbproxy -listen :5433 -core https://127.0.0.1:8089 \
+    -core-ca /etc/mybastion/tls/cert.pem \
     -secret-file /etc/mybastion/dbproxy-secret \
     -tls-cert /etc/mybastion/tls/cert.pem -tls-key /etc/mybastion/tls/key.pem
 ```
+
+In Docker, the image has the binary too: run a second container from it
+with `--entrypoint /opt/mybastion/bin/mybastion-dbproxy` and the flags
+above.
 
 The proxy talks to the core's internal API (`/internal/db/...`) with the
 shared secret in `X-Mybastion-Proxy-Secret`; keep it on the same host or a
 private network.
 
 Build: `cd dbproxy && go build -o mybastion-dbproxy .` (Go 1.25 and a C
-compiler, for the parser).
+compiler, for the parser). `install.sh` builds it when Go is installed.
+
+## On the Connections page
+
+Admins add a database with the entry type **PostgreSQL (database proxy)**:
+host, port, database, username and password. Users see a **DB token**
+button in place of Connect: it asks for a token (the connect policies
+apply, and an approval waits as for any connect) and shows it with the
+`psql` command to copy.
 
 ## Limits
 

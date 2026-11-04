@@ -28,9 +28,11 @@ a phase. Status:
   approve mode per input, kill switch, forced recording, rate limits) and
   3d (OAuth 2.1 for people's own AI clients, `[mcp.oauth]`) done. Left
   from its done-when: a real Windows RDP target and a real Claude client
-- Phase 4 (DB proxy): 4a done (Go `dbproxy/` for PostgreSQL, DB tokens,
-  `db_query` policies with statement classes, internal API, audit). Next:
-  Connections UI for database entries, MySQL/MariaDB, packaging
+- Phase 4 (DB proxy): 4a (Go `dbproxy/` for PostgreSQL, DB tokens,
+  `db_query` policies with statement classes, internal API, audit) and 4b
+  (Connections page database entries + DB token dialog; packaging:
+  `mybastion-dbproxy.service`, deb/rpm/tarball/Docker/install.sh) done.
+  Next: MySQL/MariaDB
 
 ## Architecture
 
@@ -122,7 +124,10 @@ a phase. Status:
 - `/var/lib/mybastion` (mybastion) — `mybastion.db`, `secrets.db`,
   `recordings/`, `drives.luks`
 - systemd: `mybastion.service`, `mybastion-guacd.service`; user `mybastion`
-  with a real home (`/home/mybastion`, Chromium's crashpad needs it)
+  with a real home (`/home/mybastion`, Chromium's crashpad needs it).
+  `mybastion-dbproxy.service` (`bin/mybastion-dbproxy`) is installed but not
+  enabled; `/etc/mybastion/dbproxy-secret` and `dbproxy.env` (the core's
+  URL) are created by the installers
 
 Config is found via `--config`, else `/etc/mybastion/mybastion.toml`;
 `mybastion.example.toml` documents every key.
