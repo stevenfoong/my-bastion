@@ -88,6 +88,15 @@ COPY static/ static/
 RUN cargo build --release
 
 # ---------------------------------------------------------------------------
+# Stage 2b: Build the database proxy (Go, cgo for the PostgreSQL parser)
+# ---------------------------------------------------------------------------
+FROM golang:1.25-bookworm AS go-builder
+
+WORKDIR /build
+COPY dbproxy/ ./
+RUN go build -trimpath -ldflags "-s -w" -o mybastion-dbproxy .
+
+# ---------------------------------------------------------------------------
 # Stage 3: Runtime image
 # ---------------------------------------------------------------------------
 FROM debian:trixie-slim AS runtime
@@ -118,6 +127,9 @@ COPY --from=guacd-builder /opt/mybastion/lib/ /opt/mybastion/lib/
 
 # Install mybastion binary
 COPY --from=rust-builder /build/target/release/mybastion /opt/mybastion/bin/mybastion
+# The database proxy: run it as its own container from this image, e.g.
+# `--entrypoint /opt/mybastion/bin/mybastion-dbproxy` (docs/database-proxy.md)
+COPY --from=go-builder /build/mybastion-dbproxy /opt/mybastion/bin/mybastion-dbproxy
 
 # Install static web assets
 COPY static/ /opt/mybastion/static/

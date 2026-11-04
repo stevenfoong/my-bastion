@@ -852,8 +852,27 @@
                     <option value="proxmox">Proxmox VE console</option>
                     <option value="web">Web</option>
                     <option value="vdi">VDI (Docker)</option>
+                    <option value="postgres" class="adhoc-hide">PostgreSQL (database proxy)</option>
                 </select>
             </label>
+            <div id="em-pg-fields" style="display:none">
+                <div class="field-hint">Reached through the database proxy: users get a short-lived bastion token for <code>psql</code> or any PostgreSQL client, and every statement is checked by <em>database statement</em> policies and audited. These credentials stay in the bastion.</div>
+                <label>Hostname
+                    <input type="text" id="em-pg-hostname" placeholder="10.0.5.20">
+                </label>
+                <label>Port
+                    <input type="number" id="em-pg-port" value="5432">
+                </label>
+                <label>Database
+                    <input type="text" id="em-pg-database" placeholder="app">
+                </label>
+                <label>Username
+                    <input type="text" id="em-pg-username">
+                </label>
+                <label>Password
+                    <div class="pw-wrap"><input type="password" id="em-pg-password"><button type="button" class="pw-toggle" onclick="togglePw(this)" title="Show/hide">&#9679;</button></div>
+                </label>
+            </div>
             <div id="em-ssh-fields">
                 <label>Hostname
                     <input type="text" id="em-hostname" placeholder="10.0.1.5">
@@ -3087,8 +3106,13 @@
                 if (e.inherited_credentials) userCol += ' <span style="color:#888;font-size:0.8em" title="Uses the folder\'s default credentials">[folder]</span>';
                 html += '<td>' + userCol + '</td>';
                 var connectLabel = needsPrompt ? 'Login...' : 'Connect';
+                if (e.session_type === 'postgres') {
+                    // A database: a token for the database proxy, not a session.
+                    html += '<td class="connect-cell"><button class="btn-connect" title="A short-lived token to connect with psql or another PostgreSQL client" data-dbtoken="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">DB token</button></td>';
+                } else {
                 html += '<td class="connect-cell"><button class="btn-connect" data-connect="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">' + connectLabel + '</button>'
                     + '<button class="btn-connect btn-connect-win" title="Open in a new window" data-connect-win="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">&#x29c9;</button></td>';
+                }
                 if (isAdmin) {
                     // One cell for the three admin actions: three cells cost
                     // two extra runs of cell padding on every row, which is
@@ -3594,6 +3618,86 @@
             return !(typeof apiKey !== 'undefined' && apiKey)
                 && document.documentElement.getAttribute('data-role-level') === '4';
         }
+        // ── Database token ──
+        // A database entry is reached through the database proxy: ask for a
+        // short-lived token (the entry's connect policies apply) and show it
+        // with the psql command to use. The token is shown once.
+        function showDbToken(scope, folder, name, btn) {
+            if (btn) btn.disabled = true;
+            fetch('/api/addressbook/folders/' + encodeURIComponent(scope) + '/' + encodeURIComponent(folder)
+                + '/entries/' + encodeURIComponent(name) + '/db-token', {
+                method: 'POST',
+                headers: apiHeaders({ 'Content-Type': 'application/json' }),
+                credentials: 'same-origin',
+                body: '{}'
+            })
+            .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { status: r.status, j: j }; }); })
+            .then(function(res) {
+                if (res.status === 202 && res.j.approval) {
+                    showApprovalWait(res.j.approval, function() { showDbToken(scope, folder, name); });
+                    return;
+                }
+                if (res.status !== 200) {
+                    showError(res.j.error || ('Could not get a token (' + res.status + ')'));
+                    return;
+                }
+                closeApprovalWait();
+                var j = res.j;
+                var overlay = document.createElement('div');
+                overlay.className = 'modal-overlay active';
+                overlay.id = 'approval-modal';
+                var box = document.createElement('div');
+                box.className = 'modal';
+                box.style.maxWidth = '640px';
+                var h = document.createElement('h3');
+                h.textContent = 'Database token';
+                var p = document.createElement('p');
+                p.style.cssText = 'color:var(--text-muted);font-size:0.9em;margin-top:0';
+                var until = j.expires_at ? new Date(j.expires_at * 1000).toLocaleTimeString() : '';
+                p.textContent = 'Use this token as the password to connect through the bastion' + (until ? ' (until ' + until + ')' : '')
+                    + '. Every statement is checked and audited. It is shown once.';
+                var field = function(label, value, id) {
+                    var wrap = document.createElement('div');
+                    wrap.style.margin = '0.5em 0';
+                    var l = document.createElement('div');
+                    l.textContent = label;
+                    l.style.cssText = 'font-size:0.8em;color:var(--text-muted)';
+                    var code = document.createElement('code');
+                    code.id = id;
+                    code.textContent = value;
+                    code.style.cssText = 'display:block;user-select:all;word-break:break-all;padding:0.4em;border:1px solid var(--border);border-radius:4px';
+                    wrap.appendChild(l);
+                    wrap.appendChild(code);
+                    return wrap;
+                };
+                var cmd = 'PGPASSWORD=\'' + j.token + '\' psql "host=' + j.host + ' port=' + j.port + ' dbname=' + j.database
+                    + ' user=' + j.user + ' sslmode=require"';
+                var actions = document.createElement('div');
+                actions.className = 'modal-actions';
+                var copy = document.createElement('button');
+                copy.className = 'btn-connect';
+                copy.id = 'dbtoken-copy';
+                copy.textContent = 'Copy command';
+                copy.onclick = function() {
+                    if (navigator.clipboard) navigator.clipboard.writeText(cmd).then(function() { copy.textContent = 'Copied'; });
+                };
+                var close = document.createElement('button');
+                close.className = 'btn-cancel';
+                close.textContent = 'Close';
+                close.onclick = closeApprovalWait;
+                actions.appendChild(copy);
+                actions.appendChild(close);
+                [h, p, field('Token (the password)', j.token, 'dbtoken-value'),
+                 field('Host / port / database', j.host + ':' + j.port + ' / ' + j.database, 'dbtoken-target'),
+                 field('psql', cmd, 'dbtoken-psql'), actions].forEach(function(el) { box.appendChild(el); });
+                overlay.appendChild(box);
+                document.body.appendChild(overlay);
+            })
+            .catch(function(e) { showError(e.message); })
+            .finally(function() { if (btn) btn.disabled = false; });
+        }
+        window.showDbToken = showDbToken;
+
         function showBreakGlass(t, retry) {
             closeApprovalWait();
             var overlay = document.createElement('div');
@@ -3830,6 +3934,12 @@
         // Connect / clone / delete / edit actions for the folder entries table.
         function handleEntryActionsClick(e) {
             var btn = e.target;
+
+            if (btn.getAttribute('data-dbtoken')) {
+                clearError();
+                showDbToken(btn.getAttribute('data-scope'), btn.getAttribute('data-folder'), btn.getAttribute('data-dbtoken'), btn);
+                return;
+            }
 
             if (btn.getAttribute('data-connect') || btn.getAttribute('data-connect-win')) {
                 var newWindow = !!btn.getAttribute('data-connect-win');
@@ -4261,7 +4371,9 @@
             document.getElementById('em-proxmox-fields').style.display = 'none';
             document.getElementById('em-web-fields').style.display = 'none';
             document.getElementById('em-vdi-fields').style.display = 'none';
+            document.getElementById('em-pg-fields').style.display = 'none';
             var val = entryTypeSelect.value;
+            var isDb = val === 'postgres';
             if (val === 'ssh') document.getElementById('em-ssh-fields').style.display = '';
             else if (val === 'rdp') document.getElementById('em-rdp-fields').style.display = '';
             else if (val === 'vnc') document.getElementById('em-vnc-fields').style.display = '';
@@ -4272,16 +4384,19 @@
                 loadLoginScripts(function() { populateLoginScriptDropdown(''); });
             }
             else if (val === 'vdi') document.getElementById('em-vdi-fields').style.display = '';
+            else if (isDb) document.getElementById('em-pg-fields').style.display = '';
             // Show drive option for SSH and RDP only
             document.getElementById('em-drive-section').style.display = (val === 'ssh' || val === 'rdp') ? '' : 'none';
             // Show RemoteApp for RDP only
             document.getElementById('em-remoteapp-section').style.display = val === 'rdp' ? '' : 'none';
             // Show Video Performance for RDP only
             document.getElementById('em-video-perf-section').style.display = val === 'rdp' ? '' : 'none';
-            // Show tunnel option for VDI excluded (local containers)
-            document.getElementById('em-tunnel-section').style.display = val === 'vdi' ? 'none' : '';
-            // Show recording settings for all types
-            document.getElementById('em-recording-section').style.display = '';
+            // Show tunnel option for VDI excluded (local containers), and the
+            // database proxy dials the database itself
+            document.getElementById('em-tunnel-section').style.display = val === 'vdi' || isDb ? 'none' : '';
+            // Recording settings for every desktop and terminal type; the
+            // database proxy audits statements instead
+            document.getElementById('em-recording-section').style.display = isDb ? 'none' : '';
             // Typescript recording is SSH-only (#159)
             document.getElementById('em-typescript-row').style.display = val === 'ssh' ? '' : 'none';
             // SSH terminal font size is SSH-only
@@ -4648,6 +4763,9 @@
             } else if (type === 'vnc') {
                 targetHost = document.getElementById('em-vnc-hostname').value || '???';
                 targetPort = document.getElementById('em-vnc-port').value || '5900';
+            } else if (type === 'postgres') {
+                targetHost = document.getElementById('em-pg-hostname').value || '???';
+                targetPort = document.getElementById('em-pg-port').value || '5432';
             } else if (type === 'spice') {
                 targetHost = document.getElementById('em-spice-hostname').value || '???';
                 targetPort = document.getElementById('em-spice-port').value || '5900';
@@ -4726,6 +4844,11 @@
             document.getElementById('em-vnc-resize').checked = false;
             document.getElementById('em-vnc-network').value = '';
             document.getElementById('em-vnc-prompt-creds').checked = false;
+            document.getElementById('em-pg-hostname').value = '';
+            document.getElementById('em-pg-port').value = '5432';
+            document.getElementById('em-pg-database').value = '';
+            document.getElementById('em-pg-username').value = '';
+            document.getElementById('em-pg-password').value = '';
             document.getElementById('em-spice-hostname').value = '';
             document.getElementById('em-spice-port').value = '5900';
             document.getElementById('em-spice-password').value = '';
@@ -4889,6 +5012,11 @@
                     document.getElementById('em-vnc-resize').checked = !!entryData.vnc_resize;
                     document.getElementById('em-vnc-network').value = entryData.vnc_network || '';
                     document.getElementById('em-vnc-prompt-creds').checked = !!entryData.prompt_credentials;
+                } else if (type === 'postgres') {
+                    document.getElementById('em-pg-hostname').value = entryData.hostname || '';
+                    document.getElementById('em-pg-port').value = entryData.port || '5432';
+                    document.getElementById('em-pg-database').value = entryData.database || '';
+                    document.getElementById('em-pg-username').value = entryData.username || '';
                 } else if (type === 'spice') {
                     document.getElementById('em-spice-hostname').value = entryData.hostname || '';
                     document.getElementById('em-spice-port').value = entryData.port || '5900';
@@ -5117,6 +5245,17 @@
                 var net = document.getElementById('em-vnc-network').value;
                 if (net) entry.vnc_network = net;
                 if (document.getElementById('em-vnc-prompt-creds').checked) entry.prompt_credentials = true;
+            } else if (type === 'postgres') {
+                var h = document.getElementById('em-pg-hostname').value.trim();
+                if (h) entry.hostname = h;
+                var p = parseInt(document.getElementById('em-pg-port').value);
+                if (p) entry.port = p;
+                var dbn = document.getElementById('em-pg-database').value.trim();
+                if (dbn) entry.database = dbn;
+                var u = document.getElementById('em-pg-username').value.trim();
+                if (u) entry.username = u;
+                var pw = document.getElementById('em-pg-password').value;
+                if (pw) entry.password = pw;
             } else if (type === 'spice') {
                 var h = document.getElementById('em-spice-hostname').value.trim();
                 if (h) entry.hostname = h;

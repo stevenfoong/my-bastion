@@ -69,6 +69,9 @@ install -d %{buildroot}%{_sysconfdir}/ld.so.conf.d
 # mybastion binary
 install -m 755 target/release/mybastion %{buildroot}%{_prefix}/bin/mybastion
 
+# Database proxy (built by build-rpm.sh: cd dbproxy && go build)
+install -m 755 dbproxy/mybastion-dbproxy %{buildroot}%{_prefix}/bin/mybastion-dbproxy
+
 # Drive setup helper script
 install -m 755 scripts/drive-setup.sh %{buildroot}%{_prefix}/bin/drive-setup.sh
 
@@ -89,6 +92,7 @@ install -m 644 debian/mybastion.toml.default %{buildroot}%{confdir}/mybastion.to
 # Systemd units — reuse the debian service files (no duplication)
 install -m 644 debian/mybastion.service %{buildroot}%{_unitdir}/mybastion.service
 install -m 644 debian/mybastion-guacd.service %{buildroot}%{_unitdir}/mybastion-guacd.service
+install -m 644 debian/mybastion-dbproxy.service %{buildroot}%{_unitdir}/mybastion-dbproxy.service
 
 # ldconfig drop-in so guacd can find its libs
 echo "%{_prefix}/lib" > %{buildroot}%{_sysconfdir}/ld.so.conf.d/mybastion.conf
@@ -105,6 +109,11 @@ chown -R mybastion:mybastion %{statedir}
 if [ ! -f %{confdir}/kek ]; then
     (umask 277; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > %{confdir}/kek)
     chown mybastion:mybastion %{confdir}/kek
+fi
+# Shared secret between the core and the database proxy (created once)
+if [ ! -f %{confdir}/dbproxy-secret ]; then
+    (umask 227; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > %{confdir}/dbproxy-secret)
+    chown root:mybastion %{confdir}/dbproxy-secret
 fi
 # Generate self-signed TLS certificate if none exists
 if [ ! -f %{confdir}/tls/cert.pem ] || [ ! -f %{confdir}/tls/key.pem ]; then
@@ -125,7 +134,7 @@ echo "    sudo %{_prefix}/bin/drive-setup.sh"
 echo ""
 
 %preun
-%systemd_preun mybastion.service mybastion-guacd.service
+%systemd_preun mybastion.service mybastion-guacd.service mybastion-dbproxy.service
 
 %postun
 /sbin/ldconfig
@@ -140,6 +149,7 @@ fi
 %license debian/copyright LICENSE NOTICE
 %dir %{_prefix}
 %{_prefix}/bin/mybastion
+%{_prefix}/bin/mybastion-dbproxy
 %{_prefix}/bin/drive-setup.sh
 %{_prefix}/sbin/guacd
 %{_prefix}/lib/*.so*
@@ -152,4 +162,5 @@ fi
 %dir %attr(0750,mybastion,mybastion) %{statedir}/recordings
 %{_unitdir}/mybastion.service
 %{_unitdir}/mybastion-guacd.service
+%{_unitdir}/mybastion-dbproxy.service
 %{_sysconfdir}/ld.so.conf.d/mybastion.conf

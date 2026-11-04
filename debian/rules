@@ -30,6 +30,9 @@ override_dh_auto_install:
 	# mybastion binary
 	install -m 755 target/release/mybastion debian/mybastion/opt/mybastion/bin/mybastion
 
+	# Database proxy (built by the release workflow: cd dbproxy && go build)
+	install -m 755 dbproxy/mybastion-dbproxy debian/mybastion/opt/mybastion/bin/mybastion-dbproxy
+
 	# Drive setup helper script
 	install -m 755 scripts/drive-setup.sh debian/mybastion/opt/mybastion/bin/drive-setup.sh
 
@@ -48,6 +51,7 @@ override_dh_auto_install:
 	# Licence and attribution (Apache-2.0 requires NOTICE to travel with the work)
 	install -d debian/mybastion/usr/share/doc/mybastion
 	install -m 644 LICENSE NOTICE debian/mybastion/usr/share/doc/mybastion/
+	install -m 644 docs/database-proxy.md debian/mybastion/usr/share/doc/mybastion/
 
 	# Default config (marked as conffile)
 	install -m 644 debian/mybastion.toml.default debian/mybastion/etc/mybastion/mybastion.toml
@@ -65,7 +69,9 @@ override_dh_dwz:
 override_dh_strip:
 	dh_strip --no-automatic-dbgsym
 
-# Install both systemd services
+# Install the systemd services. The database proxy is off unless an admin
+# turns it on ([dbproxy] enabled, then systemctl enable --now).
 override_dh_installsystemd:
 	dh_installsystemd --name=mybastion-guacd
 	dh_installsystemd --name=mybastion
+	dh_installsystemd --name=mybastion-dbproxy --no-enable --no-start

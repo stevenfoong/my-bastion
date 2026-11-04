@@ -37,7 +37,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
             libcunit1-dev libtelnet-dev libwebsockets-dev \
             uuid-dev freerdp3-dev libspice-client-glib-2.0-dev \
-            dpkg-dev debhelper fakeroot build-essential
+            dpkg-dev debhelper fakeroot build-essential golang-go
 
       - name: Install Rust
         run: |
@@ -67,6 +67,12 @@ jobs:
 
       - name: Build mybastion
         run: $HOME/.cargo/bin/cargo build --release
+
+      - name: Build the database proxy
+        # dbproxy/go.mod asks for a newer Go than Debian's: the go command
+        # fetches that toolchain itself (GOTOOLCHAIN=auto).
+        working-directory: dbproxy
+        run: go build -trimpath -ldflags "-s -w" -o mybastion-dbproxy .
 
       - name: Build .deb package
         run: |
@@ -100,6 +106,7 @@ jobs:
           mkdir -p "$TARBALL_DIR/bin" "$TARBALL_DIR/sbin" "$TARBALL_DIR/lib" "$TARBALL_DIR/static" "$TARBALL_DIR/systemd"
 
           cp target/release/mybastion "$TARBALL_DIR/bin/"
+          cp dbproxy/mybastion-dbproxy "$TARBALL_DIR/bin/"
           cp debian/staging/opt/mybastion/sbin/guacd "$TARBALL_DIR/sbin/"
           cp debian/staging/opt/mybastion/bin/guacenc "$TARBALL_DIR/bin/"
           cp -a debian/staging/opt/mybastion/lib/*.so* "$TARBALL_DIR/lib/"
@@ -107,6 +114,8 @@ jobs:
           cp debian/mybastion.toml.default "$TARBALL_DIR/mybastion.toml.default"
           cp debian/mybastion.service "$TARBALL_DIR/systemd/"
           cp debian/mybastion-guacd.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion-dbproxy.service "$TARBALL_DIR/systemd/"
+          mkdir -p "$TARBALL_DIR/docs" && cp docs/database-proxy.md "$TARBALL_DIR/docs/"
           cp install-release.sh "$TARBALL_DIR/install.sh"
           cp LICENSE NOTICE "$TARBALL_DIR/"
           chmod +x "$TARBALL_DIR/install.sh"
@@ -147,7 +156,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
             libcunit1-dev libtelnet-dev libwebsockets-dev \
             uuid-dev freerdp3-dev libspice-client-glib-2.0-dev \
-            dpkg-dev debhelper fakeroot build-essential
+            dpkg-dev debhelper fakeroot build-essential golang-go
 
       - name: Install Rust
         run: |
@@ -178,6 +187,12 @@ jobs:
       - name: Build mybastion
         run: $HOME/.cargo/bin/cargo build --release
 
+      - name: Build the database proxy
+        # dbproxy/go.mod asks for a newer Go than Debian's: the go command
+        # fetches that toolchain itself (GOTOOLCHAIN=auto).
+        working-directory: dbproxy
+        run: go build -trimpath -ldflags "-s -w" -o mybastion-dbproxy .
+
       - name: Build .deb package
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -207,6 +222,7 @@ jobs:
           mkdir -p "$TARBALL_DIR/bin" "$TARBALL_DIR/sbin" "$TARBALL_DIR/lib" "$TARBALL_DIR/static" "$TARBALL_DIR/systemd"
 
           cp target/release/mybastion "$TARBALL_DIR/bin/"
+          cp dbproxy/mybastion-dbproxy "$TARBALL_DIR/bin/"
           cp debian/staging/opt/mybastion/sbin/guacd "$TARBALL_DIR/sbin/"
           cp debian/staging/opt/mybastion/bin/guacenc "$TARBALL_DIR/bin/"
           cp -a debian/staging/opt/mybastion/lib/*.so* "$TARBALL_DIR/lib/"
@@ -214,6 +230,8 @@ jobs:
           cp debian/mybastion.toml.default "$TARBALL_DIR/mybastion.toml.default"
           cp debian/mybastion.service "$TARBALL_DIR/systemd/"
           cp debian/mybastion-guacd.service "$TARBALL_DIR/systemd/"
+          cp debian/mybastion-dbproxy.service "$TARBALL_DIR/systemd/"
+          mkdir -p "$TARBALL_DIR/docs" && cp docs/database-proxy.md "$TARBALL_DIR/docs/"
           cp install-release.sh "$TARBALL_DIR/install.sh"
           cp LICENSE NOTICE "$TARBALL_DIR/"
           chmod +x "$TARBALL_DIR/install.sh"

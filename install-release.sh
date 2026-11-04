@@ -73,6 +73,8 @@ install -m 755 "$SCRIPT_DIR/sbin/guacd"   "$PREFIX/sbin/guacd"
 # guacenc converts recordings to video for MP4 downloads (absent from
 # tarballs built before 1.11.1)
 [[ -f "$SCRIPT_DIR/bin/guacenc" ]] && install -m 755 "$SCRIPT_DIR/bin/guacenc" "$PREFIX/bin/guacenc"
+# The database proxy (off unless [dbproxy] enabled; see docs/database-proxy.md)
+[[ -f "$SCRIPT_DIR/bin/mybastion-dbproxy" ]] && install -m 755 "$SCRIPT_DIR/bin/mybastion-dbproxy" "$PREFIX/bin/mybastion-dbproxy"
 
 # Libraries
 cp -a "$SCRIPT_DIR/lib/"*.so* "$PREFIX/lib/"
@@ -120,6 +122,12 @@ if [[ ! -f "$CONF_DIR/kek" ]]; then
     info "Created $CONF_DIR/kek"
 fi
 
+# Shared secret between the core and the database proxy (created once).
+if [[ ! -f "$CONF_DIR/dbproxy-secret" ]]; then
+    (umask 227; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$CONF_DIR/dbproxy-secret")
+    chown root:mybastion "$CONF_DIR/dbproxy-secret"
+fi
+
 # ---------------------------------------------------------------------------
 # Step 3: ldconfig
 # ---------------------------------------------------------------------------
@@ -133,6 +141,17 @@ info "Library path configured"
 info "Installing systemd services..."
 cp "$SCRIPT_DIR/systemd/mybastion.service"       /etc/systemd/system/
 cp "$SCRIPT_DIR/systemd/mybastion-guacd.service"  /etc/systemd/system/
+# Installed, not enabled: turn [dbproxy] on, then systemctl enable --now.
+# It reaches the core where the config says the core listens.
+if [[ -f "$SCRIPT_DIR/systemd/mybastion-dbproxy.service" ]]; then
+    cp "$SCRIPT_DIR/systemd/mybastion-dbproxy.service" /etc/systemd/system/
+    if [[ ! -f "$CONF_DIR/dbproxy.env" ]]; then
+        core_port=$(sed -n 's/^listen_addr *= *".*:\([0-9]*\)".*/\1/p' "$CONF_DIR/mybastion.toml" | head -1)
+        core_scheme=http
+        grep -q '^\[tls\]' "$CONF_DIR/mybastion.toml" && core_scheme=https
+        echo "DBPROXY_CORE=${core_scheme}://127.0.0.1:${core_port:-8089}" > "$CONF_DIR/dbproxy.env"
+    fi
+fi
 
 systemctl daemon-reload
 systemctl enable mybastion-guacd.service

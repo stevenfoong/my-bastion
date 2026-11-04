@@ -143,6 +143,13 @@ check "$(post "$A" /api/admin/policies '{"name":"no db for ro in prod","subject"
 check "$(post "$RO" /api/addressbook/folders/shared/prod/entries/pg/db-token)" 403 "no DB token where connecting is denied"
 
 echo "== audit"
+# A session's last statement is audited although the client is gone at once.
+pq "$OPLAB" op -c "SELECT 'last-$$'" >/dev/null
+for _ in $(seq 25); do
+    curl -s -H "$A" "$U/api/admin/policy-audit?limit=50" | grep -q "last-$$" && break
+    sleep 0.2
+done
+check "$(curl -s -H "$A" "$U/api/admin/policy-audit?limit=50" | grep -c "last-$$")" 1 "the last statement before a disconnect is audited"
 sleep 1
 AUDIT=$(curl -s -H "$A" "$U/api/admin/policy-audit?limit=500")
 has() { echo "$AUDIT" | json "any($1 for r in d)"; }
