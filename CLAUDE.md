@@ -25,8 +25,9 @@ a phase. Status:
   `list_connections`, `run_ssh`, approve mode) and 3b (headless renderer,
   `open_session`/`screenshot`/`wait`/`list_sessions`/`close_session`) and 3c
   (`click`/`type_text`/`key`/`scroll` with the `input` policy action,
-  approve mode per input, kill switch, forced recording, rate limits) done.
-  Next: 3d OAuth 2.1
+  approve mode per input, kill switch, forced recording, rate limits) and
+  3d (OAuth 2.1 for people's own AI clients, `[mcp.oauth]`) done. Left
+  from its done-when: a real Windows RDP target and a real Claude client
 - Phase 4 (DB proxy): not started
 
 ## Architecture
@@ -75,6 +76,14 @@ a phase. Status:
 - `src/telegram.rs` — Telegram bot (long polling, link codes, Approve/Deny
   buttons, message edits); `telegram::notify(request_id)` after any request
   change. Decisions from the web and the bot share `policy::decide_request`
+- `src/oauth/` — OAuth 2.1 authorization server for MCP (`[mcp.oauth]`, on
+  top of `[oidc]`): `store.rs` (clients, client names, grants, codes,
+  tokens, all hashed), `routes.rs` (metadata, register, authorize +
+  consent page, token, revoke, My AI access, admin), `mod.rs` (PKCE,
+  redirect rules, issuing, `check_access`). The IdP refresh token for a
+  grant lives in the secret store (`<base>/oauth/<grant>`); `oidc.rs`
+  keeps it at login (`/auth/login?offline=1`) and `refresh_identity`
+  re-asks the IdP on every refresh. Caller: `AuthIdentity::AiUser`
 - `src/mcp/` — MCP endpoint (`[mcp] enabled`): `agents.rs` (AI agent keys,
   `ai_agents` table, `ai:<name>` = `AuthIdentity::AiAgent`), `auth.rs`
   (`/mcp` takes agent keys only; REST never does), `server.rs` (rmcp
@@ -187,6 +196,10 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_mcp_session.sh` — live: `open_session` on a local Xvnc and SSH
   through its own guacd; screenshots checked pixel for pixel
   (`tests/png_pixels.py`), ownership, recording, terminate, policies
+- `tests/test_mcp_oauth.sh` — live: OAuth against a fake OIDC provider
+  (`tests/fake_oidc.py`, RS256 via openssl) with a scripted client/browser
+  (`tests/oauth_client.py`): approval, consent, PKCE, refresh rotation and
+  reuse, IdP group removal and revocation, scopes, disabled users
 - `tests/test_mcp_input.sh` — live: typing into an SSH terminal the bastion
   renders runs on the target; approve mode per input, `input` policies,
   audit without typed text, rate limits, kill switch

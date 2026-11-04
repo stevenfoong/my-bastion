@@ -31,6 +31,60 @@ The agent sends it as `Authorization: Bearer <key>` on `/mcp`.
 - Keys are stored hashed, with optional IP allowlists and expiry. Disable or
   delete a key on the Admin page; it stops working at once.
 
+## People with their own AI client (OAuth)
+
+A person can also connect their own AI client (Claude desktop's custom
+connectors, claude.ai, any MCP client that does OAuth) and let it act as
+them. The bastion is its own OAuth 2.1 authorization server on top of the
+`[oidc]` login:
+
+```toml
+[mcp.oauth]
+enabled = true
+public_url = "https://bastion.example.com"   # the issuer; /mcp is the resource
+approved_clients = ["Claude"]                 # optional: approved up front
+# access_token_minutes = 15
+# refresh_token_days = 30
+# reauth_hours = 12   # only when the identity provider gives no refresh token
+```
+
+1. The client calls `/mcp` and gets `401` with
+   `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource"`;
+   from there it finds the authorization server metadata
+   (`/.well-known/oauth-authorization-server`).
+2. It registers itself (`POST /oauth/register`, RFC 7591): a public client
+   with https redirect URIs (or http on localhost). A client **name** an
+   admin has not approved yet waits: Admin page → AI Agents → *AI clients*,
+   or `approved_clients`. Denying a name ends every grant it holds.
+3. The person is sent through the normal sign-in at the identity provider
+   (asking for `offline_access`), then sees a consent screen: the client,
+   what it may do (`mcp:read`: list, open sessions, see screens; `mcp:act`:
+   input and commands) and the AI folders they can reach. Authorization
+   code flow with **PKCE S256** only.
+4. The client gets an access token (15 minutes, bound to `<public_url>/mcp`)
+   and a refresh token (30 days, rotated on every use; a refresh token used
+   twice revokes the grant).
+
+On `/mcp` the caller is `user:<email> via ai:<client>`:
+
+- It reaches only folders the person can reach **and** whose AI mode lets
+  AI in; their role applies (operator or above to open sessions and act).
+  Policies for the person (user, group, role) and for the client
+  (`ai_agent` subject with the client name) both apply.
+- An approval is never shared between the person and their AI, and nobody
+  approves their own AI's requests.
+- **Every refresh asks again**: the user must still exist and be enabled in
+  the bastion, and the identity provider is asked with the refresh token it
+  gave at consent (kept encrypted in the secret store): their groups are
+  updated from the new ID token, and if the provider refuses, the grant
+  ends. So removing someone from a group, or from the company, cuts their
+  AI off by the next refresh (at most `access_token_minutes`). If the
+  provider gives no refresh token, the grant needs a new sign-in after
+  `reauth_hours`.
+- People see and revoke their grants under **My Tokens → My AI access**;
+  admins see everyone's on the Admin page. Consents, revocations and client
+  decisions are in the policy audit log.
+
 ## Folder AI mode
 
 Each folder has an **AI agents** setting (folder dialog on the Connections

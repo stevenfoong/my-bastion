@@ -25,8 +25,8 @@ use rmcp::model::{CallToolResponse, CallToolResult, ContentBlock, JsonObject};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::agents::Agent;
 use super::server::{approve_mode_rule, fail, ok, parse_connection_id, refusal, McpServer};
+use super::Caller;
 use crate::auth::AuthIdentity;
 use crate::connections::AiMode;
 use crate::policy::{Action, Gate, Resource};
@@ -308,7 +308,7 @@ impl McpServer {
     pub(super) async fn open_session(
         &self,
         id: &AuthIdentity,
-        agent: &Agent,
+        caller: &Caller,
         ip: String,
         args: &JsonObject,
     ) -> CallToolResponse {
@@ -322,7 +322,7 @@ impl McpServer {
             Ok(m) => m,
             Err(e) => return fail(format!("cannot read the folder: {}", e)),
         };
-        if mode == AiMode::None || !agent.reaches(scope, folder) {
+        if mode == AiMode::None || !caller.reaches(&self.conns, scope, folder).await {
             return fail("no such connection for this agent");
         }
         let session_type = match self.conns.get_entry(scope, folder, entry).await {
@@ -512,7 +512,7 @@ impl McpServer {
         &self,
         tool: &str,
         id: &AuthIdentity,
-        agent: &Agent,
+        caller: &Caller,
         ip: String,
         args: &JsonObject,
     ) -> CallToolResponse {
@@ -534,7 +534,7 @@ impl McpServer {
             Ok(m) => m,
             Err(e) => return fail(format!("cannot read the folder: {}", e)),
         };
-        if mode == AiMode::None || !agent.reaches(&used.scope, &used.folder) {
+        if mode == AiMode::None || !caller.reaches(&self.conns, &used.scope, &used.folder).await {
             return fail("AI agents may no longer use this connection");
         }
         if !mode.may_act() {

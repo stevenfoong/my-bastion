@@ -297,6 +297,7 @@ pub fn init_db(path: &Path) -> rusqlite::Result<Db> {
     crate::policy::store::migrate(&conn)?;
     crate::telegram::migrate(&conn)?;
     crate::mcp::agents::migrate(&conn)?;
+    crate::oauth::store::migrate(&conn)?;
 
     Ok(Arc::new(Mutex::new(conn)))
 }

@@ -363,3 +363,13 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # [mcp]
 # enabled = true
 # log_typed_text = false   # true: keep what agents type in the audit log
+#
+# People connecting their own AI client (Claude desktop custom connectors,
+# claude.ai) sign in with OAuth 2.1 through [oidc]; needs [oidc].
+# [mcp.oauth]
+# enabled = true
+# public_url = "https://bastion.example.com"
+# approved_clients = ["Claude"]   # others wait for an admin
+# access_token_minutes = 15
+# refresh_token_days = 30
+# reauth_hours = 12               # when the IdP gives no refresh token

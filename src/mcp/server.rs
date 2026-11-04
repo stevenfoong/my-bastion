@@ -28,8 +28,8 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
 use serde_json::{json, Value};
 
-use super::agents::Agent;
 use super::auth::McpClientIp;
+use super::Caller;
 use crate::api::{AppState, ConnectionsState};
 use crate::auth::AuthIdentity;
 use crate::connections::AiMode;
@@ -297,70 +297,72 @@ pub(super) fn refusal(status: StatusCode, body: &Value, tool: &str) -> CallToolR
     )
 }
 
-/// The caller, as `auth::require_agent` left it on the HTTP request.
-fn caller(ctx: &RequestContext<RoleServer>) -> Option<(AuthIdentity, Agent, String)> {
+/// The caller, as `auth::require_mcp_caller` left it on the HTTP request.
+fn caller(ctx: &RequestContext<RoleServer>) -> Option<(AuthIdentity, Caller, String)> {
     let parts = ctx.extensions.get::<Parts>()?;
     let id = parts.extensions.get::<AuthIdentity>()?.clone();
-    let agent = parts.extensions.get::<Agent>()?.clone();
+    let caller = parts.extensions.get::<Caller>()?.clone();
     let ip = parts
         .extensions
         .get::<McpClientIp>()
         .map(|i| i.0.clone())
         .unwrap_or_default();
-    matches!(id, AuthIdentity::AiAgent(_)).then_some((id, agent, ip))
+    matches!(id, AuthIdentity::AiAgent(_) | AuthIdentity::AiUser { .. }).then_some((id, caller, ip))
 }
 
-impl McpServer {
-    /// Folders (scope, path, mode) the agent may use, walking down from the
-    /// top-level folders; a folder's mode is its own or its parent's.
-    async fn folders(&self, agent: &Agent) -> Result<Vec<(String, String, AiMode)>, String> {
-        let (top, _) = self
-            .conns
-            .list_all_folders()
-            .await
-            .map_err(|e| e.to_string())?;
-        let mut queue: Vec<(String, String, AiMode, usize)> = top
-            .into_iter()
-            .map(|f| {
-                let path = f.path.unwrap_or(f.name);
-                (f.scope, path, AiMode::None, 1)
-            })
-            .collect();
-        let mut out = Vec::new();
-        let mut seen = 0;
-        while let Some((scope, path, inherited, depth)) = queue.pop() {
-            seen += 1;
-            if seen > MAX_FOLDERS {
-                tracing::warn!("MCP list_connections: folder limit reached");
-                break;
-            }
-            let mode = match self.conns.get_folder_config(&scope, &path).await {
-                Ok(c) => c.ai_mode.unwrap_or(inherited),
-                Err(_) => inherited,
-            };
-            if mode != AiMode::None && agent.reaches(&scope, &path) {
-                out.push((scope.clone(), path.clone(), mode));
-            }
-            if depth < MAX_DEPTH {
-                if let Ok(subs) = self.conns.list_subfolders(&scope, &path).await {
-                    for s in subs {
-                        let p = s.path.unwrap_or_else(|| format!("{}/{}", path, s.name));
-                        queue.push((scope.clone(), p, mode, depth + 1));
-                    }
+/// Tools that act, and need the `mcp:act` scope; the rest need `mcp:read`.
+const ACTING: [&str; 5] = ["run_ssh", "click", "scroll", "type_text", "key"];
+
+/// Folders (scope, path, mode) `caller` may use, walking down from the
+/// top-level folders; a folder's mode is its own or its parent's.
+pub async fn ai_folders(
+    conns: &ConnectionsState,
+    caller: &Caller,
+) -> Result<Vec<(String, String, AiMode)>, String> {
+    let (top, _) = conns.list_all_folders().await.map_err(|e| e.to_string())?;
+    let mut queue: Vec<(String, String, AiMode, usize)> = top
+        .into_iter()
+        .map(|f| {
+            let path = f.path.unwrap_or(f.name);
+            (f.scope, path, AiMode::None, 1)
+        })
+        .collect();
+    let mut out = Vec::new();
+    let mut seen = 0;
+    while let Some((scope, path, inherited, depth)) = queue.pop() {
+        seen += 1;
+        if seen > MAX_FOLDERS {
+            tracing::warn!("MCP list_connections: folder limit reached");
+            break;
+        }
+        let mode = match conns.get_folder_config(&scope, &path).await {
+            Ok(c) => c.ai_mode.unwrap_or(inherited),
+            Err(_) => inherited,
+        };
+        if mode != AiMode::None && caller.reaches(conns, &scope, &path).await {
+            out.push((scope.clone(), path.clone(), mode));
+        }
+        if depth < MAX_DEPTH {
+            if let Ok(subs) = conns.list_subfolders(&scope, &path).await {
+                for s in subs {
+                    let p = s.path.unwrap_or_else(|| format!("{}/{}", path, s.name));
+                    queue.push((scope.clone(), p, mode, depth + 1));
                 }
             }
         }
-        out.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
-        Ok(out)
     }
+    out.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    Ok(out)
+}
 
-    async fn list_connections(&self, agent: &Agent, args: &JsonObject) -> CallToolResponse {
+impl McpServer {
+    async fn list_connections(&self, caller: &Caller, args: &JsonObject) -> CallToolResponse {
         let only = args
             .get("folder")
             .and_then(Value::as_str)
             .map(|f| f.trim().trim_matches('/').to_string())
             .filter(|f| !f.is_empty());
-        let folders = match self.folders(agent).await {
+        let folders = match ai_folders(&self.conns, caller).await {
             Ok(f) => f,
             Err(e) => return fail(format!("cannot list connections: {}", e)),
         };
@@ -397,7 +399,7 @@ impl McpServer {
     async fn run_ssh(
         &self,
         id: &AuthIdentity,
-        agent: &Agent,
+        caller: &Caller,
         ip: String,
         args: &JsonObject,
     ) -> CallToolResponse {
@@ -415,7 +417,7 @@ impl McpServer {
             Ok(m) => m,
             Err(e) => return fail(format!("cannot read the folder: {}", e)),
         };
-        if mode == AiMode::None || !agent.reaches(scope, folder) {
+        if mode == AiMode::None || !caller.reaches(&self.conns, scope, folder).await {
             return fail("no such connection for this agent");
         }
         if !mode.may_act() {
@@ -483,19 +485,34 @@ impl ServerHandler for McpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let Some((id, agent, ip)) = caller(&context) else {
+        let Some((id, caller, ip)) = caller(&context) else {
             return Err(McpError::invalid_request("not authenticated", None));
         };
         let args = request.arguments.unwrap_or_default();
         tracing::info!(agent = %id.display_name(), tool = %request.name, "MCP tool call");
-        Ok(match request.name.as_ref() {
-            "list_connections" => self.list_connections(&agent, &args).await,
-            "run_ssh" => self.run_ssh(&id, &agent, ip, &args).await,
+        let tool = request.name.as_ref();
+        let acting = ACTING.contains(&tool);
+        let needed = if acting {
+            crate::oauth::SCOPE_ACT
+        } else {
+            crate::oauth::SCOPE_READ
+        };
+        if !caller.has_scope(needed) {
+            return Ok(fail(format!("this token lacks the {} scope", needed)));
+        }
+        if (acting || tool == "open_session") && !caller.may_connect() {
+            return Ok(fail(
+                "your role may not connect: operator or above is needed",
+            ));
+        }
+        Ok(match tool {
+            "list_connections" => self.list_connections(&caller, &args).await,
+            "run_ssh" => self.run_ssh(&id, &caller, ip, &args).await,
             "click" | "scroll" | "type_text" | "key" => {
-                self.input(request.name.as_ref(), &id, &agent, ip, &args)
+                self.input(request.name.as_ref(), &id, &caller, ip, &args)
                     .await
             }
-            "open_session" => self.open_session(&id, &agent, ip, &args).await,
+            "open_session" => self.open_session(&id, &caller, ip, &args).await,
             "screenshot" => self.screenshot(&id, &args).await,
             "wait" => self.wait(&id, &args).await,
             "list_sessions" => self.list_sessions(&id),

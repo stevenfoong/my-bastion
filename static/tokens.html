@@ -73,6 +73,20 @@
         <div id="no-tokens" style="display:none;color:var(--text-muted);margin-top:0.5em;">No tokens yet.</div>
     </div>
 
+    <div id="ai-access-section" style="display:none">
+        <h2>My AI access</h2>
+        <div style="color:var(--text-muted);font-size:0.9em;margin-bottom:0.5em;">
+            AI clients (such as Claude) you have allowed to act as you through the MCP endpoint. They reach only folders open to AI that you can reach yourself, and everything they do is recorded as <code>user:you via ai:client</code>. Revoking one ends its access at once.
+        </div>
+        <table>
+            <thead><tr>
+                <th>Client</th><th>Scopes</th><th>Allowed</th><th>Last used</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody id="ai-grants-body"></tbody>
+        </table>
+        <div id="no-ai-grants" style="display:none;color:var(--text-muted);margin-top:0.5em;">No AI clients have access.</div>
+    </div>
+
     <div id="error"></div>
 
     <script>
@@ -129,6 +143,9 @@
             .then(function(data) {
                 if (!data) return;
                 document.getElementById('loading').style.display = 'none';
+                // Anyone signed in may have allowed an AI client.
+                document.getElementById('ai-access-section').style.display = '';
+                loadAiGrants();
                 currentRole = data.role;
                 var level = roleLevel[data.role] || 0;
                 // Reconcile the server-written nav gate (see mybastion.css): the page
@@ -179,6 +196,42 @@
                     sel.appendChild(opt);
                 }
             }
+        }
+
+        function loadAiGrants() {
+            fetch('/api/me/ai-grants', { headers: apiHeaders(), credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+                var body = document.getElementById('ai-grants-body');
+                body.innerHTML = '';
+                document.getElementById('no-ai-grants').style.display = rows.length ? 'none' : '';
+                var when = function(t) { return t ? new Date(t * 1000).toLocaleString() : 'never'; };
+                rows.forEach(function(g) {
+                    var tr = document.createElement('tr');
+                    tr.setAttribute('data-grant', g.id);
+                    [g.client_name, g.scopes, when(g.created_at), when(g.last_used_at),
+                     g.revoked_at ? 'revoked' + (g.revoked_why ? ' (' + g.revoked_why + ')' : '') : 'active'].forEach(function(v) {
+                        var td = document.createElement('td');
+                        td.textContent = v;
+                        tr.appendChild(td);
+                    });
+                    var act = document.createElement('td');
+                    if (!g.revoked_at) {
+                        var b = document.createElement('button');
+                        b.className = 'btn-small ai-grant-revoke';
+                        b.textContent = 'Revoke';
+                        b.onclick = function() {
+                            fetch('/api/me/ai-grants/' + encodeURIComponent(g.id), {
+                                method: 'DELETE', headers: apiHeaders(), credentials: 'same-origin'
+                            }).then(function() { loadAiGrants(); });
+                        };
+                        act.appendChild(b);
+                    }
+                    tr.appendChild(act);
+                    body.appendChild(tr);
+                });
+            })
+            .catch(function() {});
         }
 
         function loadTokens() {
