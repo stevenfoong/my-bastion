@@ -1,18 +1,18 @@
 # Database proxy
 
 `mybastion-dbproxy` (in `dbproxy/`, a separate Go service) puts database
-access behind the bastion: people connect `psql`, DBeaver or any
-PostgreSQL client to it with a short-lived **bastion DB token** as the
-password, and every statement is checked against policy, held for
+access behind the bastion: people connect `psql`, `mysql`, DBeaver or
+any PostgreSQL, MySQL or MariaDB client to it with a short-lived
+**bastion DB token** as the password, and every statement is checked against policy, held for
 approval when a policy says so, and audited with who ran it and how many
 rows it touched. The database's own credentials stay in the bastion.
 
-PostgreSQL first; MySQL/MariaDB later.
+PostgreSQL and MySQL/MariaDB (see [MySQL and MariaDB](#mysql-and-mariadb)).
 
 ## How it works
 
-1. An admin adds a database entry (type `postgres`, with `hostname`,
-   `port`, `username`, `password`, `database`) to a folder, like any other
+1. An admin adds a database entry (type `postgres` or `mysql`, with
+   `hostname`, `port`, `username`, `password`, `database`) to a folder, like any other
    connection.
 2. A user with access to the folder (operator or above) asks for a token:
 
@@ -97,11 +97,12 @@ The unit listens on `:5433`, uses the bastion's TLS certificate
 (`/etc/mybastion/tls/`) for clients, and reaches the core at
 `https://127.0.0.1:8089`, trusting the core's own certificate
 (`-core-ca`). The installers write the core's real address to
-`/etc/mybastion/dbproxy.env`; change `DBPROXY_LISTEN`, `DBPROXY_CORE` or
+`/etc/mybastion/dbproxy.env`; change `DBPROXY_LISTEN`,
+`DBPROXY_MYSQL_LISTEN` (`:3307`; empty for none), `DBPROXY_CORE` or
 `DBPROXY_CORE_CA` there. By hand:
 
 ```
-mybastion-dbproxy -listen :5433 -core https://127.0.0.1:8089 \
+mybastion-dbproxy -listen :5433 -mysql-listen :3307 -core https://127.0.0.1:8089 \
     -core-ca /etc/mybastion/tls/cert.pem \
     -secret-file /etc/mybastion/dbproxy-secret \
     -tls-cert /etc/mybastion/tls/cert.pem -tls-key /etc/mybastion/tls/key.pem
@@ -120,11 +121,11 @@ compiler, for the parser). `install.sh` builds it when Go is installed.
 
 ## On the Connections page
 
-Admins add a database with the entry type **PostgreSQL (database proxy)**:
-host, port, database, username and password. Users see a **DB token**
-button in place of Connect: it asks for a token (the connect policies
-apply, and an approval waits as for any connect) and shows it with the
-`psql` command to copy.
+Admins add a database with the entry type **PostgreSQL (database proxy)**
+or **MySQL / MariaDB (database proxy)**: host, port, database, username
+and password. Users see a **DB token** button in place of Connect: it asks
+for a token (the connect policies apply, and an approval waits as for any
+connect) and shows it with the `psql` or `mysql` command to copy.
 
 ## Limits
 
@@ -133,4 +134,54 @@ apply, and an approval waits as for any connect) and shows it with the
   approve as a whole.
 - Policies decide per statement; a statement refused inside a transaction
   block leaves the transaction open (the database never saw it).
-- Column masking in results, and MySQL/MariaDB, come later.
+- Column masking in results comes later.
+
+## MySQL and MariaDB
+
+Entries of type `mysql` (**MySQL / MariaDB (database proxy)** on the
+Connections page, default port 3306) are served on a second listener,
+`-mysql-listen` (the unit's `DBPROXY_MYSQL_LISTEN`, default `:3307`). The
+token's command is:
+
+```
+MYSQL_PWD=<token> mysql -h bastion.example.com -P 3307 -u you@example.com --ssl app
+```
+
+`[dbproxy] mysql_address` is the address shown (default: `address`'s host,
+port 3307). A token works only on the listener of its entry's type.
+
+- **TLS is required.** The token travels in clear inside it: the proxy
+  offers `caching_sha2_password` and asks for full authentication (what
+  MySQL 8 clients do over TLS), or switches the client to
+  `mysql_clear_password` (MariaDB clients). The user name is ignored; the
+  token says who it is. With the bastion's self-signed certificate, give
+  the client its CA (`--ssl-ca=/path/cert.pem`) or turn verification off
+  (`--skip-ssl-verify-server-cert` for MariaDB 11.4+ clients,
+  `--ssl-mode=REQUIRED` for MySQL clients). MySQL Connector/J and other
+  drivers that refuse clear passwords need it allowed
+  (`allowCleartextPasswords=true` for go-sql-driver/mysql).
+- To the database the proxy logs in with the entry's user
+  (`mysql_native_password`, `caching_sha2_password`, `sha256_password`),
+  over TLS when the server offers it (not verified, like PostgreSQL's
+  `sslmode=prefer`). MariaDB's `ed25519` and `parsec` plugins are not
+  supported yet.
+- Statements are parsed with TiDB's MySQL-dialect parser and get the same
+  classes: `read` (SELECT, SHOW, EXPLAIN, UNION), `write` (INSERT,
+  REPLACE, UPDATE, DELETE, LOAD DATA, LOCK TABLES), `unbounded` (UPDATE or
+  DELETE without WHERE, TRUNCATE), `ddl`, `admin` (users and grants,
+  CREATE/DROP DATABASE, FLUSH, KILL, SET GLOBAL, ANALYZE/OPTIMIZE TABLE,
+  SELECT … INTO OUTFILE, LOAD DATA without LOCAL), `procedure` (CALL, DO,
+  EXECUTE), `session` (BEGIN, COMMIT, SET, USE, …). PREPARE … FROM
+  'text' is classified by its text; PREPARE … FROM @var is `procedure`.
+  Some MariaDB-only syntax does not parse, and so is refused.
+- Checked: text queries (`COM_QUERY`, every statement of a multi-statement
+  string), `COM_STMT_PREPARE` (one statement; its executions are audited
+  with it), and `COM_INIT_DB` (as a `USE` of that database). Refused: commands the
+  bastion cannot inspect (`COM_CHANGE_USER`, replication, `COM_SHUTDOWN`,
+  …) and server-side cursors. Not offered to clients: compression and
+  `LOAD DATA LOCAL` (the client would send a file the bastion does not
+  see).
+- The server version clients see at login is `8.0.40-mybastion`;
+  `SELECT VERSION()` shows the real one.
+- A refused statement gets error 1227 (SQLSTATE `42000`) naming the policy
+  or the approval request.

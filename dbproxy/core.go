@@ -80,9 +80,11 @@ func (c *Core) post(ctx context.Context, path string, in, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func (c *Core) Connect(ctx context.Context, token, clientIP string) (*ConnectResult, error) {
+// Connect checks a token; protocol is the listener it came in on
+// ("postgres" or "mysql"), which must be the entry's type.
+func (c *Core) Connect(ctx context.Context, token, clientIP, protocol string) (*ConnectResult, error) {
 	var r ConnectResult
-	err := c.post(ctx, "/internal/db/connect", map[string]string{"token": token, "client_ip": clientIP}, &r)
+	err := c.post(ctx, "/internal/db/connect", map[string]string{"token": token, "client_ip": clientIP, "protocol": protocol}, &r)
 	return &r, err
 }
 

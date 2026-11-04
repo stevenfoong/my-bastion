@@ -685,9 +685,25 @@ pub struct DbProxyConfig {
     /// Where users point their client, e.g. `bastion.example.com:5433`.
     #[serde(default = "default_dbproxy_address")]
     pub address: String,
+    /// Where MySQL/MariaDB clients point, e.g. `bastion.example.com:3307`
+    /// (the proxy's `-mysql-listen`). Default: `address`'s host, port 3307.
+    pub mysql_address: Option<String>,
 }
 
 impl DbProxyConfig {
+    /// The address shown for MySQL/MariaDB entries.
+    pub fn mysql_address(&self) -> String {
+        if let Some(a) = self.mysql_address.clone().filter(|a| !a.is_empty()) {
+            return a;
+        }
+        let host = self
+            .address
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(&self.address);
+        format!("{}:3307", host)
+    }
+
     /// The shared secret: the file's contents, else the environment.
     pub fn secret(&self) -> Option<String> {
         let s = match &self.shared_secret_file {
