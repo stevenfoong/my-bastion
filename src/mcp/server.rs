@@ -111,6 +111,7 @@ pub fn approve_mode_rule(folder: &str, action: crate::policy::Action) -> crate::
         commands: Vec::new(),
         web_only: false,
         direction: None,
+        classes: Vec::new(),
     }
 }
 

@@ -114,6 +114,7 @@ pub async fn cmd_import_guacamole(
         let entry = AddressBookEntry {
             session_type: protocol,
             hostname: param_map.get("hostname").map(|s| s.to_string()),
+            database: None,
             port: param_map.get("port").and_then(|s| s.parse().ok()),
             username: param_map
                 .get("username")

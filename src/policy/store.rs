@@ -86,6 +86,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             "break_glass",
             "INTEGER NOT NULL DEFAULT 0",
         ),
+        ("policies", "classes", "TEXT NOT NULL DEFAULT '[]'"),
     ] {
         add_column(conn, table, column, decl)?;
     }
@@ -136,7 +137,7 @@ fn bad_value(col: usize, what: &str) -> rusqlite::Error {
 // ── Policies ──
 
 const RULE_COLS: &str = "id, name, subject, target, action, effect, approvers, grant_minutes,
-    timeout_minutes, enabled, commands, web_only, direction";
+    timeout_minutes, enabled, commands, web_only, direction, classes";
 
 fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
     let action: String = r.get(4)?;
@@ -158,6 +159,7 @@ fn rule_from_row(r: &Row) -> rusqlite::Result<Rule> {
             None => None,
             Some(d) => Some(Direction::parse(&d).ok_or_else(|| bad_value(12, "direction"))?),
         },
+        classes: from_json::<Vec<String>>(13, r.get(13)?)?,
     })
 }
 
@@ -179,8 +181,9 @@ pub fn get_rule(conn: &Connection, id: i64) -> rusqlite::Result<Option<Rule>> {
 pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO policies (name, subject, target, action, effect, approvers,
-             grant_minutes, timeout_minutes, enabled, created_by, commands, web_only, direction)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             grant_minutes, timeout_minutes, enabled, created_by, commands, web_only, direction,
+             classes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             rule.name,
             serde_json::to_string(&rule.subject).map_err(json_err)?,
@@ -195,6 +198,7 @@ pub fn insert_rule(conn: &Connection, rule: &Rule, by: &str) -> rusqlite::Result
             serde_json::to_string(&rule.commands).map_err(json_err)?,
             rule.web_only as i64,
             rule.direction.map(Direction::as_str),
+            serde_json::to_string(&rule.classes).map_err(json_err)?,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -205,7 +209,8 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
     let n = conn.execute(
         "UPDATE policies SET name = ?1, subject = ?2, target = ?3, action = ?4, effect = ?5,
              approvers = ?6, grant_minutes = ?7, timeout_minutes = ?8, enabled = ?9,
-             commands = ?11, web_only = ?12, direction = ?13, updated_at = datetime('now')
+             commands = ?11, web_only = ?12, direction = ?13, classes = ?14,
+             updated_at = datetime('now')
          WHERE id = ?10",
         params![
             rule.name,
@@ -221,6 +226,7 @@ pub fn update_rule(conn: &Connection, rule: &Rule) -> rusqlite::Result<bool> {
             serde_json::to_string(&rule.commands).map_err(json_err)?,
             rule.web_only as i64,
             rule.direction.map(Direction::as_str),
+            serde_json::to_string(&rule.classes).map_err(json_err)?,
         ],
     )?;
     Ok(n > 0)
@@ -637,6 +643,7 @@ mod tests {
             commands: vec![],
             web_only: false,
             direction: None,
+            classes: Vec::new(),
         }
     }
 

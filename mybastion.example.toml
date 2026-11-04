@@ -373,3 +373,17 @@ web_allowed_networks = ["127.0.0.0/8", "::1/128"]
 # access_token_minutes = 15
 # refresh_token_days = 30
 # reauth_hours = 12               # when the IdP gives no refresh token
+
+# ──────────────────────────────────────────────────────────────────
+# Database proxy (mybastion-dbproxy, dbproxy/)
+# ──────────────────────────────────────────────────────────────────
+#
+# psql & co connect to the proxy with a bastion DB token; every statement
+# is checked with db_query policies and audited. See docs/database-proxy.md.
+
+# [dbproxy]
+# enabled = true
+# shared_secret_file = "/etc/mybastion/dbproxy-secret"   # >= 32 characters
+# address = "bastion.example.com:5433"                    # shown to users
+# allowed_networks = ["10.0.0.0/8"]                       # where databases may be
+# token_minutes = 15

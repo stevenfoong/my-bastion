@@ -5,6 +5,7 @@ mod browser;
 mod config;
 mod connections;
 mod db;
+mod dbgate;
 mod drive;
 mod guacd;
 mod import;
@@ -1619,6 +1620,10 @@ async fn run_server(config: Config, database: Db) {
             "/api/addressbook/folders/{scope}/{folder}/entries/{entry}/run",
             post(api::ab_run_command),
         )
+        .route(
+            "/api/addressbook/folders/{scope}/{folder}/entries/{entry}/db-token",
+            post(dbgate::issue_token),
+        )
         .route("/api/ssh/probe-host-key", post(api::ssh_probe_host_key))
         .merge(session_create_route)
         .with_state(manager.clone())
@@ -1747,6 +1752,17 @@ async fn run_server(config: Config, database: Db) {
         tracing::info!("MCP endpoint enabled at /mcp");
     }
 
+    // The database proxy's internal API: its own shared secret, checked in
+    // each handler, never the REST middleware.
+    let dbproxy_route: Router<()> = Router::new()
+        .route("/internal/db/connect", post(dbgate::connect))
+        .route("/internal/db/check", post(dbgate::check))
+        .route("/internal/db/audit", post(dbgate::audit))
+        .route("/internal/db/disconnect", post(dbgate::disconnect))
+        .with_state(manager.clone())
+        .layer(Extension(database.clone()))
+        .layer(Extension(vault_client.clone()));
+
     // Unauthenticated stateful routes
     let unauth_routes = Router::new()
         .route("/api/health", get(api::health))
@@ -1787,6 +1803,7 @@ async fn run_server(config: Config, database: Db) {
         .merge(api_routes)
         .merge(ws_route)
         .merge(mcp_route)
+        .merge(dbproxy_route)
         .merge(connect_route)
         .merge(unauth_routes)
         .merge(html_routes);

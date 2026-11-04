@@ -55,6 +55,8 @@ pub enum Action {
     FileTransfer,
     /// An AI agent's input to a session over MCP: click, type, keys, scroll.
     Input,
+    /// One statement through the database proxy.
+    DbQuery,
 }
 
 impl Action {
@@ -65,6 +67,7 @@ impl Action {
             Action::Clipboard => "clipboard",
             Action::FileTransfer => "file_transfer",
             Action::Input => "input",
+            Action::DbQuery => "db_query",
         }
     }
 
@@ -75,6 +78,7 @@ impl Action {
             "clipboard" => Some(Action::Clipboard),
             "file_transfer" => Some(Action::FileTransfer),
             "input" => Some(Action::Input),
+            "db_query" => Some(Action::DbQuery),
             _ => None,
         }
     }
@@ -293,7 +297,29 @@ pub struct Rule {
     /// For `clipboard` and `file_transfer`: only this direction. None: both.
     #[serde(default)]
     pub direction: Option<Direction>,
+    /// For `db_query`: the statement classes it covers (see `DB_CLASSES`);
+    /// it matches a statement with any of them. Empty: every statement.
+    #[serde(default)]
+    pub classes: Vec<String>,
 }
+
+/// Statement classes the database proxy gives a statement: `read`,
+/// `write` (INSERT, UPDATE, DELETE, MERGE, COPY FROM, SELECT INTO),
+/// `unbounded` (an UPDATE or DELETE without WHERE, or TRUNCATE, along with
+/// `write` or `ddl`), `ddl` (CREATE, ALTER, DROP, TRUNCATE, ...), `admin`
+/// (roles, grants, VACUUM, ALTER SYSTEM, ...), `procedure` (CALL, DO,
+/// EXECUTE of a prepared statement), `session` (BEGIN, SET, SHOW, ...),
+/// `other`.
+pub const DB_CLASSES: [&str; 8] = [
+    "read",
+    "write",
+    "unbounded",
+    "ddl",
+    "admin",
+    "procedure",
+    "session",
+    "other",
+];
 
 const MAX_COMMAND_PATTERNS: usize = 50;
 const MAX_PATTERN_LEN: usize = 500;
@@ -315,7 +341,9 @@ impl Rule {
         let (t, depth) = self.target.rank();
         // A rule narrowed to some commands, or to one direction, beats one
         // that is not.
-        let commands = u8::from(!self.commands.is_empty() || self.direction.is_some());
+        let commands = u8::from(
+            !self.commands.is_empty() || self.direction.is_some() || !self.classes.is_empty(),
+        );
         (
             t,
             depth,
@@ -336,6 +364,12 @@ impl Rule {
         self.commands
             .iter()
             .any(|p| regex::Regex::new(p).is_ok_and(|re| re.is_match(cmd)))
+    }
+
+    /// Whether the rule's statement classes admit a statement of `classes`.
+    fn matches_classes(&self, classes: Option<&[String]>) -> bool {
+        self.classes.is_empty()
+            || classes.is_some_and(|cs| cs.iter().any(|c| self.classes.contains(c)))
     }
 
     /// Check the parts a caller can get wrong. Errors are for the admin UI.
@@ -403,8 +437,19 @@ impl Rule {
         if self.direction.is_some() && !self.action.is_transfer() {
             return Err("a direction only applies to clipboard and file_transfer rules".into());
         }
-        if !self.commands.is_empty() && self.action != Action::SshCommand {
-            return Err("command patterns only apply to ssh_command rules".into());
+        if !self.commands.is_empty() && !matches!(self.action, Action::SshCommand | Action::DbQuery)
+        {
+            return Err("command patterns only apply to ssh_command and db_query rules".into());
+        }
+        if !self.classes.is_empty() && self.action != Action::DbQuery {
+            return Err("statement classes only apply to db_query rules".into());
+        }
+        if let Some(c) = self
+            .classes
+            .iter()
+            .find(|c| !DB_CLASSES.contains(&c.as_str()))
+        {
+            return Err(format!("unknown statement class '{}'", c));
         }
         if self.commands.len() > MAX_COMMAND_PATTERNS {
             return Err(format!("at most {} command patterns", MAX_COMMAND_PATTERNS));
@@ -574,10 +619,11 @@ pub fn evaluate<'a>(
     res: &Resource,
     command: Option<&str>,
 ) -> Decision<'a> {
-    evaluate_in(rules, who, action, res, command, None)
+    evaluate_in(rules, who, action, res, command, None, None)
 }
 
-/// `evaluate`, for one direction of a clipboard or file transfer.
+/// `evaluate`, for one direction of a clipboard or file transfer, or a
+/// database statement of some `classes`.
 fn evaluate_in<'a>(
     rules: &'a [Rule],
     who: &Requester,
@@ -585,6 +631,7 @@ fn evaluate_in<'a>(
     res: &Resource,
     command: Option<&str>,
     direction: Option<Direction>,
+    classes: Option<&[String]>,
 ) -> Decision<'a> {
     let matching: Vec<&Rule> = rules
         .iter()
@@ -595,6 +642,7 @@ fn evaluate_in<'a>(
                 && r.target.matches(res)
                 && r.matches_command(command)
                 && (r.direction.is_none() || r.direction == direction)
+                && r.matches_classes(classes)
         })
         .collect();
     if let Some(rule) = matching
@@ -689,7 +737,7 @@ pub struct SessionControls {
 impl SessionControls {
     /// Evaluate the clipboard and file transfer rules for a session.
     pub fn decide(rules: &[Rule], who: &Requester, res: &Resource) -> Self {
-        let one = |action, dir| match evaluate_in(rules, who, action, res, None, Some(dir)) {
+        let one = |action, dir| match evaluate_in(rules, who, action, res, None, Some(dir), None) {
             Decision::Allow { alert: false, .. } => Transfer::Allow,
             Decision::Allow { alert: true, .. } => Transfer::Alert,
             // `validate` refuses approval for these; treat one as a deny.
@@ -937,6 +985,43 @@ pub async fn gate_forced(
     ip: String,
     forced: Option<Rule>,
 ) -> Result<Gate, String> {
+    gate_inner(db, id, action, res, command, ip, forced, None).await
+}
+
+/// `gate` for one database statement of `classes` (`db_query`): the
+/// statement is the command, so an approval covers exactly it.
+pub async fn gate_db(
+    db: &crate::db::Db,
+    id: &AuthIdentity,
+    res: Resource,
+    statement: String,
+    classes: Vec<String>,
+    ip: String,
+) -> Result<Gate, String> {
+    gate_inner(
+        db,
+        id,
+        Action::DbQuery,
+        res,
+        Some(statement),
+        ip,
+        None,
+        Some(classes),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn gate_inner(
+    db: &crate::db::Db,
+    id: &AuthIdentity,
+    action: Action,
+    res: Resource,
+    command: Option<String>,
+    ip: String,
+    forced: Option<Rule>,
+    classes: Option<Vec<String>>,
+) -> Result<Gate, String> {
     let db = db.clone();
     let who = Requester::from_identity(id);
     let display = id.display_name().to_string();
@@ -950,7 +1035,15 @@ pub async fn gate_forced(
         let target = res.label();
         let audit = |e: store::AuditEvent| store::audit(&conn, &e, now).map_err(|e| e.to_string());
         let decision = match (
-            evaluate(&rules, &who, action, &res, command.as_deref()),
+            evaluate_in(
+                &rules,
+                &who,
+                action,
+                &res,
+                command.as_deref(),
+                None,
+                classes.as_deref(),
+            ),
             &forced,
         ) {
             (Decision::Allow { .. }, Some(rule)) => Decision::RequireApproval { rule },
@@ -1208,6 +1301,7 @@ mod tests {
             commands: vec![],
             web_only: false,
             direction: None,
+            classes: Vec::new(),
         }
     }
 

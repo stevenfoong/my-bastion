@@ -821,6 +821,7 @@ mod tests {
             commands: commands.iter().map(|s| s.to_string()).collect(),
             web_only: false,
             direction: None,
+            classes: Vec::new(),
         }
     }
 

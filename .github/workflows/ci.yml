@@ -76,6 +76,34 @@ jobs:
           $HOME/.cargo/bin/cargo install cargo-audit
           $HOME/.cargo/bin/cargo audit
 
+  dbproxy:
+    name: Database proxy
+    # The Go service in dbproxy/; pg_query_go builds the PostgreSQL parser
+    # with cgo, so a C compiler is needed (the runner has one).
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: dbproxy/go.mod
+          cache-dependency-path: dbproxy/go.sum
+
+      - name: Check formatting
+        working-directory: dbproxy
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+
+      - name: Vet
+        working-directory: dbproxy
+        run: go vet ./...
+
+      - name: Test
+        working-directory: dbproxy
+        run: go test ./...
+
   e2e:
     name: Browser tests
     # Pinned: ubuntu-latest moved to Ubuntu 26 in October 2026, which

@@ -663,6 +663,48 @@ pub struct Config {
     pub ssh_log: Option<SshLogConfig>,
     /// `[mcp]`: the MCP endpoint for AI agents. Off unless enabled.
     pub mcp: Option<McpConfig>,
+    /// `[dbproxy]`: the database access proxy (a separate service). Off
+    /// unless enabled.
+    pub dbproxy: Option<DbProxyConfig>,
+}
+
+/// `[dbproxy]`: what the core needs for `mybastion-dbproxy`: the secret it
+/// authenticates with on the internal API, how long DB tokens last, where
+/// database targets may be, and the address shown to users.
+#[derive(Debug, Deserialize, Clone)]
+pub struct DbProxyConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// The proxy's secret, from a file (or `MYBASTION_DBPROXY_SECRET`).
+    pub shared_secret_file: Option<String>,
+    #[serde(default = "default_db_token_minutes")]
+    pub token_minutes: u32,
+    /// Networks database targets may be in.
+    #[serde(default = "default_localhost_networks")]
+    pub allowed_networks: Vec<String>,
+    /// Where users point their client, e.g. `bastion.example.com:5433`.
+    #[serde(default = "default_dbproxy_address")]
+    pub address: String,
+}
+
+impl DbProxyConfig {
+    /// The shared secret: the file's contents, else the environment.
+    pub fn secret(&self) -> Option<String> {
+        let s = match &self.shared_secret_file {
+            Some(path) => std::fs::read_to_string(path).ok()?,
+            None => std::env::var("MYBASTION_DBPROXY_SECRET").ok()?,
+        };
+        let s = s.trim().to_string();
+        (s.len() >= 32).then_some(s)
+    }
+}
+
+fn default_db_token_minutes() -> u32 {
+    15
+}
+
+fn default_dbproxy_address() -> String {
+    "localhost:5433".into()
 }
 
 /// `[mcp]`: AI agents on `/mcp` (agent keys; folders opt in with `ai_mode`).
@@ -1509,6 +1551,7 @@ impl Default for Config {
             telegram: None,
             ssh_log: None,
             mcp: None,
+            dbproxy: None,
         }
     }
 }

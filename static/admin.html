@@ -152,6 +152,7 @@
             <option value="clipboard">clipboard</option>
             <option value="file_transfer">file transfer</option>
             <option value="input" title="An AI agent's clicks, typing and keys over MCP">AI input</option>
+            <option value="db_query" title="A statement through the database proxy">database statement</option>
         </select>
         <select id="pol-direction" style="display:none" title="In: paste and upload to the target. Out: copy and download from it.">
             <option value="">both ways</option>
@@ -159,6 +160,8 @@
             <option value="out">out (copy / download)</option>
         </select>
         <textarea id="pol-commands" rows="1" placeholder="command patterns, one per line" style="width:14em;display:none" title="Regular expressions matched anywhere in the command, e.g. rm\s+-rf\s+/"></textarea>
+        <input type="text" id="pol-classes" placeholder="write, ddl (blank: all)" style="width:11em;display:none" title="Statement classes: read, write, unbounded (UPDATE/DELETE without WHERE, TRUNCATE), ddl, admin, procedure, session, other">
+
         <select id="pol-effect">
             <option value="require_approval">require approval</option>
             <option value="deny">deny</option>
@@ -348,6 +351,9 @@
                         : p.action === 'clipboard' || p.action === 'file_transfer'
                         ? p.action.replace(/_/g, ' ') + (p.direction ? ' (' + p.direction + ')' : '')
                         : p.action === 'input' ? 'AI input'
+                        : p.action === 'db_query'
+                        ? 'DB statement' + ((p.classes || []).length ? ' (' + p.classes.join(', ') + ')' : '')
+                            + ((p.commands || []).length ? ': ' + p.commands.join(' | ') : '')
                         : 'connect';
                     [p.name, polWho(p.subject), polTarget(p.target), act, p.effect.replace(/_/g, ' '),
                      p.effect === 'require_approval' ? polApprovers(p.approvers) + (p.web_only ? ' (web only)' : '') : '',
@@ -381,7 +387,9 @@
             .catch(function() {});
         }
         document.getElementById('pol-action').addEventListener('change', function() {
-            document.getElementById('pol-commands').style.display = this.value === 'ssh_command' ? '' : 'none';
+            document.getElementById('pol-commands').style.display =
+                this.value === 'ssh_command' || this.value === 'db_query' ? '' : 'none';
+            document.getElementById('pol-classes').style.display = this.value === 'db_query' ? '' : 'none';
             document.getElementById('pol-direction').style.display =
                 this.value === 'clipboard' || this.value === 'file_transfer' ? '' : 'none';
         });
@@ -405,8 +413,11 @@
                     return (a === 'clipboard' || a === 'file_transfer') && document.getElementById('pol-direction').value
                         ? document.getElementById('pol-direction').value : null;
                 })(document.getElementById('pol-action').value),
-                commands: document.getElementById('pol-action').value === 'ssh_command'
+                commands: ['ssh_command', 'db_query'].indexOf(document.getElementById('pol-action').value) >= 0
                     ? document.getElementById('pol-commands').value.split('\n').map(function(l) { return l.trim(); }).filter(Boolean)
+                    : [],
+                classes: document.getElementById('pol-action').value === 'db_query'
+                    ? document.getElementById('pol-classes').value.split(',').map(function(l) { return l.trim(); }).filter(Boolean)
                     : [],
                 effect: document.getElementById('pol-effect').value,
                 approvers: parseApprovers(document.getElementById('pol-approvers').value),

@@ -16,7 +16,7 @@ A rule has:
 |---|---|
 | **Who** | `anyone`, a `user` (login email), a `group` (OIDC group), a `role` (exactly that role), an `api_key` (by name), or an `ai_agent` (an MCP agent key by name, or `*` for every agent; see `docs/mcp.md`) |
 | **Target** | `anything`, a `folder` (and everything under it), or one `entry`, each in the `shared` or `instance` scope |
-| **Action** | `connect`; `ssh_command` (one command run through the bastion, see below); `clipboard` or `file_transfer` (in a session, see below); `input` (an AI agent's clicks, typing and keys over MCP, see `docs/mcp.md`) |
+| **Action** | `connect`; `ssh_command` (one command run through the bastion, see below); `clipboard` or `file_transfer` (in a session, see below); `input` (an AI agent's clicks, typing and keys over MCP, see `docs/mcp.md`); `db_query` (a statement through the database proxy, with statement **classes**, see `docs/database-proxy.md`) |
 | **Direction** | for `clipboard` and `file_transfer`: `in` (paste, upload to the target), `out` (copy, download from it), or both (unset) |
 | **Commands** | for `ssh_command`: regular expressions, matched anywhere in the command line; the rule applies to commands any of them matches (none: every command) |
 | **Effect** | `allow`, `deny`, `require_approval`, or `allow_and_alert` |
