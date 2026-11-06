@@ -853,10 +853,11 @@
                     <option value="web">Web</option>
                     <option value="vdi">VDI (Docker)</option>
                     <option value="postgres" class="adhoc-hide">PostgreSQL (database proxy)</option>
+                    <option value="mysql" class="adhoc-hide">MySQL / MariaDB (database proxy)</option>
                 </select>
             </label>
             <div id="em-pg-fields" style="display:none">
-                <div class="field-hint">Reached through the database proxy: users get a short-lived bastion token for <code>psql</code> or any PostgreSQL client, and every statement is checked by <em>database statement</em> policies and audited. These credentials stay in the bastion.</div>
+                <div class="field-hint">Reached through the database proxy: users get a short-lived bastion token for <code>psql</code>, <code>mysql</code> or any other client of the database, and every statement is checked by <em>database statement</em> policies and audited. These credentials stay in the bastion.</div>
                 <label>Hostname
                     <input type="text" id="em-pg-hostname" placeholder="10.0.5.20">
                 </label>
@@ -3106,9 +3107,9 @@
                 if (e.inherited_credentials) userCol += ' <span style="color:#888;font-size:0.8em" title="Uses the folder\'s default credentials">[folder]</span>';
                 html += '<td>' + userCol + '</td>';
                 var connectLabel = needsPrompt ? 'Login...' : 'Connect';
-                if (e.session_type === 'postgres') {
+                if (e.session_type === 'postgres' || e.session_type === 'mysql') {
                     // A database: a token for the database proxy, not a session.
-                    html += '<td class="connect-cell"><button class="btn-connect" title="A short-lived token to connect with psql or another PostgreSQL client" data-dbtoken="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">DB token</button></td>';
+                    html += '<td class="connect-cell"><button class="btn-connect" title="A short-lived token to connect with ' + (e.session_type === 'mysql' ? 'mysql or another MySQL/MariaDB' : 'psql or another PostgreSQL') + ' client" data-dbtoken="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">DB token</button></td>';
                 } else {
                 html += '<td class="connect-cell"><button class="btn-connect" data-connect="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">' + connectLabel + '</button>'
                     + '<button class="btn-connect btn-connect-win" title="Open in a new window" data-connect-win="' + escapeAttr(e.name) + '" data-scope="' + escapeAttr(scope) + '" data-folder="' + escapeAttr(folder) + '">&#x29c9;</button></td>';
@@ -3670,7 +3671,11 @@
                     wrap.appendChild(code);
                     return wrap;
                 };
-                var cmd = 'PGPASSWORD=\'' + j.token + '\' psql "host=' + j.host + ' port=' + j.port + ' dbname=' + j.database
+                var isMysql = j.protocol === 'mysql';
+                var shq = function(v) { return '\'' + String(v).replace(/'/g, "'\\''") + '\''; };
+                var cmd = isMysql
+                    ? 'MYSQL_PWD=' + shq(j.token) + ' mysql -h ' + j.host + ' -P ' + j.port + ' -u ' + shq(j.user) + ' --ssl' + (j.database ? ' ' + shq(j.database) : '')
+                    : 'PGPASSWORD=\'' + j.token + '\' psql "host=' + j.host + ' port=' + j.port + ' dbname=' + j.database
                     + ' user=' + j.user + ' sslmode=require"';
                 var actions = document.createElement('div');
                 actions.className = 'modal-actions';
@@ -3688,8 +3693,8 @@
                 actions.appendChild(copy);
                 actions.appendChild(close);
                 [h, p, field('Token (the password)', j.token, 'dbtoken-value'),
-                 field('Host / port / database', j.host + ':' + j.port + ' / ' + j.database, 'dbtoken-target'),
-                 field('psql', cmd, 'dbtoken-psql'), actions].forEach(function(el) { box.appendChild(el); });
+                 field('Host / port / database', j.host + ':' + j.port + ' / ' + (j.database || '(server default)'), 'dbtoken-target'),
+                 field(isMysql ? 'mysql' : 'psql', cmd, 'dbtoken-psql'), actions].forEach(function(el) { box.appendChild(el); });
                 overlay.appendChild(box);
                 document.body.appendChild(overlay);
             })
@@ -4373,7 +4378,12 @@
             document.getElementById('em-vdi-fields').style.display = 'none';
             document.getElementById('em-pg-fields').style.display = 'none';
             var val = entryTypeSelect.value;
-            var isDb = val === 'postgres';
+            var isDb = val === 'postgres' || val === 'mysql';
+            // The default port follows the database type until it is changed.
+            var dbPort = document.getElementById('em-pg-port');
+            if (isDb && (dbPort.value === '' || dbPort.value === '5432' || dbPort.value === '3306')) {
+                dbPort.value = val === 'mysql' ? '3306' : '5432';
+            }
             if (val === 'ssh') document.getElementById('em-ssh-fields').style.display = '';
             else if (val === 'rdp') document.getElementById('em-rdp-fields').style.display = '';
             else if (val === 'vnc') document.getElementById('em-vnc-fields').style.display = '';
@@ -4763,9 +4773,9 @@
             } else if (type === 'vnc') {
                 targetHost = document.getElementById('em-vnc-hostname').value || '???';
                 targetPort = document.getElementById('em-vnc-port').value || '5900';
-            } else if (type === 'postgres') {
+            } else if (type === 'postgres' || type === 'mysql') {
                 targetHost = document.getElementById('em-pg-hostname').value || '???';
-                targetPort = document.getElementById('em-pg-port').value || '5432';
+                targetPort = document.getElementById('em-pg-port').value || (type === 'mysql' ? '3306' : '5432');
             } else if (type === 'spice') {
                 targetHost = document.getElementById('em-spice-hostname').value || '???';
                 targetPort = document.getElementById('em-spice-port').value || '5900';
@@ -5012,9 +5022,9 @@
                     document.getElementById('em-vnc-resize').checked = !!entryData.vnc_resize;
                     document.getElementById('em-vnc-network').value = entryData.vnc_network || '';
                     document.getElementById('em-vnc-prompt-creds').checked = !!entryData.prompt_credentials;
-                } else if (type === 'postgres') {
+                } else if (type === 'postgres' || type === 'mysql') {
                     document.getElementById('em-pg-hostname').value = entryData.hostname || '';
-                    document.getElementById('em-pg-port').value = entryData.port || '5432';
+                    document.getElementById('em-pg-port').value = entryData.port || (type === 'mysql' ? '3306' : '5432');
                     document.getElementById('em-pg-database').value = entryData.database || '';
                     document.getElementById('em-pg-username').value = entryData.username || '';
                 } else if (type === 'spice') {
@@ -5245,7 +5255,7 @@
                 var net = document.getElementById('em-vnc-network').value;
                 if (net) entry.vnc_network = net;
                 if (document.getElementById('em-vnc-prompt-creds').checked) entry.prompt_credentials = true;
-            } else if (type === 'postgres') {
+            } else if (type === 'postgres' || type === 'mysql') {
                 var h = document.getElementById('em-pg-hostname').value.trim();
                 if (h) entry.hostname = h;
                 var p = parseInt(document.getElementById('em-pg-port').value);

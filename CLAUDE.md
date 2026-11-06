@@ -31,8 +31,8 @@ a phase. Status:
 - Phase 4 (DB proxy): 4a (Go `dbproxy/` for PostgreSQL, DB tokens,
   `db_query` policies with statement classes, internal API, audit) and 4b
   (Connections page database entries + DB token dialog; packaging:
-  `mybastion-dbproxy.service`, deb/rpm/tarball/Docker/install.sh) done.
-  Next: MySQL/MariaDB
+  `mybastion-dbproxy.service`, deb/rpm/tarball/Docker/install.sh) and 4c
+  (MySQL/MariaDB on `-mysql-listen`, `mysql` entries) done
 
 ## Architecture
 
@@ -83,7 +83,9 @@ a phase. Status:
 - `dbproxy/` — `mybastion-dbproxy` (Go 1.25, `pgx`/`pgproto3`,
   `pg_query_go`): `proxy.go` (TLS, token as password, relay; checks Query
   and Parse), `classify.go` (statement classes), `core.go` (internal API
-  client). Core side: `src/dbgate.rs` (DB tokens, `/internal/db/*` with the
+  client), `mysql.go` (MySQL/MariaDB: handshake, token in clear inside
+  TLS, login to the server, request/response relay checking COM_QUERY,
+  COM_STMT_PREPARE, COM_INIT_DB), `mysql_classify.go` (TiDB parser). Core side: `src/dbgate.rs` (DB tokens, `/internal/db/*` with the
   shared secret, audit). Docs: `docs/database-proxy.md`
 - `src/oauth/` — OAuth 2.1 authorization server for MCP (`[mcp.oauth]`, on
   top of `[oidc]`): `store.rs` (clients, client names, grants, codes,
@@ -211,6 +213,11 @@ image in `contrib/vdi-test-image/`).
 - `tests/test_dbproxy.sh` — live: a throwaway PostgreSQL cluster, the proxy
   and psql: read-only user, unbounded DELETE, prod approval, extended
   protocol, TLS, audit (needs `go`, `initdb`, `psql`)
+- `tests/test_dbproxy_mysql.sh` — live: a throwaway MariaDB, the proxy and
+  the mariadb client (both token auth paths), go-sql-driver/mysql for
+  prepared and multi-statements (`dbproxy/live_mysql_test.go`, tag
+  `live`): same policies, USE, large results, audit (needs `go`,
+  `mariadb-server`, `mariadb-client`)
 - `cd dbproxy && go test ./...` — statement classification
 - `tests/test_mcp_oauth.sh` — live: OAuth against a fake OIDC provider
   (`tests/fake_oidc.py`, RS256 via openssl) with a scripted client/browser

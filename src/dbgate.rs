@@ -40,7 +40,7 @@ use crate::policy::{Gate, Resource};
 
 const TOKEN_PREFIX: &str = "mbdb_";
 /// Database entry types the proxy serves.
-const DB_TYPES: [&str; 1] = ["postgres"];
+const DB_TYPES: [&str; 2] = ["postgres", "mysql"];
 /// The longest statement kept in an audit row.
 const MAX_AUDIT_STATEMENT: usize = 4000;
 
@@ -192,24 +192,48 @@ pub async fn issue_token(
         Ok(Err(e)) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         Err(r) => return r,
     }
-    let (host, port) = cfg
-        .address
+    let mysql = ab.session_type == "mysql";
+    let address = if mysql {
+        cfg.mysql_address()
+    } else {
+        cfg.address.clone()
+    };
+    let (host, port) = address
         .rsplit_once(':')
         .map(|(h, p)| (h.to_string(), p.to_string()))
-        .unwrap_or((cfg.address.clone(), "5433".into()));
+        .unwrap_or((address.clone(), if mysql { "3307" } else { "5433" }.into()));
     let user = id.display_name().to_string();
-    let dbname = ab.database.clone().unwrap_or_else(|| "postgres".into());
+    let dbname = default_database(&ab);
+    // The command line to connect with (the token in place of <token>).
+    let command = if mysql {
+        let db = if dbname.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", dbname)
+        };
+        format!(
+            "MYSQL_PWD=<token> mysql -h {} -P {} -u {} --ssl{}",
+            host,
+            port,
+            shell_word(&user),
+            db
+        )
+    } else {
+        format!(
+            "PGPASSWORD=<token> psql \"host={} port={} dbname={} user={} sslmode=require\"",
+            host, port, dbname, user
+        )
+    };
     Json(json!({
         "token": token,
         "expires_at": expires_at,
+        "protocol": if mysql { "mysql" } else { "postgres" },
         "host": host,
         "port": port,
         "user": user,
         "database": dbname,
-        "psql": format!(
-            "PGPASSWORD=<token> psql \"host={} port={} dbname={} user={} sslmode=require\"",
-            host, port, dbname, user
-        ),
+        "command": command,
+        "psql": command,
     }))
     .into_response()
 }
@@ -242,6 +266,31 @@ pub struct ConnectBody {
     token: String,
     #[serde(default)]
     client_ip: String,
+    /// The proxy listener the client came in on: `postgres` (the default,
+    /// for proxies before MySQL support) or `mysql`.
+    #[serde(default)]
+    protocol: Option<String>,
+}
+
+/// The database a client lands in: the entry's, else the server's default
+/// (`postgres` for PostgreSQL, none for MySQL).
+fn default_database(ab: &crate::connections::AddressBookEntry) -> String {
+    match ab.database.clone().filter(|d| !d.is_empty()) {
+        Some(d) => d,
+        None if ab.session_type == "mysql" => String::new(),
+        None => "postgres".into(),
+    }
+}
+
+/// Quote a word for a shell command line when it needs it.
+fn shell_word(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "@._-+".contains(c))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
 }
 
 /// A `db_tokens` row: email, API key, scope, folder, entry, expiry.
@@ -346,10 +395,27 @@ pub async fn connect(
             )
         }
     };
+    let protocol = b.protocol.as_deref().unwrap_or("postgres");
+    if ab.session_type != protocol {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "this token is for a {} database; connect to the bastion's {} port",
+                ab.session_type,
+                if ab.session_type == "mysql" {
+                    "MySQL"
+                } else {
+                    "PostgreSQL"
+                }
+            ),
+        );
+    }
     let Some(host) = ab.hostname.clone().filter(|h| !h.is_empty()) else {
         return error(StatusCode::BAD_REQUEST, "entry has no hostname");
     };
-    let port = ab.port.unwrap_or(5432);
+    let port = ab
+        .port
+        .unwrap_or(if protocol == "mysql" { 3306 } else { 5432 });
     let allowed = manager
         .config()
         .dbproxy
@@ -374,6 +440,7 @@ pub async fn connect(
     let detail = json!({ "session": sid, "database": ab.database });
     let _ = with_db(&db, move |c| audit_row(c, "db_connect", &s, &detail)).await;
     tracing::info!(user = %id.display_name(), target = %res.label(), "Database proxy connection");
+    let database = default_database(&ab);
     Json(json!({
         "session_id": sid,
         "actor": id.display_name(),
@@ -382,7 +449,7 @@ pub async fn connect(
             "port": port,
             "user": ab.username.unwrap_or_default(),
             "password": ab.password.unwrap_or_default(),
-            "database": ab.database.unwrap_or_else(|| "postgres".into()),
+            "database": database,
         },
     }))
     .into_response()

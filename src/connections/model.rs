@@ -119,9 +119,9 @@ impl FolderConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AddressBookEntry {
     #[serde(rename = "type")]
-    pub session_type: String, // "ssh", "rdp", "vnc", "web", "postgres"
+    pub session_type: String, // "ssh", "rdp", "vnc", "web", "postgres", "mysql"
     pub hostname: Option<String>,
-    /// For a `postgres` entry: the database to connect to.
+    /// For a `postgres` or `mysql` entry: the database to connect to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
     pub port: Option<u16>,

@@ -9,11 +9,14 @@ Type=simple
 User=mybastion
 # Overrides (another port, a plain-http core) go in /etc/mybastion/dbproxy.env.
 Environment=DBPROXY_LISTEN=:5433
+# MySQL/MariaDB clients; empty for none.
+Environment=DBPROXY_MYSQL_LISTEN=:3307
 Environment=DBPROXY_CORE=https://127.0.0.1:8089
 Environment=DBPROXY_CORE_CA=/etc/mybastion/tls/cert.pem
 EnvironmentFile=-/etc/mybastion/dbproxy.env
 ExecStart=/opt/mybastion/bin/mybastion-dbproxy \
     -listen ${DBPROXY_LISTEN} \
+    -mysql-listen=${DBPROXY_MYSQL_LISTEN} \
     -core ${DBPROXY_CORE} \
     -core-ca ${DBPROXY_CORE_CA} \
     -secret-file /etc/mybastion/dbproxy-secret \

@@ -3,12 +3,14 @@
 // it over TLS with a bastion DB token as the password; it fetches the real
 // credentials from the core, checks every statement with the core's
 // db_query policies, and sends each statement's outcome to the core's
-// audit log. See docs/database-proxy.md.
+// audit log. MySQL and MariaDB clients (mysql, mariadb, ...) are served the
+// same way on a second listener (-mysql-listen). See docs/database-proxy.md.
 package main
 
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"log/slog"
 	"net"
@@ -21,7 +23,8 @@ import (
 var logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 func main() {
-	listen := flag.String("listen", ":5433", "address to listen on")
+	listen := flag.String("listen", ":5433", "address to listen on for PostgreSQL clients (empty: none)")
+	mysqlListen := flag.String("mysql-listen", "", "address to listen on for MySQL/MariaDB clients, e.g. :3307 (empty: none)")
 	coreURL := flag.String("core", "http://127.0.0.1:8089", "the bastion core's URL")
 	secretFile := flag.String("secret-file", "/etc/mybastion/dbproxy-secret", "file with the shared secret ([dbproxy] shared_secret_file in the core)")
 	certFile := flag.String("tls-cert", "/etc/mybastion/tls/cert.pem", "TLS certificate for clients")
@@ -59,18 +62,45 @@ func main() {
 		Secret: strings.TrimSpace(string(secret)),
 		HTTP:   &http.Client{Timeout: 20 * time.Second, Transport: transport},
 	}
-	ln, err := net.Listen("tcp", *listen)
-	if err != nil {
-		logger.Error("cannot listen", "address", *listen, "error", err)
+	if *listen == "" && *mysqlListen == "" {
+		logger.Error("nothing to listen on: give -listen and/or -mysql-listen")
 		os.Exit(1)
 	}
-	logger.Info("mybastion-dbproxy listening", "address", ln.Addr().String(), "core", core.URL)
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			logger.Warn("accept", "error", err)
+	type listener struct {
+		addr, protocol string
+		serve          func(net.Conn, *Core, *tls.Config)
+	}
+	var lns []net.Listener
+	var serves []listener
+	for _, l := range []listener{{*listen, "postgres", handle}, {*mysqlListen, "mysql", handleMySQL}} {
+		if l.addr == "" {
 			continue
 		}
-		go handle(c, core, tlsCfg)
+		ln, err := net.Listen("tcp", l.addr)
+		if err != nil {
+			logger.Error("cannot listen", "address", l.addr, "error", err)
+			os.Exit(1)
+		}
+		logger.Info("mybastion-dbproxy listening", "protocol", l.protocol, "address", ln.Addr().String(), "core", core.URL)
+		lns, serves = append(lns, ln), append(serves, l)
 	}
+	done := make(chan struct{}, len(lns))
+	for i, ln := range lns {
+		go func(ln net.Listener, l listener) {
+			defer func() { done <- struct{}{} }()
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					if errors.Is(err, net.ErrClosed) {
+						return
+					}
+					logger.Warn("accept", "error", err)
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+				go l.serve(c, core, tlsCfg)
+			}
+		}(ln, serves[i])
+	}
+	<-done
 }

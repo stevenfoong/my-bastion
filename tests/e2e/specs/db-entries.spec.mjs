@@ -73,3 +73,43 @@ test('admins create a PostgreSQL entry with its database', async ({ page }) => {
     await expect.poll(() => api.calls.find(c => c.method === 'POST' && c.path === '/api/addressbook/folders/shared/data/entries')?.body)
         .toMatchObject({ name: 'reports', type: 'postgres', hostname: '10.0.5.20', port: 5432, database: 'reports', username: 'ro', password: 'pw' });
 });
+
+// Phase 4c: MySQL/MariaDB entries.
+test('a MySQL entry shows the mysql command', async ({ page }) => {
+    await installApi(page, {
+        folders: [folder('data', { entries: [entry('my', 'mysql', { hostname: 'db.internal', port: 3306, username: 'app' })] })],
+        routes: {
+            'POST /api/addressbook/folders/shared/data/entries/my/db-token': {
+                token: 'mbdb_xyz', expires_at: Math.floor(Date.now() / 1000) + 900, protocol: 'mysql',
+                host: 'bastion.example.com', port: '3307', user: 'tester@example.com', database: ''
+            }
+        }
+    });
+    await page.goto('/connections.html');
+    await settle(page);
+    await page.locator('.folder-row').filter({ hasText: /data/ }).first().click();
+    await page.locator('[data-dbtoken="my"]').click();
+    await expect(page.locator('#dbtoken-value')).toHaveText('mbdb_xyz');
+    await expect(page.locator('#dbtoken-psql')).toHaveText(
+        `MYSQL_PWD='mbdb_xyz' mysql -h bastion.example.com -P 3307 -u 'tester@example.com' --ssl`);
+    await expect(page.locator('#dbtoken-target')).toContainText('(server default)');
+});
+
+test('admins create a MySQL entry; the port follows the type', async ({ page }) => {
+    const api = await installApi(page, { folders: dbFolders() });
+    await page.goto('/connections.html');
+    await settle(page);
+    await page.locator('.folder-row').filter({ hasText: /data/ }).first().click();
+    await page.locator('#btn-new-entry').click();
+    await page.locator('#em-name').fill('shop');
+    await page.locator('#em-type').selectOption('mysql');
+    await expect(page.locator('#em-pg-fields')).toBeVisible();
+    await expect(page.locator('#em-pg-port')).toHaveValue('3306');
+    await page.locator('#em-pg-hostname').fill('10.0.5.30');
+    await page.locator('#em-pg-database').fill('shop');
+    await page.locator('#em-pg-username').fill('ro');
+    await page.locator('#em-pg-password').fill('pw');
+    await page.locator('#em-save').click();
+    await expect.poll(() => api.calls.find(c => c.method === 'POST' && c.path === '/api/addressbook/folders/shared/data/entries')?.body)
+        .toMatchObject({ name: 'shop', type: 'mysql', hostname: '10.0.5.30', port: 3306, database: 'shop', username: 'ro', password: 'pw' });
+});

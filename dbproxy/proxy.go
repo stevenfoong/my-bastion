@@ -1,6 +1,6 @@
 package main
 
-// One client connection: TLS, the bastion token as the password, the real
+// PostgreSQL: one client connection: TLS, the bastion token as the password, the real
 // connection to the database with credentials from the core, then every
 // message relayed, with each statement checked before it goes on (simple
 // queries, and Parse in the extended protocol) and audited when it ends.
@@ -137,7 +137,7 @@ func handle(raw net.Conn, core *Core, tlsCfg *tls.Config) {
 		return
 	}
 	ctx := context.Background()
-	res, err := core.Connect(ctx, strings.TrimSpace(pw.Password), clientIP)
+	res, err := core.Connect(ctx, strings.TrimSpace(pw.Password), clientIP, "postgres")
 	if err != nil {
 		code := "28000"
 		var ae *apiError
