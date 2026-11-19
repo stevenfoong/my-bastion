@@ -1,0 +1,38 @@
+# Guarded Apps: example deployment of one guarded app.
+# Copy this file, change the name, START_URL and ALLOWED_HOSTS, and run
+#   docker compose up -d --build
+# See README.md.
+
+services:
+  provider-portal:
+    build: ./chromium
+    image: mybastion-guarded-chromium:latest
+    container_name: guarded-provider-portal
+    restart: unless-stopped
+    environment:
+      START_URL: "https://provider.example.com"
+      # Comma-separated; add any other hosts the login flow redirects to.
+      ALLOWED_HOSTS: "provider.example.com"
+      VNC_PASSWORD_FILE: /run/secrets/vnc_password
+      GEOMETRY: "1600x900"
+      IDLE_TIMEOUT: "900"
+      ALLOW_UPLOADS: "false"
+    secrets:
+      - vnc_password
+    volumes:
+      - provider-portal-data:/data
+    # Chromium's sandbox needs this profile (shipped with My Bastion).
+    security_opt:
+      - seccomp=../docker/seccomp-chromium.json
+    shm_size: "512m"
+    # VNC is unencrypted: publish on localhost only, for guacd on this host.
+    # If guacd runs elsewhere, use a private network, never a public port.
+    ports:
+      - "127.0.0.1:5901:5901"
+
+secrets:
+  vnc_password:
+    file: ./vnc_password.txt
+
+volumes:
+  provider-portal-data:
