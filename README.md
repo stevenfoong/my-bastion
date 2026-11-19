@@ -29,6 +29,9 @@ Database sessions go through the bastion like any other connection:
 - **Applies command policies:** read-only access, block `DROP`/`TRUNCATE`/`DELETE` without `WHERE`, or require approval for writes
 - **Keeps database passwords** stored in the bastion, never handed to users
 
+### 🛡️ Guarded Apps: one shared web login, many accountable people
+For provider portals that give you a single shared account: run the portal in a locked-down Chromium container that My Bastion reaches over VNC. IT logs in once, users sign in to My Bastion as themselves, one person uses it at a time, and every session is recorded. Ready to use with no code changes; in-app rules (block or approve specific pages, buttons and requests) are planned. See [contrib/guarded-apps](contrib/guarded-apps/README.md).
+
 ## Why
 
 Most teams protect servers, desktops and databases with different tools, or not at all, and AI agents are now joining the list of things that need access. This fork aims to put all of it behind one small, self-hosted gateway: one place to grant access, one audit trail, and one approval flow.
@@ -208,6 +211,7 @@ Add `[vdi]` to your config and create a VDI entry in the connections. See [VDI D
 - [Roles & Access Control](docs/roles-and-access-control.md): OIDC, roles, group mappings, API tokens
 - [Policies and Approvals](docs/policies.md): allow, deny or require approval per user, group or role and folder or entry
 - [Web Browser Sessions](docs/web-sessions.md): autofill, domain allowlisting, login scripts
+- [Guarded Apps](contrib/guarded-apps/README.md): a shared provider web login behind My Bastion, one user at a time
 - [SPICE and Proxmox VE Sessions](docs/spice-and-proxmox.md): SPICE displays, Proxmox VE consoles, API tokens, TLS, troubleshooting
 - [VDI Desktop Containers](docs/vdi.md): Docker desktops, image requirements, persistent homes
 - [RDP Video Performance](docs/rdp-video-performance.md): H.264 passthrough, GFX pipeline, xrdp tuning
